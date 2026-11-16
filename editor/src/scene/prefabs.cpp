@@ -47,7 +47,7 @@ std::string safeName(std::string name)
 // its instance a scene id, so it's found again by that.
 sfs::Entity rebuild(EditorContext& context, const sfs::Entity& root, json entry)
 {
-  const std::vector<references::Inbound> inbound = references::inboundTo(root);
+  const std::vector<references::Inbound> inbound = references::inboundTo(*context.scene, root);
   const sfs::Entity parent = sfs::hierarchy::parentOf(root);
   if (sfs::PrefabLinkComponent* prefabLink = root.getComponent<sfs::PrefabLinkComponent>())
     entry["$id"] = prefabLink->id;

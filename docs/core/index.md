@@ -14,6 +14,8 @@ What lives here:
   their fields, for the editor and scene files.
 - **[Events](./events/index.md)**: typed events one system sends and others
   read, each once, in their own update: how systems tell each other things.
+- **[Services](./services/index.md)**: logic that runs only when its events
+  bring it something, working on the entities they hand it.
 - **[Parents & children](./hierarchy/index.md)**: the entity hierarchy.
 - **[Asset database](./assets/index.md)**: the project's asset files and their
   ids and import settings.

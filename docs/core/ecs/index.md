@@ -12,6 +12,11 @@ actors.
   state, including what changes as the game runs. No behaviour.
 - **System** — behaviour that runs each frame over every entity carrying a chosen
   set of components.
+- **Service** — behaviour that runs only when its events bring it something,
+  working on the entities they hand it (see [Services](../services/index.md)).
+- **Scene data** — a plain data struct the scene holds one of each type of,
+  apart from every entity (a match's scoreboard, the weather), read by
+  systems, services and scripts (see [Scene data](#scene-data)).
 
 You create entities and systems through the **`Scene`** (your level/screen), and
 mutate components through the **`Entity`** handle. The engine's `Registry` owns the
@@ -62,6 +67,10 @@ scene.destroyEntity(e);
 `addTag<T>()` is `addComponent<T>()` read more naturally for empty marker
 components — e.g. `e.addTag<Player>()`.
 
+Adding a component the entity already has replaces it in place: no list
+changes, so it doesn't leave or join anything and no hook or observer runs; a
+system polling that component sees the new value.
+
 `getComponent<T>()` gives a pointer to the entity's `T`, or null when it has
 none (or the handle isn't valid), in one inline lookup: test it before you use
 it. `hasComponent<T>()` is for when you only ask (`if (e.hasComponent<Enemy>())`);
@@ -97,7 +106,28 @@ generation carries a dead bit that no handle has. A handle must not outlive
 its registry, as `isValid()` reads it. Adding a component to a handle that
 isn't valid logs an error naming the action, the type and why
 ("addComponent<Health>: entity 5 was destroyed; nothing added") and adds
-nothing.
+nothing. A handle's constness is the handle's, not the entity's: a
+`const sfs::Entity&` (a row, a handler's argument) adds, reads and removes
+components as any handle does.
+
+A handle doesn't lead to its registry, as a Unity DOTS or Bevy `Entity`
+doesn't lead to its world: it offers its id, generation, validity and its
+component API, nothing more. Code that searches (a helper finding who carries
+a pickup, say) takes the list it searches, a query view,
+from its caller: a system passes `registry->query<...>()`, a game object or
+UI `scene().query<...>()`, and a caller that calls it in a loop takes the
+view once, before the loop:
+
+```cpp
+// In a header: the list the helper searches, named once.
+using Carriers = sfs::Query<Carrying>;
+
+/** The entity carrying `pickup`, or an invalid one. */
+sfs::Entity carrierOf(sfs::QueryView<Carriers> carriers, const sfs::Entity& pickup);
+
+// A system:  carrierOf(registry->query<Carriers>(), pickup)
+// An object: carrierOf(scene().query<Carriers>(), pickup)
+```
 
 Where the code needs a component the scene's data should always give it (a
 prefab's own parts, a relationship's other side), `sfs::expect` checks the
@@ -189,7 +219,9 @@ protected:
 
 See [A system's entities](#a-systems-entities-registercomponent) for what
 `getEntities()` holds, and [Queries](#queries-lists-of-entities-by-component) for
-lists of other kinds of entity.
+lists of other kinds of entity. Logic that only reacts to events (handing out
+tasks, answering requests with jobs) and goes over no list is a
+[service](../services/index.md) instead.
 
 A system has four optional lifecycle hooks: `create()` (once, when it's added
 to a registry, with its registry set: it registers components and observers,
@@ -231,9 +263,9 @@ systems: lookups are for scripts, tools and setup.
   or anonymous-namespace classes of one name in different files, would share
   one. Debug builds log such a clash and fall back to a scan.
 
-When the registry goes (a scene closing), its systems are destroyed first,
-in the order they were added, while every entity, component and query still
-exists: a system's destructor can read its components and queries to save or
+When the registry goes (a scene closing), its services and then its systems
+are destroyed first, each in the order they were added, while every entity,
+component, query and the events still exist: a system's destructor can read its components and queries to save or
 flush what it leaves (as Unity's `OnDestroy` and Unreal's `EndPlay` run with
 the world intact). Systems are no longer found then: `tryGetSystem()` returns
 null.
@@ -355,8 +387,8 @@ skip one.
 A component may be written `const`, in a term or a lookup, and is then the
 same component, read-only: `query<const Position>()` is the same list as
 `query<Position>()` and its rows bind `const Position&`, `Any<const A, B>`
-binds `const A*`, and `getComponent<const Position>()` (and `find`, `finder`,
-`singleton`) gives a `const Position*`. `const` goes on the components
+binds `const A*`, and `getComponent<const Position>()` (and `find`,
+`finder`) gives a `const Position*`. `const` goes on the components
 themselves, inside an `Any`, `Excluding` or `Query` too: `const
 sfs::Query<...>` doesn't compile, and neither does adding or removing a
 `const` component.
@@ -634,22 +666,70 @@ systems run, so a `Stepped` system reads the time at the end of its step, and
 `Frame` and `Real` systems read the frame's end. Only the scene advances it.
 Scripts read the same through `scene().gameTime()` and `scene().paused()`.
 
-### One-per-scene components
-
-A component a scene has exactly one of (a world clock, the weather) is read
-with `registry->singleton<T>()` (scripts: `scene().singleton<T>()`): the
-component, or null when no entity has one. It costs nothing to call every
-frame: the registry keeps track of who holds each component type as
-components are added and removed. If several entities have one, it logs a
-warning once and returns one of them. Use it instead of a query of one.
-Unlike a query, it includes an entity still waiting for its first flush.
-
 `registry->setPaused(true)` pauses the game: the engine's own moving parts,
 `AnimationSystem`'s animators and `ParticleModule`'s particles, stand still.
 Systems keep getting the game time the time scale gives them (and
 `gameTime()` keeps counting); each one decides what a pause stops for it by
 reading `registry->paused()`. Like the time scale, it takes effect from the
 next frame.
+
+## Scene data
+
+Some data belongs to the scene rather than to any one entity: a match's
+scoreboard, its rules, the weather. A plain struct marked
+`[[sfs::scene_data]]` is **scene data**: the scene holds one of each type,
+apart from every entity, and systems, services and scripts read it there.
+Like a component it's data only; the logic that changes it is a system's or a
+service's.
+
+```cpp
+#pragma once
+#include <sfs/sfs.h>
+
+// The match's score, which the goal system writes and the HUD reads.
+struct [[sfs::scene_data]] Scoreboard
+{
+  int home = 0;
+  int away = 0;
+  [[sfs::range(1, 120)]] float minutes = 90.0f;
+};
+```
+
+| Call | Where | |
+| --- | --- | --- |
+| `sceneData<T>()` | `registry->` (systems), Service, `scene()` (scripts) | The scene's T, or null when it has none; `sceneData<const T>()` reads it const (what every reader but its owner takes). |
+| `addSceneData<T>(args...)` | the same | Adds the scene's T, made from `args`, and gives it. When the scene has one, it logs an error and gives that one. A Service's gives a pointer. |
+| `removeSceneData<T>()` | the same | Destroys the scene's T at once: pointers to it go stale. |
+
+```cpp
+// GoalSystem owns the Scoreboard: the one that takes it mutable.
+void GoalSystem::update(double)
+{
+  Scoreboard* board = registry->sceneData<Scoreboard>();
+  if (!board)
+    return;
+  for (const GoalEvent& goal : m_goals.read())
+    ++(goal.home ? board->home : board->away);
+}
+```
+
+- `sceneData<T>()` costs one array index: call it every frame rather than
+  keep the pointer.
+- Readers take it const, `sceneData<const T>()`, which gives a `const T*`
+  that can't be written through. Only its owner, the one system or service
+  that writes its values, takes it mutable with `sceneData<T>()`.
+- These calls compile only for a marked type, and a marked type isn't a
+  component: `addComponent<Scoreboard>()`, `getComponent`, a query term or
+  `registerComponent` of one doesn't compile. Use a component for data an
+  entity carries, even when a scene happens to have one such entity (a
+  player); use scene data for what the scene as a whole has.
+- Scene data is reflected like a component: the editor edits it in
+  **Scene Settings > Scene Data** (Add Scene Data, and Remove on each), and the
+  scene file saves it under `"sceneData"`, by type name, with its fields as a
+  component's. Entity fields aren't saved in it. A prefab holds none.
+- Loading a scene, a type no module registers is kept as it was saved and
+  written back, as unregistered components are; one the scene has already is
+  logged and the file's skipped.
 
 ## GameObjects — the OOP layer
 
@@ -709,6 +789,7 @@ e.addComponent<Position>(Position{1.0f, 2.0f});
 e.addComponent<Velocity>(Velocity{0.0f, 1.0f});
 
 reg.addSystem<DriftSystem>();    // create() runs immediately
+reg.addService<ScoreService>();  // so does a service's
 reg.flushEntities();             // new entities join queries and systems
 
 reg.destroyEntity(e);
@@ -720,7 +801,8 @@ A headless host starts each frame's [events](../events/index.md) itself, with
 `events().update()` after the flush, as `Scene::update()` does, and runs its
 systems' updates through `reg.updateSystem(system, dt)` (and
 `lateUpdateSystem()`), which start each update's span of events and run the
-system's event handlers first.
+system's event handlers first. With [services](../services/index.md), it calls
+`reg.runServices()` at the start of each step, before the systems.
 
 Entity destruction is deferred: a destroyed entity stays alive (and its
 components remain readable) until the next `flushEntities()` call. New

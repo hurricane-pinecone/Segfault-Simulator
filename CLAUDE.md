@@ -36,29 +36,41 @@ it. The standard engine approach is the baseline; do better where the data allow
 - Components hold ALL per-entity data, and NO logic: its state, including what changes in play (a transform's
   position, a machine's speed or fuel), and anything a system works out or keeps about that entity (a plan or
   search in progress for it, a cache derived from it, a handle to its engine-side job, a logged-once flag). Systems
-  hold the logic and update it. A system never keeps per-entity data of its own: no map or struct keyed by entity.
+  and services hold the logic and update it. A system or service never keeps per-entity data of its own: no map or
+  struct keyed by entity.
 - A system's own data is only what isn't about any one entity it iterates: shared caches and indexes, scratch
   buffers, handles to engine internals, settings, debug views. Iterate `getEntities()`; use `onEntityAdded()` /
   `onEntityRemoved()` to set up or release what an entity joining or leaving needs, never to keep a parallel copy.
 - The data's types belong to the components (their headers, or plain data headers), never to a system: no
   system-defined struct held from a component by pointer.
-- Systems are single-purpose and never read other systems: what a system needs from another concern comes through
-  components.
+- Systems and services are single-purpose and never read other systems or services: what one needs from another
+  concern comes through components and events.
 - How systems communicate: a component holds its entity's state; any system may read it, and one system writes each
-  field. Everything a system tells another is an event (docs/core/events), never a flag, message or request field on
-  a component, a `getSystem` call or a callback. News (`[[sfs::event_news]]`, named `...Event`) says something
+  field. Everything a system or service tells another is an event (docs/core/events), never a flag, message or request
+  field on a component, a `getSystem` call or a callback. News (`[[sfs::event_news]]`, named `...Event`) says something
   happened; entity news (`[[sfs::event_entity_news]]`) says it of one entity. A request (`[[sfs::event_request(...)]]`,
   `...Request`) is asked through an `EventRequester` and answered with responses (`...Response`) that only that
   requester gets. Consumers and requesters are made in `create()` and kept as members. What must outlast the moment is
   state, written by its owner. Work that can't be done now goes to a job (WorkerPool, PlanScheduler), never an event
   queue. Gameplay never depends on system order: a consumer earlier in the order hears an event a step later.
+- A **Service** (`sfs::Service`) is logic that runs only when its events bring it something, at the start of each
+  step before the systems: it has no update, never queries or iterates the registry, and works on the entities its
+  events hand it (and what those lead to through entity fields, parent and children) and the scene's data, its
+  own included (it may be a field's one writer); it may create and destroy entities. It makes its consumers (each
+  with a handler) and requesters in `create()` and keeps them as members; slow work goes to a job it owns, which
+  answers through the Responder it copied. Work over lists of entities, or that needs time to pass, is a System.
+- The registry is the engine's, its systems' and render modules': an `sfs::Entity`, a GameObject or a Service doesn't
+  lead to it. Code that searches takes the list it searches (a query view) from its system or scene. Game code never
+  uses `sfs::detail`.
 - Lists of entities by component: a system's own are `getEntities()` (its `registerComponent`s); any other kind is
   `registry->query<Ts...>()` (scripts: `scene().query<Ts...>()`: cached, kept current, shared). A system that must
   react as another kind joins or leaves uses `observe<Ts...>(added, removed)`. No system keeps its own entity list.
 - A system's set-up goes in `create()` (called once, when it's added, with its registry set): registering components,
   observers, time step, and anything it builds once. The constructor only initialises members.
-- A component a scene has exactly one of (a world clock, the weather) is read with `registry->singleton<T>()`
-  (scripts: `scene().singleton<T>()`), never a query of one.
+- Data that belongs to the scene rather than to any entity (a world clock, the weather) is scene data: a plain struct
+  marked `[[sfs::scene_data]]`, one of each type per scene, never a component. It's read with `registry->sceneData<T>()`
+  (scripts: `scene().sceneData<T>()`, services: `sceneData<T>()`) and added with `addSceneData<T>()`; data an entity
+  carries is a component, read through queries.
 - Component fields the editor can't edit (or that shouldn't be saved or shown) are `[[sfs::hide]]`.
 - A component describes its own concern only. It never holds references to another feature's data or assets: e.g.
   `NavAgentComponent` does not reference a `VehicleSpec`. A system that needs several concerns views the entities

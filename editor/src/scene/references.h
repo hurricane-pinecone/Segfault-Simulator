@@ -178,10 +178,11 @@ struct Inbound
  * The references other entities hold to an instance's entities, before it's
  * rebuilt (see restore()).
  *
- * @param root the instance's root
+ * @param scene the scene the instance is in
+ * @param root  the instance's root
  * @return each such reference, with how to find its target again
  */
-std::vector<Inbound> inboundTo(const sfs::Entity& root);
+std::vector<Inbound> inboundTo(sfs::Scene& scene, const sfs::Entity& root);
 
 /**
  * Point the references inboundTo() found at the rebuilt instance's entities.

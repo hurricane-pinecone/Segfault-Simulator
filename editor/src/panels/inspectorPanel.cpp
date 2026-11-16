@@ -2225,6 +2225,22 @@ void tagsSection(const sfs::Entity& entity,
 
 } // namespace
 
+void reflectedFields(const TypeInfo& type,
+                     void* object,
+                     sfs::MeshLibrary* meshes,
+                     EditorHistory* history)
+{
+  for (const FieldInfo& field : type.fields)
+  {
+    if (sfs::reflect::isEntityField(field) || !fieldShown(type, object, field))
+      continue;
+    // Each field in its own ID scope, as a component's.
+    ImGui::PushID(field.name.c_str());
+    fieldWidget(field, object, meshes, history);
+    ImGui::PopID();
+  }
+}
+
 namespace
 {
 // An asset picked in the Assets panel: what it is and its identity.

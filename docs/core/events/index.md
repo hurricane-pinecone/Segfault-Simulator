@@ -433,6 +433,15 @@ private:
 A consumer made anywhere else has no owner: its handlers never run, and each
 `read()` gives what arrived since the last.
 
+## Services
+
+A [service](../services/index.md) is an owner of handles with no update: it
+makes its consumers and requesters in `create()`, as a system does, each
+consumer with a handler, and runs at the start of each step, before the
+systems, only when one of them has something new. It works on the entities
+its events hand it. A coordinator handing out tasks, or a planner answering
+requests with jobs, is a service.
+
 ## How long an event is kept
 
 Each event is kept until every consumer of its type has passed it, so a
@@ -450,6 +459,9 @@ read logs how many it missed.
 | --- | --- |
 | A system after the sender in the update order | The same frame (or step). |
 | A system before the sender | The next frame or step. |
+| A service, from a system | At the start of the next step. |
+| A service, from another service | The same run if added after the sender, else the next step. |
+| A service, from a game object or the UI | At the next frame's first step. |
 | A Stepped system before the sender | At its next step. A Frame system gets all the frame's steps' events once. |
 | A worker's broadcast or response | At the next frame boundary (responses also before each fixed step). |
 
@@ -537,10 +549,11 @@ In development builds:
 
 | Call | Where | |
 | --- | --- | --- |
-| `send(e)`, `send(entity, e)` | System; `scene().events()` | Sends news, entity news. |
-| `consumer<E>()` | System `create()`; `scene().events()` in `onCreate` | A consumer, kept as a member. |
-| `requester<R>()` | System `create()`; `scene().events()` in `onCreate` | A requester's builder. |
-| `broadcast<E>()` | System; `scene().events()` | A broadcast for a worker. |
+| `send(e)`, `send(entity, e)` | System, Service; `scene().events()` | Sends news, entity news. |
+| `cancel<E>(entity)` | System, Service; `scene().events()` | Makes an entity's current entity news stale. |
+| `consumer<E>()` | System or Service `create()` (a Service's with a handler); `scene().events()` in `onCreate` | A consumer, kept as a member. |
+| `requester<R>()` | System or Service `create()`; `scene().events()` in `onCreate` | A requester's builder. |
+| `broadcast<E>()` | System, Service; `scene().events()` | A broadcast for a worker. |
 | `read()`, `readLatest()` | `EventConsumer` | What arrived since the last update; the newest per entity. |
 | `onEvent(fn)`, `onEvents(fn)`, `onLatest(fn)`, `onLatestEvents(fn)` | `EventConsumer` | Handlers, run before the owner's update. |
 | `unread()`, `skip()` | `EventConsumer` | How many it hasn't read; pass them all. |
@@ -548,7 +561,6 @@ In development builds:
 | `request()`, `waiting()`, `cancel()` | `EventRequester` | See above. |
 | `respond()`, `progress()`, `fail()`, `superseded()`, `key()` | `Responder` | See above. |
 | `respond(entity, s)`, `progress(entity, p)`, `fail(entity, f)`, `open(entity)` | `EventConsumer` of a request type | Answers every open request about an entity later, by entity. |
-| `cancel<E>(entity)` | `Events` | Makes an entity's current entity news stale. |
 | `setMaxKept(n)` | `Events` | The most events a type keeps. |
 
 How events work inside the engine: [Events internals](../../../engine/docs/core/events/index.md).

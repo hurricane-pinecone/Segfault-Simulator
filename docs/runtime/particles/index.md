@@ -97,11 +97,11 @@ is doesn't matter. Each update the particles add up the enabled zones. An
 effect is carried by the wind only if its `windInfluence` is above 0: its
 particles get `drag * windInfluence * wind` added to their planar
 acceleration, so their drag carries them toward `windInfluence` times the
-wind (dust 0.5, smoke near 1, sparks 0). A game's weather writes the zone:
+wind (dust 0.5, smoke near 1, sparks 0). A game's weather writes the zones:
 
 ```cpp
-if (auto* zone = scene().singleton<sfs::WindZoneComponent>())
-  zone->wind = weather.wind;
+for (sfs::WindZoneComponent& zone : scene().query<sfs::WindZoneComponent>())
+  zone.wind = weather.wind;
 ```
 
 A `ParticleEngine` with no registry (a tool, a test) has no wind.

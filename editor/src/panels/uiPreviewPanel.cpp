@@ -107,9 +107,9 @@ std::vector<const T*> withOthers(const std::vector<const T*>& ours,
 } // namespace
 
 UiPreviewPanel::UiPreviewPanel(sfs::IRenderBackend& backend,
-                               const sfs::SceneServices& services,
+                               const sfs::SceneBackends& backends,
                                const CodePanel& code)
-    : Panel("UI Preview"), m_backend(backend), m_services(services),
+    : Panel("UI Preview"), m_backend(backend), m_backends(backends),
       m_code(code)
 {
 }
@@ -307,7 +307,7 @@ sfs::ui::Layer* UiPreviewPanel::layer(EditorContext& context)
   if (!type || !type->createObject)
     return nullptr;
   m_scene =
-      std::make_unique<sfs::Scene>(kPreviewSceneId, m_services, "UI Preview");
+      std::make_unique<sfs::Scene>(kPreviewSceneId, m_backends, "UI Preview");
   std::unique_ptr<sfs::GameObject> object = type->createObject();
   // The values an entity in the scene gives it, if one has it.
   if (const sfs::reflect::TypeInfo* info =
@@ -490,7 +490,7 @@ sfs::UiModule& UiPreviewPanel::uiModule(EditorContext& context)
   {
     if (!m_scene)
       m_scene = std::make_unique<sfs::Scene>(
-          kPreviewSceneId, m_services, "UI Preview");
+          kPreviewSceneId, m_backends, "UI Preview");
     m_ui = std::make_unique<sfs::UiModule>(*m_scene);
   }
   // The scene's look (a game sets its font there).

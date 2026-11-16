@@ -704,7 +704,7 @@ int main()
       AssetStore store;
       store.setDatabase(&database);
       testing3d::MockRenderer renderer;
-      Scene scene{0, SceneServices{.assetStore = store, .renderer = &renderer}};
+      Scene scene{0, SceneBackends{.assetStore = store, .renderer = &renderer}};
       RenderSystem& render = scene.addSystem<RenderSystem>(renderer);
       SceneSerializer serializer(reflect::types(), &render.meshes());
       serializer.setPrefabSource(
@@ -993,7 +993,7 @@ int main()
     AssetStore store;
     store.setDatabase(&database);
     testing3d::MockRenderer renderer;
-    Scene scene{0, SceneServices{.assetStore = store, .renderer = &renderer}};
+    Scene scene{0, SceneBackends{.assetStore = store, .renderer = &renderer}};
     RenderSystem& render = scene.addSystem<RenderSystem>(renderer);
     const std::string model = "asset:2123456789abcdef0123456789abcdef";
     // A machine prefab as saved before stable ids: the model is its entity 1,

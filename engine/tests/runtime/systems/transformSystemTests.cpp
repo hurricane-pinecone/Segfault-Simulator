@@ -26,7 +26,7 @@ namespace
 struct World
 {
   AssetStore store;
-  Scene scene{0, SceneServices{.assetStore = store}};
+  Scene scene{0, SceneBackends{.assetStore = store}};
 
   // An entity with a transform somewhere awkward (rounding in every bit of
   // its world matrix), under `parent` if one is given.

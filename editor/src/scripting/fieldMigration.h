@@ -11,8 +11,8 @@
 #include <vector>
 
 // Saved data (scenes, prefabs, the editor's own snapshots) names fields: a
-// component's under its type's name, a game object script's in its
-// ScriptComponent's "fields". When the game module is rebuilt with fields
+// component's (and a scene's scene data's) under its type's name, a game
+// object script's in its ScriptComponent's "fields". When the game module is rebuilt with fields
 // renamed, added or removed, these work out what changed by comparing the
 // types before and after, and update saved data to match, so values follow
 // a renamed field and removed ones don't linger.
@@ -51,13 +51,15 @@ struct TypeChanges
 
 struct Changes
 {
-  // Types renamed (old name -> new), by what they are.
+  // Types renamed (old name -> new), by what they are. Components and scene
+  // data, both saved under their type's name, share one map.
   std::map<std::string, std::string> renamedComponents;
   std::map<std::string, std::string> renamedScripts;
-  std::map<std::string, std::string> renamedSystems;
+  // Systems and services, as a scene file lists them by name.
+  std::map<std::string, std::string> renamedSceneScripts;
   std::map<std::string, std::string> renamedScriptableObjects;
   // Field changes, by the type's (new) name.
-  std::map<std::string, TypeChanges> components; // by component type
+  std::map<std::string, TypeChanges> components; // by component or scene data type
   std::map<std::string, TypeChanges> scripts;    // by game object script
   std::map<std::string, TypeChanges> scriptableObjects; // by scriptable object type
   // Field names still in use by some script after the change (so a saved
@@ -67,7 +69,7 @@ struct Changes
   bool empty() const
   {
     return components.empty() && scripts.empty() && renamedComponents.empty() && renamedScripts.empty() &&
-           renamedSystems.empty() && scriptableObjects.empty() && renamedScriptableObjects.empty();
+           renamedSceneScripts.empty() && scriptableObjects.empty() && renamedScriptableObjects.empty();
   }
   /** For the log, e.g. "Spin.degreesPerSecond -> Spin.speed; Spin.axis removed". */
   std::string describe() const;

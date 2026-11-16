@@ -168,6 +168,17 @@ constexpr std::array<RuleInfo, static_cast<std::size_t>(Count)> kRules = {{
      "requests and responses deriving from nothing; and no name declared "
      "twice differently. An attribute on an enum can't be read, so it isn't "
      "checked."},
+    {SceneDataDeclaration,
+     "scene-data-declaration",
+     E,
+     C,
+     false,
+     false,
+     false,
+     "`[[sfs::scene_data]]` marks data the scene holds one of, so it goes on a "
+     "named plain struct or class at namespace scope with no base, never on "
+     "a component, an event, a system, a service, a game object or a "
+     "scriptable object."},
     {SingleAny,
      "single-any",
      W,
@@ -260,8 +271,8 @@ constexpr std::array<RuleInfo, static_cast<std::size_t>(Count)> kRules = {{
      false,
      false,
      false,
-     "A system should not keep per-entity data in a map or set keyed by "
-     "entity. Put the data on a component, in a hidden field."},
+     "A system or service should not keep per-entity data in a map or set "
+     "keyed by entity. Put the data on a component, in a hidden field."},
     {OwnEntity,
      "own-entity",
      W,
@@ -404,8 +415,36 @@ constexpr std::array<RuleInfo, static_cast<std::size_t>(Count)> kRules = {{
      false,
      false,
      false,
-     "A response type should be sent by one system, the one that consumes "
-     "its request. Give each system's responses a type of their own."},
+     "A response type should be sent by one system or service, the one that "
+     "consumes its request. Give each one's responses a type of their own."},
+    {ServiceReachesRegistry,
+     "service-reaches-registry",
+     W,
+     L,
+     false,
+     false,
+     false,
+     "A Service works on the entities its events hand it and never reaches "
+     "the registry, the scene or a list of entities. Do work over lists of "
+     "entities in a System."},
+    {ServiceUpdateMethod,
+     "service-update-method",
+     W,
+     L,
+     false,
+     false,
+     false,
+     "A Service has no update or hooks, so this is never called. Do the work "
+     "in an event handler, or make it a System."},
+    {EngineInternal,
+     "engine-internal",
+     W,
+     L,
+     false,
+     false,
+     false,
+     "`sfs::detail` is the engine's internals: it changes without notice, "
+     "and some of it opens what the API keeps closed. Use the public API."},
     {BadIgnore,
      "bad-ignore",
      W,

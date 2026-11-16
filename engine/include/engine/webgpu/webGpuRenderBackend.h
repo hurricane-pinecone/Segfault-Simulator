@@ -21,7 +21,7 @@ class AssetStore;
 // surface. Each frame it opens a command encoder and acquires the window's
 // next picture (with SFS_LATE_ACQUIRE, and in a browser, only for the
 // renderer's last passes, once its offscreen passes are submitted); scenes draw
-// through the renderer it provides (SceneServices::renderer). For tools it
+// through the renderer it provides (SceneBackends::renderer). For tools it
 // also makes render targets, preview renderers and images (see
 // IRenderBackend).
 //
@@ -37,7 +37,7 @@ public:
   bool init(const char* title, int width, int height) override;
   SDL_Window* window() const override { return m_window; }
   void onResize(int width, int height) override;
-  SceneServices* sceneServices() override;
+  SceneBackends* sceneBackends() override;
 
   void beginFrame(int width, int height) override;
   void endFrame() override;
@@ -94,7 +94,7 @@ private:
 
   std::unique_ptr<AssetStore> m_assetStore;
   std::unique_ptr<WebGpuRenderer> m_renderer;
-  std::optional<SceneServices> m_services;
+  std::optional<SceneBackends> m_backends;
 
   WebGpuRenderTarget* m_sceneTarget = nullptr;
 

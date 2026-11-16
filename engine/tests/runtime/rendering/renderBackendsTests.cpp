@@ -15,7 +15,7 @@ public:
   bool init(const char*, int, int) override { return false; }
   SDL_Window* window() const override { return nullptr; }
   void onResize(int, int) override {}
-  SceneServices* sceneServices() override { return nullptr; }
+  SceneBackends* sceneBackends() override { return nullptr; }
   void beginFrame(int, int) override {}
   void endFrame() override {}
   void shutdown() override {}

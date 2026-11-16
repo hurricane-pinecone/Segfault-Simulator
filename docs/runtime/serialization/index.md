@@ -16,7 +16,7 @@ serializer.loadFile("scenes/main.scene", scene); // adds to the scene's entities
 
 `load` adds entities to the scene; it doesn't clear what is already there. To
 replace a scene's contents, destroy its entities and call
-`scene.flushEntities()` first.
+`scene.flushEntities()` first, and `scene.clearSceneData()`.
 
 ## What is saved
 
@@ -31,9 +31,17 @@ replace a scene's contents, destroy its entities and call
   [style](#the-style), lighting, shadows, wind, haze and the camera. In an editor scene, that camera is the viewport's
   view. The game sees through a camera entity, which is saved like any other
   entity.
-- **The scene's systems** (the `System` scripts it runs when it plays, and
-  the engine's optional systems such as `PhysicsSystem3D`), by name, under
-  `"systems"`. Pass the list to `save` and get it back from
+- **The scene's [scene data](../../core/ecs/index.md#scene-data)**, by type
+  name, under `"sceneData"` (only when it has some; never in a prefab), each
+  field by field as a component's. Loading, a type no module registers is kept
+  and saved back as read, as is one that isn't scene data (logged); a type
+  the scene already holds is logged and the file's skipped. Scene data
+  saved on an entity (as a component) is logged and kept there as read.
+- **The scene's systems and services** (the `System` scripts it runs when it
+  plays, and the engine's optional systems such as `PhysicsSystem3D`, and its
+  `Service` scripts), by name, under `"systems"` and `"services"`
+  (`"services"` only when it has some; a file without it has none). Pass a
+  `SceneScripts` (`systems`, `services`) to `save` and get it back from
   `load`; nothing instantiates them until the scene plays.
 - **Meshes by name.** A `MeshHandle` is only valid for one run, so a mesh field
   is saved as the name the mesh was given in `MeshLibrary::add(mesh, name)`.

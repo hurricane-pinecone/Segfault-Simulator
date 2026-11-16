@@ -474,6 +474,12 @@ bool LintFile::isSystemClass(std::string_view name) const
   return (found && found->system) || index->isSystem(name);
 }
 
+bool LintFile::isServiceClass(std::string_view name) const
+{
+  const FileClass* found = fileClass(name);
+  return (found && found->service) || index->isService(name);
+}
+
 const FileClass* LintFile::fileClass(std::string_view name) const
 {
   if (name.empty())

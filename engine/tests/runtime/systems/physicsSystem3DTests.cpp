@@ -29,7 +29,7 @@ constexpr double kFrame = 1.0 / 60.0;
 struct World
 {
   AssetStore store;
-  Scene scene{0, SceneServices{.assetStore = store}};
+  Scene scene{0, SceneBackends{.assetStore = store}};
   PhysicsSystem3D& physics = scene.addSystem<PhysicsSystem3D>();
 
   Entity box(const glm::vec3& position,
@@ -220,7 +220,7 @@ protected:
 struct Fast
 {
   AssetStore store;
-  Scene scene{0, SceneServices{.assetStore = store}};
+  Scene scene{0, SceneBackends{.assetStore = store}};
   Driver& driver = scene.addSystem<Driver>();
   PhysicsSystem3D& physics = scene.addSystem<PhysicsSystem3D>();
   Tally& tally = scene.addSystem<Tally>();
@@ -475,12 +475,12 @@ int main()
   {
     AssetStore store;
     testing3d::MockRenderer renderer;
-    SceneServices services{.assetStore = store, .renderer = &renderer};
+    SceneBackends backends{.assetStore = store, .renderer = &renderer};
     SceneManager manager;
-    manager.setSceneServices(&services);
+    manager.setSceneBackends(&backends);
     StandardScene& scene = *manager.createScene<StandardScene>();
     CHECK(scene.physicsSystem() == nullptr);
-    startScripts(scene, {"PhysicsSystem3D"});
+    startScripts(scene, {{"PhysicsSystem3D"}});
     CHECK(scene.physicsSystem() != nullptr);
   }
 
@@ -489,12 +489,12 @@ int main()
   {
     AssetStore store;
     testing3d::MockRenderer renderer;
-    SceneServices services{.assetStore = store, .renderer = &renderer};
+    SceneBackends backends{.assetStore = store, .renderer = &renderer};
     SceneManager manager;
-    manager.setSceneServices(&services);
+    manager.setSceneBackends(&backends);
     StandardScene& scene = *manager.createScene<StandardScene>();
     startScripts(
-        scene, {"PhysicsSystem3D"}); // as when a scene lists it and plays
+        scene, {{"PhysicsSystem3D"}}); // as when a scene lists it and plays
 
     Entity floor = scene.createEntity();
     floor.addComponent<TransformComponent>(

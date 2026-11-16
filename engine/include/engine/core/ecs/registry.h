@@ -17,9 +17,11 @@
 
 #include "engine/core/ecs/entity.h"
 #include "engine/core/ecs/hierarchyLinks.h"
+#include "engine/core/ecs/sceneData.h"
 #include "engine/core/events/events.h"
 #include "pool.h"
 #include "query.h"
+#include "service.h"
 #include "system.h"
 #include <engine/core/logger/logger.h>
 
@@ -48,9 +50,11 @@ class Registry
 public:
   Registry() = default;
   /**
-   * Destroys the systems first, while every entity, component and query
-   * still exists, so a system's destructor can read the world it leaves
-   * (as Unity's OnDestroy and Unreal's EndPlay do). The rest goes after.
+   * Destroys the services first, in the order they were added, then the
+   * systems, while every entity, component, query and the events still
+   * exist, so a destructor can read the world it leaves (as Unity's
+   * OnDestroy and Unreal's EndPlay do) and a service's workers are joined
+   * before anything they answer through goes. The rest goes after.
    */
   ~Registry();
 
@@ -281,6 +285,33 @@ public:
   void forEachSystem(Fn&& fn);
 
   /**
+   * Adds a service (docs/core/services): made with `args`, given the
+   * registry's events, then its create() runs, which makes its handles. It
+   * runs from the next runServices() on, whenever its handles have something
+   * new.
+   * @param args what its constructor takes
+   * @return the service
+   */
+  template <typename TService, typename... TArgs>
+  TService& addService(TArgs&&... args);
+
+  /**
+   * Calls fn(Service&) for each service, in the order they were added (debug
+   * views, the editor).
+   * @param fn what to call
+   */
+  template <typename Fn>
+  void forEachService(Fn&& fn);
+
+  /**
+   * Runs each enabled service whose event handles have something new: its
+   * handlers, with one span each (as a system's run before its update()).
+   * Scene::update() calls it at the start of each step, before the systems;
+   * a headless host calls it before its systems each step.
+   */
+  void runServices();
+
+  /**
    * Runs a system's update() as Scene::update() does: its event handles get
    * a new span (what arrived since its last update), its handlers run with
    * it, then the call. A headless host runs its systems through this.
@@ -345,13 +376,33 @@ public:
   uint64_t componentChanges() const;
 
   /**
-   * The registry's one TComponent, for components a scene has exactly one of
-   * (a world clock, the weather): constant time, kept up to date as
-   * components are added and removed. Null when no living entity has one.
-   * When several do, it logs a warning (once per type) and returns one.
+   * The registry's one T, a type marked [[sfs::scene_data]]: data the scene
+   * holds one of, apart from every entity (a match's scoreboard, the
+   * weather). In constant time, an index into the registry's slots. Compiles
+   * only for a marked type.
+   * @return it, or null when the registry has none
    */
-  template <typename TComponent>
-  TComponent* singleton();
+  template <typename T>
+  T* sceneData();
+
+  /**
+   * Gives the registry its one T, a type marked [[sfs::scene_data]], made from
+   * `args` (as `T{args...}`, or T's constructor). When it has one already, it
+   * logs an error and keeps that one. Compiles only for a marked type.
+   * @return the registry's T: the new one, or the one it had
+   */
+  template <typename T, typename... TArgs>
+  T& addSceneData(TArgs&&... args);
+
+  /**
+   * Destroys the registry's T, a type marked [[sfs::scene_data]], at once:
+   * pointers to it go stale. Nothing if it has none.
+   */
+  template <typename T>
+  void removeSceneData();
+
+  /** Destroys every scene data the registry holds, at once. */
+  void clearSceneData();
 
   /**
    * The entities that match these terms, in id order: the living ones that
@@ -425,17 +476,11 @@ private:
   void componentsChanged(const Entity& entity,
                          const Signature& before,
                          std::size_t componentId);
-  // Counts a component an entity gained or lost as changed, and keeps
-  // singleton()'s holders up to date (pending entities included).
-  void countChange(Entity::EntityId id, std::size_t componentId, bool gained);
-  // countChange() for every component that differs between two signatures.
-  void countChanges(Entity::EntityId id,
-                    const Signature& before,
-                    const Signature& after);
-  // The id of a living entity with this component, found by a scan (when
-  // the remembered holder lost it while others still have one).
-  Entity::EntityId findHolder(std::size_t componentId) const;
-  void warnNotSingle(std::size_t componentId, std::string_view type);
+  // addSceneData() of a type the registry has: logged, naming it.
+  static void sceneDataExists(std::string_view type);
+  // Counts a change for every component that differs between two
+  // signatures.
+  void countChanges(const Signature& before, const Signature& after);
 
   // addComponent() under the name of the call that asked (addComponent,
   // addTag): a handle that isn't valid is refused and logged.
@@ -547,17 +592,6 @@ private:
 
   // By component id: how often an entity gained or lost one.
   std::array<uint64_t, MAX_COMPONENTS> m_componentChanges{};
-  // By component id: how many entities have one, one of them (kNoHolder:
-  // to be found again), and whether singleton() has warned about several.
-  static constexpr Entity::EntityId kNoHolder = ~Entity::EntityId{0};
-  std::array<uint32_t, MAX_COMPONENTS> m_holderCount{};
-  std::array<Entity::EntityId, MAX_COMPONENTS> m_holder = []
-  {
-    std::array<Entity::EntityId, MAX_COMPONENTS> holders{};
-    holders.fill(kNoHolder);
-    return holders;
-  }();
-  std::array<bool, MAX_COMPONENTS> m_warnedNotSingle{};
   // query()'s lists, by index: each one's canonical signature (dense, for a
   // flush to test them all), its list (a deque, so a list's references stay
   // valid as more are made) and whether a system has followed it (never
@@ -584,8 +618,17 @@ private:
   double m_gameTime = 0.0;
   bool m_paused = false;
 
-  // Outlives the systems, and their readers, because ~Registry() destroys
-  // the systems in its body, before any member.
+  // In the order added; destroyed first, by ~Registry().
+  std::vector<std::unique_ptr<Service>> m_services;
+
+  // By scene data slot id (detail::sceneDataId()): the registry's one of
+  // each scene data type, or null. Each is made on the heap once, so a
+  // pointer to one lasts until it's removed, and the slots grow only as types
+  // are first added.
+  std::vector<std::unique_ptr<void, void (*)(void*)>> m_sceneData;
+
+  // Outlives the services and systems, and their readers, because
+  // ~Registry() destroys them in its body, before any member.
   Events m_events;
 };
 
@@ -594,3 +637,4 @@ private:
 #include "entity.inl"   // IWYU pragma: keep
 #include "queryView.h"  // IWYU pragma: keep
 #include "registry.inl" // IWYU pragma: keep
+#include "service.inl"  // IWYU pragma: keep

@@ -282,8 +282,9 @@ private:
   bool m_windowChangeLogged = false;
 
   std::unique_ptr<IRenderBackend> m_backend;
-  // Drawing/asset services the active backend supplies; non-owning.
-  SceneServices* m_services = nullptr;
+  // The renderer and asset store the active render backend supplies
+  // (SceneBackends); non-owning.
+  SceneBackends* m_backends = nullptr;
   // The shipped game's own assets/ catalogue, opened by playScene().
   std::optional<AssetDatabase> m_assetDatabase;
 

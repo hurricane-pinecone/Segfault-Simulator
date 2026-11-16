@@ -116,11 +116,20 @@ public:
      * responding to a request. Empty: always wanted.
      */
     std::function<bool()> wanted;
+    /**
+     * Whether its owner collects it (collect()), which forgets a finished
+     * job. False for a job that answers through a Responder and is never
+     * collected: it's forgotten as it ends (Done, Failed or cancelled), what
+     * it holds let go on a worker as release() does, and state() gives
+     * Unknown from then on.
+     */
+    bool collected = true;
   };
 
   enum class State
   {
-    Unknown, // no such job (never was, cancelled, or finished and collected)
+    Unknown, // no such job (never was, cancelled, finished and collected, or
+             // finished uncollected: Request::collected false)
     Queued,
     Running,
     Done,
@@ -169,7 +178,7 @@ public:
    * Let go of something heavy without freeing it on this thread (the game
    * thread): a worker drops the last hold on it (a finished plan's copy of
    * the world, its checkers). Thread-safe. A job forgotten here (collected
-   * finished, or cancelled) is let go the same way.
+   * finished, finished uncollected, or cancelled) is let go the same way.
    */
   void release(std::shared_ptr<const void> object);
   /** Needed sooner (or later) than asked: an agent stopped early. */
@@ -200,6 +209,10 @@ private:
   void publish(Job& job, std::any leg);
   void fork(Job& job, std::function<void(const std::atomic<bool>&)> task);
   void fail(Job& job, const std::string& what);
+  // A job just ended (Done or Failed) that nobody collects
+  // (Request::collected false): forgotten now, let go on a worker. Called
+  // with m_mutex held.
+  void forgetUncollectedLocked(const Job& job);
 
   Settings m_settings;
   mutable std::mutex m_mutex;

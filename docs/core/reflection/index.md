@@ -69,6 +69,13 @@ These rules decide what is reflected:
   after its header would be registered as a component. Marked both
   `[[sfs::component]]` and an event attribute is warned about, and the type
   is taken as an event.
+- **Scene data:** a struct marked `[[sfs::scene_data]]` is
+  [scene data](../ecs/index.md#scene-data), the file's type or another in the
+  header: reflected with its fields (`TypeKind::SceneData`, with
+  `TypeInfo::sceneData`'s get, add and remove on a registry), never a
+  component, and codegen writes its compile-time traits too. Marked on a
+  component, an event, a type with a base, or an unnamed, nested or template
+  type, it's an error.
 
 ```cpp
 // TipParts.h: the parts a tipping trailer's model is made of.
@@ -119,6 +126,7 @@ completion and hovers also read:
 | `[[sfs::showIf(field)]]` | Any field | The Inspector shows it only while the named `bool` field of the same object is on; `showIf(!field)` shows it only while that field is off. | `bool orthographic = false;`<br>`[[sfs::showIf(orthographic)]] float orthoHeight = 20.0f;`<br>`[[sfs::showIf(!orthographic)]] float fieldOfView = 46.0f;` |
 | `[[sfs::part("node-name")]]` | `sfs::Entity` and `std::vector<sfs::Entity>` fields | The model node the editor fills it from, by name; on a list, a glob pattern (`"blade-*"`) for every node it takes. In development, a reference to a node not named so logs a warning. Never used at runtime. | `[[sfs::part("deck")]] sfs::Entity deck;`<br>`[[sfs::part("blade-*")]] std::vector<sfs::Entity> blades;` |
 | `[[sfs::component]]` | A type | Register the type as a component besides the file's type. | `struct [[sfs::component]] TipBody {};` |
+| `[[sfs::scene_data]]` | A type | Mark the type as scene data: data the scene holds one of, apart from every entity, read with `sceneData<T>()` and added with `addSceneData<T>()`, never a component. | `struct [[sfs::scene_data]] Scoreboard { int home = 0; int away = 0; };` |
 | `[[sfs::event_news]]` | A type | Mark the type as news, an event sent with `send(event)` and read by every consumer of it or of its news bases: never a component or reflected, and it may be named after its header. | `struct [[sfs::event_news]] EnemyDiedEvent { sfs::Entity enemy; };` |
 | `[[sfs::event_entity_news]]` | A type | Mark the type as news about one entity, sent with `send(entity, event)`: rows give the entity, and `readLatest()` its newest. | `struct [[sfs::event_entity_news]] AlertedEvent { float level; };` |
 | `[[sfs::event_request(Success, progress = Progress, failure = Failure)]]` | A type | Mark the type as a request about one entity, asked with a requester and answered (through a `Responder`, or later by entity) with its success response, and with progress and failure responses where it names them (each type `[[sfs::event_response]]`, in one role). | `struct [[sfs::event_request(PathFoundResponse,`<br>`failure = PathFailedResponse)]]`<br>`PathRequest { glm::vec3 goal; };` |
@@ -173,7 +181,7 @@ field, and `reflect::isEntityField(field)` tells one.
 editors and IDEs can jump to them:
 
 ```
-scripts/Boss.h:3: error: Monster<int> isn't a base a script type can have. Derive from sfs::GameObject, sfs::ui::Layer, sfs::System, sfs::MeshSource, sfs::ScriptableObject or another reflected type, or from nothing for a component. [script-base]
+scripts/Boss.h:3: error: Monster<int> isn't a base a script type can have. Derive from sfs::GameObject, sfs::ui::Layer, sfs::System, sfs::Service, sfs::MeshSource, sfs::ScriptableObject or another reflected type, or from nothing for a component. [script-base]
 scripts/Enemy.h:9: warning: The editor can't edit fields of type std::vector<int> yet, so the field items is skipped. Use a type the editor can edit. [field-type]
 scripts/Enemy.h:12: warning: There is no attribute [[sfs::hdie]]. Use [[sfs::hide]] if that's what you meant. [unknown-sfs-attribute]
 ```
@@ -214,7 +222,10 @@ for (const sfs::reflect::TypeInfo& type : sfs::reflect::types().types())
 ```
 
 Each component type also has type-erased operations: `has`, `get`, `add` and
-`remove` on an entity. Systems and game objects are also registered with
+`remove` on an entity. The entities that have a type, the type-erased
+`scene.query<T>()` (as Unity's `FindObjectsOfType(Type)`), are
+`scene.holdersOf(type)`: in id order, and empty for a type that isn't a
+component. Systems, services and game objects are also registered with
 `sfs::scripts()`, along with how to create them in a scene; see
 [Game scripts](../../editor/scripting/index.md). A type also records the `module` that registered it, and
 `removeModule()` drops a module's types before the module is unloaded.

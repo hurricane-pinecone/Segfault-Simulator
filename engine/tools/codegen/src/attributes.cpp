@@ -16,7 +16,7 @@ using enum AttributeId;
 constexpr AttributeTarget F = AttributeTarget::Field;
 constexpr AttributeTarget T = AttributeTarget::Type;
 
-constexpr std::array<AttributeInfo, 16> kAttributes = {{
+constexpr std::array<AttributeInfo, 17> kAttributes = {{
     {Range,
      "range",
      F,
@@ -137,6 +137,17 @@ constexpr std::array<AttributeInfo, 16> kAttributes = {{
      "",
      "Register the type as a component besides the file's type.",
      "struct [[sfs::component]] TipBody {};"},
+    {SceneData,
+     "scene_data",
+     T,
+     AttributeArgs::None,
+     {},
+     "",
+     "",
+     "Mark the type as scene data: data the scene holds one of, apart "
+     "from every entity, read with `sceneData<T>()` and added with "
+     "`addSceneData<T>()`, never a component.",
+     "struct [[sfs::scene_data]] Scoreboard { int home = 0; int away = 0; };"},
     {EventNews,
      "event_news",
      T,

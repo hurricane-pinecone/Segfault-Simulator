@@ -45,7 +45,7 @@ struct World
 {
   AssetStore store;
   MockRenderer renderer;
-  Scene scene{0, SceneServices{.assetStore = store, .renderer = &renderer}};
+  Scene scene{0, SceneBackends{.assetStore = store, .renderer = &renderer}};
   MeshLibrary meshes{renderer};
 
   Entity spawn(const MeshData* mesh,

@@ -447,8 +447,10 @@ void ProjectIndex::buildLookup() const
   };
   for (const ScriptFile* file : m_sorted)
   {
-    // The one system the file sends for, when it has one: its jobs' and
-    // free functions'.
+    // The one system or service the file sends for, when it has one: its
+    // jobs' and free functions'.
+    const auto sends = [&](std::string_view name)
+    { return isSystem(name) || isService(name); };
     std::string_view only;
     bool several = false;
     const auto consider = [&](std::string_view name)
@@ -459,17 +461,17 @@ void ProjectIndex::buildLookup() const
         several = true;
     };
     for (const IndexEntry& entry : file->entries)
-      if (isSystem(entry.name))
+      if (sends(entry.name))
         consider(entry.name);
     for (const ResponseSend& send : file->sends)
-      if (isSystem(send.owner))
+      if (sends(send.owner))
         consider(send.owner);
     for (const ResponseSend& send : file->sends)
     {
       const std::string_view system =
-          isSystem(send.owner) ? std::string_view(send.owner)
-          : several            ? std::string_view{}
-                               : only;
+          sends(send.owner) ? std::string_view(send.owner)
+          : several         ? std::string_view{}
+                            : only;
       if (system.empty())
         continue;
       std::string type = resolveResponse(send, file->usings, kindOf);
@@ -521,6 +523,11 @@ bool ProjectIndex::isSystem(std::string_view name) const
 bool ProjectIndex::isGameObject(std::string_view name) const
 {
   return !name.empty() && rootKind(name) == codegen::TypeKind::GameObject;
+}
+
+bool ProjectIndex::isService(std::string_view name) const
+{
+  return !name.empty() && rootKind(name) == codegen::TypeKind::Service;
 }
 
 const QueryAlias* ProjectIndex::findAlias(std::string_view owner,

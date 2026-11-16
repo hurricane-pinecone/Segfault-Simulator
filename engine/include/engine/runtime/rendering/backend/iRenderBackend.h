@@ -15,12 +15,12 @@
 namespace sfs
 {
 
-struct SceneServices;
+struct SceneBackends;
 
 // The platform window + GPU context + per-frame lifecycle a Game draws through.
 // One concrete backend per graphics API (WebGPU today). Game owns one and
 // drives it; scenes never touch it directly -- they reach drawing through the
-// SceneServices the backend supplies.
+// SceneBackends the backend supplies.
 class IRenderBackend
 {
 public:
@@ -39,10 +39,11 @@ public:
 
   virtual void onResize(int width, int height) = 0;
 
-  // The drawing/asset services this backend offers scenes. Owned by the backend
-  // and valid until shutdown(); built during init(). A compute-only backend
-  // returns a bundle whose services are present but unused.
-  virtual SceneServices* sceneServices() = 0;
+  // The renderer and asset store this backend offers scenes (SceneBackends).
+  // Owned by the backend and valid until shutdown(); built during init(). A
+  // compute-only backend returns a bundle whose renderer is present but
+  // unused.
+  virtual SceneBackends* sceneBackends() = 0;
 
   // Per-frame lifecycle: beginFrame acquires the backbuffer and clears it
   // (WebGPU with SFS_LATE_ACQUIRE, and in a browser: later, once the scene's

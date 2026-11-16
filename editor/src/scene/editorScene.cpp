@@ -110,12 +110,13 @@ void EditorScene::clear()
   for (const sfs::Entity& entity : entities())
     destroyEntity(entity);
   flushEntities();
+  clearSceneData();
 }
 
 void EditorScene::resetToDefault(Style style)
 {
   clear();
-  gameSystems().clear();
+  sceneScripts() = {};
 
   sfs::RenderSystem& render = renderSystem();
   if (style != Style::ThreeD)

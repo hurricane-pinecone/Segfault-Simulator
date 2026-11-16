@@ -21,14 +21,18 @@ using SceneId = uint32_t;
 
 class Game;
 class IRenderer;
+namespace reflect
+{
+struct TypeInfo;
+}
 
-// Engine-owned services a scene draws and loads assets through, supplied by the
-// active render backend. Bundled into one value so they can be
+// The renderer and asset store a scene draws and loads assets through,
+// supplied by the active render backend. Bundled into one value so they can be
 // constructor-injected as a unit. The asset store always exists; the renderer
 // is null without one (a tool or test with no GPU). The SceneManager builds
 // this before constructing any scene, and everything in it outlives every
 // scene.
-struct SceneServices
+struct SceneBackends
 {
   AssetStore& assetStore;
   IRenderer* renderer = nullptr;
@@ -39,13 +43,13 @@ struct SceneServices
 class Scene
 {
 public:
-  Scene(SceneId id, const SceneServices& services)
-      : Scene(id, services, "scene_" + std::to_string(id))
+  Scene(SceneId id, const SceneBackends& backends)
+      : Scene(id, backends, "scene_" + std::to_string(id))
   {
   }
 
-  Scene(SceneId id, const SceneServices& services, const std::string& name)
-      : m_assetStore(services.assetStore), m_renderer(services.renderer),
+  Scene(SceneId id, const SceneBackends& backends, const std::string& name)
+      : m_assetStore(backends.assetStore), m_renderer(backends.renderer),
         m_id(id), m_name(name)
   {
     addSystem<TransformSystem>();
@@ -215,15 +219,72 @@ public:
   }
 
   /**
-   * The scene's one TComponent (a world clock, the weather), in constant
-   * time: Registry::singleton().
-   * @return the component, or null when no living entity has one
+   * The scene's one T, a type marked [[sfs::scene_data]] (a match's scoreboard,
+   * the weather), in constant time: Registry::sceneData().
+   * @return it, or null when the scene has none
    */
-  template <typename TComponent>
-  TComponent* singleton()
+  template <typename T>
+  T* sceneData()
   {
-    return m_registry.singleton<TComponent>();
+    return m_registry.sceneData<T>();
   }
+
+  /**
+   * Gives the scene its one T, a type marked [[sfs::scene_data]], made from
+   * `args`: Registry::addSceneData(). When it has one already, it logs an error
+   * and keeps that one.
+   * @return the scene's T
+   */
+  template <typename T, typename... TArgs>
+  T& addSceneData(TArgs&&... args)
+  {
+    return m_registry.addSceneData<T>(std::forward<TArgs>(args)...);
+  }
+
+  /** Destroys the scene's T, a type marked [[sfs::scene_data]], at once. */
+  template <typename T>
+  void removeSceneData()
+  {
+    m_registry.removeSceneData<T>();
+  }
+
+  /** Destroys all the scene's scene data, at once. */
+  void clearSceneData() { m_registry.clearSceneData(); }
+
+  /**
+   * The scene's data of a reflected scene data type: sceneData<T>() for a type
+   * known only at run time (the editor, the scene file).
+   * @param type the reflected type
+   * @return it, or null when the scene has none or the type isn't scene
+   *         data
+   */
+  void* sceneDataOf(const reflect::TypeInfo& type);
+
+  /**
+   * Gives the scene default-made data of a reflected scene data type:
+   * addSceneData<T>() for a type known only at run time. One it has is kept,
+   * with an error logged.
+   * @param type the reflected type
+   * @return the scene's one; null when the type isn't scene data
+   */
+  void* addSceneData(const reflect::TypeInfo& type);
+
+  /**
+   * Destroys the scene's data of a reflected scene data type; nothing when
+   * it has none or the type isn't scene data.
+   * @param type the reflected type
+   */
+  void removeSceneData(const reflect::TypeInfo& type);
+
+  /**
+   * The flushed, living entities with a reflected component type, in id
+   * order: query<T>() for a type known only at run time (tools that work
+   * from reflection, as Unity's FindObjectsOfType(Type)).
+   * @param type the component's reflected type
+   * @return its query list, read-only; empty for a type that isn't a
+   *         component
+   */
+  const std::vector<Entity>& holdersOf(const reflect::TypeInfo& type);
 
   template <typename TSystem, typename... TArgs>
   TSystem& addSystem(TArgs&&... args);
@@ -247,6 +308,30 @@ public:
   void forEachSystem(Fn&& fn)
   {
     m_registry.forEachSystem(std::forward<Fn>(fn));
+  }
+
+  /**
+   * Adds a service (docs/core/services), as Registry::addService() does: it
+   * runs at the start of each step, before the systems, whenever its event
+   * handles have something new.
+   * @param args what its constructor takes
+   * @return the service
+   */
+  template <typename TService, typename... TArgs>
+  TService& addService(TArgs&&... args)
+  {
+    return m_registry.addService<TService>(std::forward<TArgs>(args)...);
+  }
+
+  /**
+   * Calls fn(Service&) for each service, in the order they were added (debug
+   * tooling: enable/disable, inspect).
+   * @param fn what to call
+   */
+  template <typename Fn>
+  void forEachService(Fn&& fn)
+  {
+    m_registry.forEachService(std::forward<Fn>(fn));
   }
 
 private:

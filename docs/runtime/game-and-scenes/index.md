@@ -103,7 +103,7 @@ build the level in `onInit()`:
 ```cpp
 class MyScene : public sfs::Scene
 {
-  using sfs::Scene::Scene; // inherit the (id, services[, name]) constructors
+  using sfs::Scene::Scene; // inherit the (id, backends[, name]) constructors
 
 protected:
   void onInit() override
@@ -123,13 +123,21 @@ protected:
 ```
 
 Inside a scene you have `createEntity()`, `createObject<T>()`, `addSystem<T>()` /
-`getSystem<T>()` / `tryGetSystem<T>()` / `hasSystem<T>()`, `events()` (the
+`getSystem<T>()` / `tryGetSystem<T>()` / `hasSystem<T>()`,
+`addService<T>()` / `forEachService(fn)` ([services](../../core/services/index.md)),
+`events()` (the
 scene's [events](../../core/events/index.md): `events().send(E{...})`, and
 consumers and requesters made in an object's `onCreate` and kept, whose
 handlers run before its `onUpdate`; not SDL's `Game::onEvent`),
-plus the engine services: `assetStore()` and `renderer()`, the backend's renderer. Without a
+`query<Ts...>()` (see
+[ECS](../../core/ecs/index.md#queries-lists-of-entities-by-component)),
+`sceneData<T>()`, `addSceneData<T>()` and `removeSceneData<T>()` (the
+scene's [scene data](../../core/ecs/index.md#scene-data)),
+`holdersOf(type)` (a reflected component type's entities, for tools that work
+from [reflection](../../core/reflection/index.md)),
+plus the scene backends: `assetStore()` and `renderer()`, the backend's renderer. Without a
 renderer (a headless host) `renderer()` is a fatal error (logged, and the game
-ends with a message); `tryRenderer()` returns null instead. See [Rendering](../rendering/index.md#scene-services).
+ends with a message); `tryRenderer()` returns null instead. See [Rendering](../rendering/index.md#scene-backends).
 Without a `Space2D` the render system draws a 3D world; see
 [Styles](../rendering/styles/index.md) for a flat or isometric game.
 
@@ -151,7 +159,9 @@ processInput → update(dt) → render
   [Input contexts](#input-contexts)), then the scene's.
 - **update** — `Game::onUpdate`, the scene's flush (entities made or
   destroyed last frame join or leave), the frame boundary of its
-  [events](../../core/events/index.md), every enabled `System`'s `update(dt)`, each
+  [events](../../core/events/index.md), then for each step (one, or several
+  when the game runs fast) the enabled [services](../../core/services/index.md)
+  with something new and every enabled `System`'s `update(dt)`, then each
   GameObject's `onUpdate`, the scene's `onUpdate`, and then every enabled
   `System`'s `lateUpdate(dt)` (see
   [ECS](../../core/ecs/index.md#late-update)).
@@ -177,7 +187,8 @@ mapping contexts do:
 
 ```cpp
 // Driving: these keys are the drive's while the player is at the wheel.
-auto& context = entity().addComponent<sfs::InputContextComponent>();
+entity().addComponent<sfs::InputContextComponent>();
+auto& context = *entity().getComponent<sfs::InputContextComponent>();
 context.keys = {"W", "A", "S", "D", "Space", "Up", "Down"};
 context.priority = 2;
 context.active = false; // set while driving
@@ -203,7 +214,7 @@ The contexts are read as they stand after the last frame, so a mode switch
 int main()
 {
   MyGame game;
-  if (!game.init(1280, 720))   // window, GPU device, engine services
+  if (!game.init(1280, 720))   // window, GPU device, scene backends
     return 1;
   game.setup();                // runs your onSetup -> create scenes
   game.run();                  // the main loop until quit; tears down on exit

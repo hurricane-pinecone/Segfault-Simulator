@@ -56,7 +56,7 @@ struct Editor
                  sfs::AssetDatabase::projectFolders())
   {
     store.setDatabase(&database);
-    manager.setSceneServices(&services);
+    manager.setSceneBackends(&backends);
     scene = manager.createScene<EditorScene>();
     document = std::make_unique<SceneDocument>(*scene);
     history = std::make_unique<EditorHistory>(context);
@@ -70,7 +70,7 @@ struct Editor
   sfs::AssetDatabase database;
   sfs::AssetStore store;
   sfs::testing3d::MockRenderer renderer;
-  sfs::SceneServices services{.assetStore = store, .renderer = &renderer};
+  sfs::SceneBackends backends{.assetStore = store, .renderer = &renderer};
   sfs::SceneManager manager;
   EditorScene* scene = nullptr;
   std::unique_ptr<SceneDocument> document;

@@ -575,5 +575,80 @@ int main()
     CHECK(jobFreed.load() != std::this_thread::get_id());
   }
 
+  TEST("collected false: a job is forgotten as it ends (done, failed, "
+       "cancelled), what it holds freed on a worker")
+  {
+    struct Heavy
+    {
+      explicit Heavy(std::atomic<int>* f, std::atomic<bool>* other)
+          : freed(f), onOtherThread(other), made(std::this_thread::get_id())
+      {
+      }
+      Heavy(const Heavy&) = delete;
+      std::atomic<int>* freed;
+      std::atomic<bool>* onOtherThread;
+      std::thread::id made;
+      ~Heavy()
+      {
+        if (std::this_thread::get_id() != made)
+          *onOtherThread = true;
+        ++*freed;
+      }
+    };
+    PlanScheduler::Settings settings;
+    settings.threads = 2;
+    PlanScheduler s(settings);
+    std::atomic<int> freed{0};
+    std::atomic<bool> onWorker{false};
+    std::atomic<int> ended{0};
+    const auto uncollected = [&](uint64_t owner, int outcome)
+    {
+      PlanScheduler::Request r;
+      r.owner = owner;
+      r.label = "answers by responder";
+      r.collected = false;
+      r.step = [held = std::make_shared<Heavy>(&freed, &onWorker),
+                outcome,
+                &ended](PlanScheduler::Context& ctx)
+      {
+        if (outcome == 2)
+        {
+          while (!ctx.cancelled())
+            std::this_thread::sleep_for(1ms);
+          return PlanScheduler::Step::Done;
+        }
+        ++ended;
+        if (outcome == 1)
+          throw std::runtime_error("no way through");
+        return PlanScheduler::Step::Done;
+      };
+      return s.submit(std::move(r));
+    };
+    const PlanScheduler::JobId done = uncollected(1, 0);
+    const PlanScheduler::JobId failed = uncollected(2, 1);
+    const PlanScheduler::JobId cancelled = uncollected(3, 2);
+    for (int i = 0; i < 2000 && ended.load() < 2; ++i)
+      std::this_thread::sleep_for(1ms);
+    s.cancel(cancelled);
+    for (int i = 0; i < 2000 && freed.load() < 3; ++i)
+      std::this_thread::sleep_for(1ms);
+    CHECK(freed.load() == 3);
+    CHECK(onWorker.load());
+    CHECK(s.state(done) == PlanScheduler::State::Unknown);
+    CHECK(s.state(failed) == PlanScheduler::State::Unknown);
+    CHECK(s.state(cancelled) == PlanScheduler::State::Unknown);
+    CHECK(s.pending() == 0u);
+    // A collected job (the default) still waits for its collect().
+    const PlanScheduler::JobId kept =
+        s.submitOne(4,
+                    "kept",
+                    Clock::now(),
+                    [](const std::atomic<bool>&) { return std::any(1); });
+    CHECK(waitFor(s, kept));
+    CHECK(s.state(kept) == PlanScheduler::State::Done);
+    CHECK(s.collect(kept).legs.size() == 1u);
+    CHECK(s.state(kept) == PlanScheduler::State::Unknown);
+  }
+
   return testing::report("schedulerTests");
 }

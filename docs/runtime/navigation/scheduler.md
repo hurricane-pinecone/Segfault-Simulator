@@ -72,12 +72,21 @@ for (const std::any& leg : c.legs)
   its [Responder](../../core/events/index.md#requests-and-responses) and sets
   `r.wanted = [responder] { return !responder.superseded(); };`, so a newer
   request, a cancel or the entity's destruction stops it. Keep it a cheap check.
+- **Answering through a Responder.** A job that answers its request with the
+  Responder it copied (`progress()`, `respond()`, `fail()` from the worker)
+  is never collected, so it sets `r.collected = false`: the scheduler forgets
+  it as it ends (`Done`, `Failed` or cancelled), letting go of what its step
+  holds on a worker, and `state()` gives `Unknown` from then on. Left at its
+  default (`true`), a finished job waits for its `collect()`. A
+  [service](../../core/services/index.md#a-planner) planning this way owns its
+  scheduler.
 - **Errors.** A step that throws is caught and logged (`LOG_ERROR`), its job
   ends `Failed`; nothing escapes into the game loop.
 - **Letting go off the game thread.** `release(object)` hands something heavy
   (a finished plan's copy of the world, its checkers) to a worker, which drops
   the last hold on it: freeing it never costs the game thread. A job forgotten
-  by `collect()` (finished) or `cancel()` is let go the same way. Make heavy
+  by `collect()` (finished), as it ends uncollected, or by `cancel()` is let
+  go the same way. Make heavy
   per-job state on the worker too (in the job's first step), so the game
   thread's part of planning is only handing requests over and taking legs in.
 

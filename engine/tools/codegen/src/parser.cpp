@@ -330,7 +330,7 @@ private:
     {
       const TSNode name = field(node, "name");
       const TypeMarks marks = typeMarks(node);
-      const bool marked = marks.component;
+      const bool marked = marks.component || marks.sceneData;
       if (marks.events != 0)
       {
         // An event is sent and read, never registered: no component, no
@@ -343,6 +343,14 @@ private:
                      " can't be a component too, since a component is state "
                      "and an event is what one system tells another. Remove "
                      "[[sfs::component]] or the event attribute.");
+        if (marks.sceneData)
+          report(RuleId::SceneDataDeclaration,
+                 node,
+                 "The event " + text(name) +
+                     " can't be [[sfs::scene_data]] too, since scene data is "
+                     "state the scene holds and an event is what one system "
+                     "tells another. Remove [[sfs::scene_data]] or the event "
+                     "attribute.");
         parseEvent(node, marks);
       }
       else if (m_classDepth == 0 && !ts_node_is_null(name) &&
@@ -354,8 +362,20 @@ private:
                  "More than one type is named " + text(name) +
                      ". Give each type a name of its own.");
         else
-          parseType(node, kind == "struct_specifier", marked);
+          parseType(node, kind == "struct_specifier", marks);
       }
+      else if (marks.sceneData && ts_node_is_null(name))
+        report(RuleId::SceneDataDeclaration,
+               node,
+               "An unnamed type can't be [[sfs::scene_data]], since "
+               "sceneData<T>() names it. Give it a name, or remove "
+               "[[sfs::scene_data]].");
+      else if (marks.sceneData && (m_classDepth > 0 || m_localDepth > 0))
+        report(RuleId::SceneDataDeclaration,
+               node,
+               "The scene data type " + text(name) +
+                   " is nested or a template, so it isn't registered. "
+                   "Declare it as a plain type at namespace scope.");
       else if (marked && ts_node_is_null(name))
         report(RuleId::ComponentNotRegistered,
                node,
@@ -368,7 +388,7 @@ private:
                    " is nested or a template, so it isn't registered. Declare "
                    "it as a plain type at namespace scope.");
       else if (marked)
-        parseType(node, kind == "struct_specifier", marked);
+        parseType(node, kind == "struct_specifier", marks);
       if (marks.events == 0 && !ts_node_is_null(name) && m_classDepth == 0 &&
           m_localDepth == 0)
         m_result.plainTypes.push_back(qualified(text(name)));
@@ -417,6 +437,7 @@ private:
   struct TypeMarks
   {
     bool component = false; // [[sfs::component]]
+    bool sceneData = false; // [[sfs::scene_data]]
     int events = 0;         // event attributes ([[sfs::event_news]], ...)
     EventKind event = EventKind::News; // the first one's kind
     // [[sfs::event_request(S, progress = P, failure = F)]]'s roles.
@@ -425,8 +446,9 @@ private:
     std::string failure;
   };
 
-  // Which of [[sfs::component]] and the event attributes a class specifier
-  // carries; warns about any other [[sfs::...]] attribute on it.
+  // Which of [[sfs::component]], [[sfs::scene_data]] and the event attributes
+  // a class specifier carries; warns about any other [[sfs::...]] attribute
+  // on it.
   TypeMarks typeMarks(TSNode node)
   {
     TypeMarks marks;
@@ -454,6 +476,11 @@ private:
         if (info->id == AttributeId::Component)
         {
           marks.component = true;
+          continue;
+        }
+        if (info->id == AttributeId::SceneData)
+        {
+          marks.sceneData = true;
           continue;
         }
         EventKind event = EventKind::News;
@@ -723,9 +750,10 @@ private:
   }
 
   // Registers a class specifier: the file's type, or (marked) one of the
-  // header's [[sfs::component]] types.
-  void parseType(TSNode node, bool isStruct, bool marked)
+  // header's [[sfs::component]] or [[sfs::scene_data]] types.
+  void parseType(TSNode node, bool isStruct, const TypeMarks& marks)
   {
+    const bool marked = marks.component || marks.sceneData;
     TypeModel model;
     model.name = text(field(node, "name"));
     model.nameRange = rangeOf(field(node, "name"));
@@ -734,10 +762,35 @@ private:
     for (const std::string& ns : m_namespaces)
       model.qualifiedName += ns + "::";
     model.qualifiedName += model.name;
+    model.scopes = m_scopes;
+    model.classKey = isStruct ? "struct" : "class";
     model.kind = classify(node, model);
 
     const bool fileType = lowercase(model.name) == m_target;
-    if (marked && model.kind != TypeKind::Component)
+    if (marks.sceneData)
+    {
+      if (marks.component)
+      {
+        report(RuleId::SceneDataDeclaration,
+               node,
+               model.name + " can't be both [[sfs::scene_data]] and "
+                            "[[sfs::component]]: scene data is held by the "
+                            "scene, a component by an entity. Remove one.");
+        return;
+      }
+      if (model.kind != TypeKind::Component)
+      {
+        report(RuleId::SceneDataDeclaration,
+               node,
+               model.name + " derives from " + baseOf(node) +
+                   ", but scene data is a plain type with no base. Give " +
+                   model.name + " the fields itself, or remove "
+                                "[[sfs::scene_data]].");
+        return;
+      }
+      model.kind = TypeKind::SceneData;
+    }
+    else if (marked && model.kind != TypeKind::Component)
     {
       report(RuleId::ComponentBase,
              node,
@@ -936,6 +989,8 @@ private:
         }
         else if (name == "System" || name == "sfs::System")
           kind = TypeKind::System;
+        else if (name == "Service" || name == "sfs::Service")
+          kind = TypeKind::Service;
         else if (name == "MeshSource" || name == "sfs::MeshSource")
           kind = TypeKind::MeshSource;
         else if (name == "ScriptableObject" || name == "sfs::ScriptableObject")
@@ -954,8 +1009,9 @@ private:
                  base,
                  name + " isn't a base a script type can have. Derive from "
                         "sfs::GameObject, sfs::ui::Layer, sfs::System, "
-                        "sfs::MeshSource, sfs::ScriptableObject or another "
-                        "reflected type, or from nothing for a component.");
+                        "sfs::Service, sfs::MeshSource, "
+                        "sfs::ScriptableObject or another reflected type, or "
+                        "from nothing for a component.");
       }
     }
     return kind;
@@ -1150,6 +1206,7 @@ private:
     case AttributeId::Hide:
     case AttributeId::Show:
     case AttributeId::Component:
+    case AttributeId::SceneData:
     case AttributeId::EventNews:
     case AttributeId::EventEntityNews:
     case AttributeId::EventRequest:

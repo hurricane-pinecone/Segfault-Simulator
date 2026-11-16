@@ -42,7 +42,7 @@ public:
   /** Destroy an entity and everything below it (applied immediately). */
   void destroyBranch(const sfs::Entity& entity);
 
-  /** Remove every entity (applied immediately). */
+  /** Remove every entity and the scene data (applied immediately). */
   void clear();
 
   /**

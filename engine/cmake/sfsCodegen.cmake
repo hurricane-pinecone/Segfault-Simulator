@@ -32,7 +32,8 @@ endfunction()
 # sfs_generate_reflection: run sfs-codegen over script headers and compile the
 # generated registration into a target. The same scan writes the headers'
 # event traits (the compile-time kinds, responses and ancestors of their
-# [[sfs::event_...]] types), which every file of the target includes first.
+# [[sfs::event_...]] types) and their [[sfs::scene_data]] types' traits, which
+# every file of the target includes first.
 #
 #   sfs_generate_reflection(<target>
 #       MODULE <name>              # stored on each registered type
@@ -40,12 +41,15 @@ endfunction()
 #       HEADERS <header>...        # one script type per header
 #       [FUNCTION_HEADER <header>] # declares FUNCTION (default: reflection.h)
 #       [INCLUDE_ROOT <dir>]       # include headers relative to this
-#       [EVENT_SOURCES <file>...]  # other files declaring event types (.cpp,
-#                                  # or headers scanned for events alone)
-#       [EVENT_TRAITS <header>]    # write the event traits here, included by
-#                                  # engine/core/events/eventTraits.h rather
-#                                  # than by every file (the engine's own)
-#       [NO_EVENT_TRAITS])         # the headers declare no event types
+#       [EVENT_SOURCES <file>...]  # other files declaring event or scene data
+#                                  # types (.cpp, or headers scanned for their
+#                                  # traits alone)
+#       [EVENT_TRAITS <header>]    # write the traits here, included by
+#                                  # engine/core/events/eventTraits.h and
+#                                  # engine/core/ecs/sceneData.h rather than
+#                                  # by every file (the engine's own)
+#       [NO_EVENT_TRAITS])         # the headers declare no event or scene
+#                                  # data types
 #
 # The tool is SFS_CODEGEN_COMMAND: the in-tree sfs-codegen target in a native
 # build, or the host executable in SFS_CODEGEN_EXECUTABLE when cross-compiling.

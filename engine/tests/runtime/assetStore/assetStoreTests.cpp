@@ -165,7 +165,7 @@ int main()
     // The development key's cycle: from none the first, then on, wrapping;
     // back the other way. Each switch takes the variant tag with it.
     testing3d::MockRenderer renderer;
-    Scene scene{0, SceneServices{.assetStore = store, .renderer = &renderer}};
+    Scene scene{0, SceneBackends{.assetStore = store, .renderer = &renderer}};
     RenderSystem& render = scene.addSystem<RenderSystem>(renderer);
     render.setStyleSource(
         [&store, &database](std::string_view name) -> std::optional<VisualStyle>

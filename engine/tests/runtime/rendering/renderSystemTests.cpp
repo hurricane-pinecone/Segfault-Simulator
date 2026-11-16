@@ -74,7 +74,7 @@ struct Harness
 {
   AssetStore store;
   MockRenderer renderer;
-  Scene scene{0, SceneServices{.assetStore = store, .renderer = &renderer}};
+  Scene scene{0, SceneBackends{.assetStore = store, .renderer = &renderer}};
   RenderSystem& system = scene.addSystem<RenderSystem>(renderer);
 
   Harness()
@@ -1627,7 +1627,7 @@ int main()
     MockRenderer renderer;
     {
       AssetStore store;
-      Scene scene{0, SceneServices{.assetStore = store, .renderer = &renderer}};
+      Scene scene{0, SceneBackends{.assetStore = store, .renderer = &renderer}};
       auto& system = scene.addSystem<RenderSystem>(renderer);
       system.meshes().add(meshes::box({1, 1, 1}));
       system.meshes().add(meshes::plane({1, 1}));
@@ -2385,7 +2385,7 @@ int main()
     MockRenderer renderer;
     {
       AssetStore store;
-      Scene scene{0, SceneServices{.assetStore = store, .renderer = &renderer}};
+      Scene scene{0, SceneBackends{.assetStore = store, .renderer = &renderer}};
       RenderSystem& system = scene.addSystem<RenderSystem>(renderer);
       MeshLibrary::Provider provider;
       provider.loadMaterial = [](std::string_view)

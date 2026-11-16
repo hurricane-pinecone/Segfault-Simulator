@@ -313,6 +313,11 @@ struct FileClass
    * as a component.
    */
   bool component;
+  /**
+   * Whether it's a service: its base clause names SFS's Service, or another
+   * service class of the file or the project.
+   */
+  bool service;
 };
 
 /** A registerComponent<T>() in a system's constructor or create(). */
@@ -431,6 +436,9 @@ struct LintFile
 
   /** Whether `name` is a System class of the file or the project. */
   bool isSystemClass(std::string_view name) const;
+
+  /** Whether `name` is a Service class of the file or the project. */
+  bool isServiceClass(std::string_view name) const;
 
   /** The file's class called `name`, or null. */
   const FileClass* fileClass(std::string_view name) const;

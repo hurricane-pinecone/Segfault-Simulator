@@ -83,21 +83,48 @@ QueryView<TTerms...> Registry::query()
       this, &m_queryLists[listOf(detail::querySignature<TTerms...>())]);
 }
 
-template <typename TComponent>
-TComponent* Registry::singleton()
+template <typename T>
+T* Registry::sceneData()
 {
-  const std::size_t id =
-      static_cast<std::size_t>(Component<TComponent>::getId());
-  if (m_holderCount[id] == 0)
-    return nullptr;
-  if (m_holderCount[id] > 1 && !m_warnedNotSingle[id])
-    warnNotSingle(id, detail::componentTypeKey<TComponent>());
-  if (m_holder[id] == kNoHolder)
-    m_holder[id] = findHolder(id);
-  if (m_holder[id] == kNoHolder)
-    return nullptr;
-  Pool<std::remove_cv_t<TComponent>>* pool = poolOf<TComponent>();
-  return pool ? pool->find(m_holder[id]) : nullptr;
+  (void)sizeof(detail::RequireSceneData<T>);
+  const std::size_t id = detail::sceneDataId<T>();
+  return id < m_sceneData.size()
+             ? static_cast<std::remove_cv_t<T>*>(m_sceneData[id].get())
+             : nullptr;
+}
+
+template <typename T, typename... TArgs>
+T& Registry::addSceneData(TArgs&&... args)
+{
+  (void)sizeof(detail::RequireSceneData<T>);
+  static_assert(!std::is_const_v<T> && !std::is_volatile_v<T>,
+                "add the scene data itself, not a const one: const is for "
+                "reading it (sceneData<const T>())");
+  const std::size_t id = detail::sceneDataId<T>();
+  while (m_sceneData.size() <= id)
+    m_sceneData.emplace_back(nullptr, [](void*) {});
+  if (m_sceneData[id])
+  {
+    sceneDataExists(detail::componentTypeKey<T>());
+    return *static_cast<T*>(m_sceneData[id].get());
+  }
+  T* made = nullptr;
+  if constexpr (std::is_constructible_v<T, TArgs&&...>)
+    made = new T(std::forward<TArgs>(args)...);
+  else
+    made = new T{std::forward<TArgs>(args)...};
+  m_sceneData[id] = {made, [](void* data) { delete static_cast<T*>(data); }};
+  return *made;
+}
+
+template <typename T>
+void Registry::removeSceneData()
+{
+  (void)sizeof(detail::RequireSceneData<T>);
+  static_assert(!std::is_const_v<T> && !std::is_volatile_v<T>,
+                "remove the scene data itself, not a const one");
+  if (const std::size_t id = detail::sceneDataId<T>(); id < m_sceneData.size())
+    m_sceneData[id].reset();
 }
 
 template <typename TComponent>
@@ -134,6 +161,32 @@ TSystem& Registry::addSystem(TArgs&&... args)
   attach(*base);
 
   return *ptr;
+}
+
+template <typename TService, typename... TArgs>
+TService& Registry::addService(TArgs&&... args)
+{
+  static_assert(std::is_base_of_v<Service, TService>,
+                "addService<T>() adds an sfs::Service (docs/core/services); "
+                "add a System with addSystem<T>()");
+  auto service = std::make_unique<TService>(std::forward<TArgs>(args)...);
+  TService* ptr = service.get();
+  Service* base = ptr;
+  base->m_registry = this;
+  detail::EventHost::attach(*base, &m_events);
+  m_services.emplace_back(std::move(service));
+
+  detail::EventHost::declaring(*base, true);
+  base->create();
+  detail::EventHost::declaring(*base, false);
+  return *ptr;
+}
+
+template <typename Fn>
+void Registry::forEachService(Fn&& fn)
+{
+  for (const std::unique_ptr<Service>& service : m_services)
+    fn(*service);
 }
 
 template <typename TSystem>

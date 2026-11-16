@@ -96,20 +96,28 @@ ScriptRegistry& scripts()
 }
 
 void startScripts(Scene& scene,
-                  const std::vector<std::string>& systems,
+                  const SceneScripts& scripts,
                   MeshLibrary* meshes)
 {
   // Playing now: animators move their joints, their time running.
   if (AnimationSystem* animation = scene.tryGetSystem<AnimationSystem>())
     animation->setLive(true);
 
-  for (const std::string& name : systems)
+  for (const std::string& name : scripts.systems)
   {
-    const ScriptType* type = scripts().find(name);
+    const ScriptType* type = sfs::scripts().find(name);
     if (type && type->kind == ScriptType::Kind::System)
       type->addSystem(scene);
     else
       LOG_ERROR("Play: no game system named '" + name + "'");
+  }
+  for (const std::string& name : scripts.services)
+  {
+    const ScriptType* type = sfs::scripts().find(name);
+    if (type && type->kind == ScriptType::Kind::Service)
+      type->addService(scene);
+    else
+      LOG_ERROR("Play: no game service named '" + name + "'");
   }
 
   startObjects(scene, scene.entities(), meshes);

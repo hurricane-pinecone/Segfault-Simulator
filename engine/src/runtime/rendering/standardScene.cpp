@@ -75,13 +75,13 @@ bool StandardScene::play(const std::filesystem::path& file)
     destroyEntity(entity);
   flushEntities();
 
-  if (!serializer().loadFile(file, *this, &m_gameSystems))
+  if (!serializer().loadFile(file, *this, &m_scripts))
     return false;
   flushEntities();
   // Scriptable objects load into this scene's meshes (afresh, if another's were
   // used).
   scriptableObjects().setMeshes(&m_render->meshes());
-  startScripts(*this, m_gameSystems, &m_render->meshes());
+  startScripts(*this, m_scripts, &m_render->meshes());
   return true;
 }
 

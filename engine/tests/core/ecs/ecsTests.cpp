@@ -1101,38 +1101,6 @@ int main()
     CHECK(reg.componentChanges<Velocity>() != again);
   }
 
-  TEST("singleton should find the one entity with a component, kept up to "
-       "date as it comes and goes")
-  {
-    Registry reg;
-    CHECK(reg.singleton<Health>() == nullptr);
-    Entity a = reg.createEntity();
-    a.addComponent<Position>();
-    CHECK(reg.singleton<Health>() == nullptr);
-    a.addComponent<Health>();
-    CHECK(reg.singleton<Health>() == a.getComponent<Health>());
-    reg.flushEntities();
-    CHECK(reg.singleton<Health>() == a.getComponent<Health>());
-
-    // Several: one of them, still.
-    Entity b = reg.createEntity();
-    b.addComponent<Health>();
-    Health* either = reg.singleton<Health>();
-    CHECK(either == a.getComponent<Health>() ||
-          either == b.getComponent<Health>());
-
-    // The remembered one loses it: the other is found.
-    a.removeComponent<Health>();
-    CHECK(reg.singleton<Health>() == b.getComponent<Health>());
-
-    // Destroyed: gone once the flush takes it.
-    reg.destroyEntity(b);
-    reg.flushEntities();
-    CHECK(reg.singleton<Health>() == nullptr);
-    a.addComponent<Health>();
-    CHECK(reg.singleton<Health>() == a.getComponent<Health>());
-  }
-
   TEST("query should list the entities with all its components in id order, "
        "kept up to date, the same list each time")
   {
@@ -2046,8 +2014,6 @@ int main()
     CHECK(&velocities.held(a.getId()) == found);
     static_assert(
         std::is_same_v<decltype(velocities.held(0)), const Velocity&>);
-    const Health* only = reg.singleton<const Health>();
-    CHECK(only != nullptr && only == b.getComponent<Health>());
     // These don't compile, so they aren't tested here: const on a group or
     // list (query<const Query<...>>(): QueryTerm's static_assert says to put
     // it on the components inside), and adding or removing a const component

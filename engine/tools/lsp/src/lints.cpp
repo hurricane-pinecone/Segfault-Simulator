@@ -111,7 +111,8 @@ constexpr std::array<std::string_view, 11> kObjectLateMethods = {
     "onTriggerEnter2D",
     "onTriggerExit2D"};
 
-// System methods that only run once the system is in a registry.
+// System methods that only run once the system is in a registry: a service
+// has none of them.
 constexpr std::array<std::string_view, 5> kLateMethods = {"update",
                                                           "lateUpdate",
                                                           "render",
@@ -173,6 +174,7 @@ struct Linter::Walk : lint::LintFile
     std::string_view name;
     bool system;
     bool component;
+    bool service;
   };
 
   struct FunctionScope
@@ -183,7 +185,8 @@ struct Linter::Walk : lint::LintFile
     bool system;             // a method of a System class
     std::string_view entity; // its first parameter: a hook's own entity
     std::size_t bindings, candidates,
-        assigned; // where its own-entity state starts
+        assigned;         // where its own-entity state starts
+    bool service = false; // a method of a Service class
   };
 
   // A reference or pointer bound to a component of an entity variable.
@@ -302,9 +305,14 @@ struct Linter::Walk : lint::LintFile
       return 0;
     case Kind::ParameterDeclaration:
       redeclared(declaredName(field(node, "declarator")));
+      checkServiceReach(node);
+      return 0;
+    case Kind::QualifiedIdentifier:
+      checkEngineInternal(node);
       return 0;
     case Kind::Declaration:
       readDeclaration(node);
+      checkServiceReach(node);
       // A condition's declaration has its value itself: if (auto* v = ...).
       if (!ts_node_is_null(field(node, "value")))
         readBinding(node);
@@ -317,6 +325,7 @@ struct Linter::Walk : lint::LintFile
       return 0;
     case Kind::NamespaceAliasDefinition:
       noteUsing(node, source, *path, usings);
+      checkNamespaceAlias(node);
       return 0;
     case Kind::AliasDeclaration:
     case Kind::TypeDefinition:
@@ -361,7 +370,7 @@ struct Linter::Walk : lint::LintFile
   {
     if (ts_node_is_null(field(node, "body")))
       return false;
-    ClassScope scope{text(field(node, "name")), false, false};
+    ClassScope scope{text(field(node, "name")), false, false, false};
     bool based = false;
     bool event = false;
     for (uint32_t i = 0; i < namedCount(node); ++i)
@@ -381,6 +390,9 @@ struct Linter::Walk : lint::LintFile
         scope.system = scope.system || isSfsName(base, "System") ||
                        (lastName(base) != scope.name &&
                         isSystemClass(lastName(base)));
+        scope.service = scope.service || isSfsName(base, "Service") ||
+                        (lastName(base) != scope.name &&
+                         isServiceClass(lastName(base)));
       }
     }
     // Codegen takes a type marked both [[sfs::component]] and an event
@@ -395,7 +407,8 @@ struct Linter::Walk : lint::LintFile
       scope.component = entry && entry->kind == codegen::TypeKind::Component &&
                         entry->header == path->lexically_normal();
     }
-    fileClasses.push_back({scope.name, node, scope.system, scope.component});
+    fileClasses.push_back(
+        {scope.name, node, scope.system, scope.component, scope.service});
     classes.push_back(scope);
     return true;
   }
@@ -478,6 +491,7 @@ struct Linter::Walk : lint::LintFile
         }
         scope.method = text(name);
         scope.system = isSystemClass(scope.owner);
+        scope.service = isServiceClass(scope.owner);
       }
       else if (!ts_node_is_null(name))
       {
@@ -486,6 +500,9 @@ struct Linter::Walk : lint::LintFile
         {
           scope.owner = classes.back().name;
           scope.system = classes.back().system;
+          scope.service = classes.back().service;
+          if (scope.service)
+            checkServiceMethod(name, scope.method);
         }
       }
     }
@@ -777,9 +794,12 @@ struct Linter::Walk : lint::LintFile
     }
     else if (!classes.empty())
       owner = classes.back().name; // a member's initialiser
-    const bool system = isSystemClass(owner);
+    // A system's and a service's handles follow the same rules.
+    const bool service = isServiceClass(owner);
+    const bool system = service || isSystemClass(owner);
     if (!system && (own || !isGameObjectClass(owner)))
       return;
+    const std::string_view what = service ? "service" : "system";
     const std::string handle =
         std::string(name) + "<" + tidy(text(type)) + ">()";
     const std::string made = "This " + handle;
@@ -788,9 +808,10 @@ struct Linter::Walk : lint::LintFile
     {
       report(RuleId::EventHandleOutsideCreate,
              call,
-             made + " is made through events(), which gives a system's "
-                    "handle no owner, so its handlers never run. A system "
-                    "makes its handles with its own " +
+             made + " is made through events(), which gives a " +
+                 std::string(what) +
+                 "'s handle no owner, so its handlers never run. A " +
+                 std::string(what) + " makes its handles with its own " +
                  handle + " in create().");
       return;
     }
@@ -811,7 +832,7 @@ struct Linter::Walk : lint::LintFile
              made + " isn't kept as a member, so it's dropped when " +
                  std::string(method) + "() returns and receives nothing. " +
                  "Assign it to a data member of the " +
-                 (system ? "system." : "object."));
+                 (system ? std::string(what) + "." : std::string("object.")));
   }
 
   // The code a call is in when that code runs once its class is set up, for
@@ -1082,10 +1103,9 @@ struct Linter::Walk : lint::LintFile
     std::vector<std::pair<std::string, std::string_view>> sent; // type, by
     sent.reserve(responseSends.size());
     for (const ResponseSend& send : responseSends)
-      sent.emplace_back(
-          resolveResponse(send, usings, kindOf),
-          isSystemClass(send.owner) ? std::string_view(send.owner)
-                                    : fileSystem);
+      sent.emplace_back(resolveResponse(send, usings, kindOf),
+                        sendsFor(send.owner) ? std::string_view(send.owner)
+                                             : fileSystem);
     const std::filesystem::path normal = path->lexically_normal();
     for (std::size_t i = 0; i < responseSends.size(); ++i)
     {
@@ -1113,18 +1133,26 @@ struct Linter::Walk : lint::LintFile
            *path,
            responseSends[i].range,
            "The response type " + type +
-               " is sent by one system, the one that consumes its request, "
-               "and " + std::string(other) +
-               " already sends it. Give this system's responses a type of "
-               "their own.",
+               " is sent by one system or service, the one that consumes "
+               "its request, and " +
+               std::string(other) +
+               " already sends it. Give this one's responses a type of their "
+               "own.",
            {},
            {}});
     }
   }
 
-  // The file's one system, which its jobs and free functions send for: of
-  // its system classes and the system owners of its sends; empty when it has
-  // none or several.
+  // Whether a class's sends are its own for response-sent-twice: a system's
+  // or a service's.
+  bool sendsFor(std::string_view owner) const
+  {
+    return isSystemClass(owner) || isServiceClass(owner);
+  }
+
+  // The file's one system or service, which its jobs and free functions send
+  // for: of its system and service classes and the owners of its sends that
+  // are; empty when it has none or several.
   std::string_view onlySystem() const
   {
     std::string_view only;
@@ -1137,10 +1165,10 @@ struct Linter::Walk : lint::LintFile
         several = true;
     };
     for (const lint::FileClass& found : fileClasses)
-      if (found.system)
+      if (found.system || found.service)
         consider(found.name);
     for (const ResponseSend& send : responseSends)
-      if (isSystemClass(send.owner))
+      if (sendsFor(send.owner))
         consider(send.owner);
     return several ? std::string_view{} : only;
   }
@@ -1533,11 +1561,15 @@ struct Linter::Walk : lint::LintFile
   // -------------------------------------------------------- system fields
 
   // A non-static member of the class being walked: per-entity-map for a
-  // system's, reader-on-component for a component's.
+  // system's or a service's, service-reaches-registry and
+  // service-update-method for a service's, reader-on-component for a
+  // component's.
   void checkMember(TSNode node)
   {
-    if (classes.empty() ||
-        (!classes.back().system && !classes.back().component))
+    if (classes.empty())
+      return;
+    const ClassScope& owner = classes.back();
+    if (!owner.system && !owner.component && !owner.service)
       return;
     const TSNode parent = ts_node_parent(node);
     if (ts_node_is_null(parent) ||
@@ -1550,10 +1582,154 @@ struct Linter::Walk : lint::LintFile
       if (kind(child) == Kind::StorageClassSpecifier && text(child) == "static")
         return;
     }
-    if (classes.back().system)
+    if (owner.service)
+    {
+      const TSNode declarator = field(node, "declarator");
+      if (kind(declarator) == Kind::FunctionDeclarator)
+      {
+        checkServiceMethod(field(declarator, "declarator"),
+                           text(field(declarator, "declarator")));
+        return;
+      }
+      checkServiceReach(node);
+    }
+    if (owner.system || owner.service)
       checkPerEntityMap(node);
     else
       checkReaderOnComponent(node);
+  }
+
+  // ------------------------------------------------------------- services
+
+  // service-update-method: a service's method named as a system's update or
+  // hook, which nothing calls.
+  void checkServiceMethod(TSNode name, std::string_view method)
+  {
+    if (ts_node_is_null(name) || !contains(kLateMethods, method))
+      return;
+    report(RuleId::ServiceUpdateMethod,
+           name,
+           "A Service has no update or hooks, so " + std::string(method) +
+               "() is never called. Do the work in an event handler, or make "
+               "it a System.");
+  }
+
+  // service-reaches-registry: a service's member, parameter (its methods',
+  // its constructors', their lambdas') or local whose written type holds an
+  // sfs::Registry or sfs::Scene (by pointer, reference or value, or wrapped:
+  // `std::unique_ptr<sfs::Scene>`), or an sfs::QueryView handed in. An `auto`
+  // local's type isn't written, so it isn't seen.
+  void checkServiceReach(TSNode node)
+  {
+    const bool inService =
+        functions.empty()
+            ? !classes.empty() && classes.back().service
+            : functions.back().service;
+    if (!inService)
+      return;
+    const TSNode type = field(node, "type");
+    if (ts_node_is_null(type))
+      return;
+    std::string_view held;
+    TSNode at;
+    lint::walkTree(
+        type,
+        [&](TSNode candidate)
+        {
+          if (lint::isType(candidate, "abstract_function_declarator"))
+            return lint::Next::Skip;
+          held = reachedBy(candidate);
+          if (held.empty())
+            return lint::Next::Descend;
+          at = candidate;
+          return lint::Next::Stop;
+        });
+    if (held.empty())
+      return;
+    report(RuleId::ServiceReachesRegistry,
+           at,
+           "A Service works on the entities its events hand it and never "
+           "reaches " +
+               std::string(held) +
+               ". Do work over lists of entities in a System.");
+  }
+
+  // What a written type names that a service mustn't hold: "the registry",
+  // "the scene" or "a list of entities" (an sfs::QueryView); empty for
+  // anything else.
+  std::string_view reachedBy(TSNode type) const
+  {
+    const Kind k = kind(type);
+    if (k == Kind::QualifiedIdentifier || lint::isType(type, "type_identifier"))
+    {
+      const std::string_view spelled = text(type);
+      if (isSfsName(spelled, "Registry"))
+        return "the registry";
+      if (isSfsName(spelled, "Scene"))
+        return "the scene";
+    }
+    if (k == Kind::QualifiedIdentifier && text(field(type, "scope")) == "sfs")
+    {
+      const TSNode name = field(type, "name");
+      if (kind(name) == Kind::TemplateType &&
+          text(field(name, "name")) == "QueryView")
+        return "a list of entities";
+    }
+    if (k == Kind::TemplateType && text(field(type, "name")) == "QueryView" &&
+        kind(lint::parent(type)) != Kind::QualifiedIdentifier &&
+        visible("QueryView"))
+      return "a list of entities";
+    return {};
+  }
+
+  // engine-internal: a name in sfs::detail in a project's code, written
+  // `sfs::detail::...`, or `detail::...` where SFS's names are visible. The
+  // SFS tree isn't a project, so it isn't checked.
+  void checkEngineInternal(TSNode node)
+  {
+    if (!index->enabled() ||
+        kind(lint::parent(node)) == Kind::QualifiedIdentifier ||
+        !namesSfsDetail(text(node)))
+      return;
+    reportEngineInternal(node);
+  }
+
+  // engine-internal for a namespace alias's target (`namespace d =
+  // sfs::detail;`), which isn't a qualified identifier.
+  void checkNamespaceAlias(TSNode node)
+  {
+    const uint32_t count = ts_node_named_child_count(node);
+    if (!index->enabled() || count == 0)
+      return;
+    const TSNode target = ts_node_named_child(node, count - 1);
+    if (kind(target) != Kind::QualifiedIdentifier &&
+        namesSfsDetail(text(target)))
+      reportEngineInternal(target);
+  }
+
+  // Whether a spelled name is sfs::detail or in it (`sfs::detail::X`, with or
+  // without a leading `::`), or `detail::X` where SFS's names are visible.
+  bool namesSfsDetail(std::string_view spelled) const
+  {
+    if (spelled.starts_with("::"))
+      spelled.remove_prefix(2);
+    const auto under = [&](std::string_view prefix)
+    {
+      return spelled.starts_with(prefix) &&
+             (spelled.size() == prefix.size() ||
+              spelled[prefix.size()] == ':' || spelled[prefix.size()] == '<');
+    };
+    return under("sfs::detail") ||
+           (spelled.starts_with("detail::") && (usingSfs || sfsDepth > 0));
+  }
+
+  void reportEngineInternal(TSNode node)
+  {
+    report(RuleId::EngineInternal,
+           node,
+           "`sfs::detail` is the engine's internals: it changes without "
+           "notice, and some of it opens what the API keeps closed. Use the "
+           "public API.");
   }
 
   void checkPerEntityMap(TSNode node)
@@ -1573,8 +1749,9 @@ struct Linter::Walk : lint::LintFile
       return;
     report(RuleId::PerEntityMap,
            node,
-           "A system should not keep per-entity data in a map keyed by "
-           "entity. Put the data on a component, in a hidden field.");
+           "A " + std::string(classes.back().service ? "service" : "system") +
+               " should not keep per-entity data in a map keyed by entity. "
+               "Put the data on a component, in a hidden field.");
   }
 
   // SFS's EventConsumer, EventRequester, EventBroadcast or Responder in a

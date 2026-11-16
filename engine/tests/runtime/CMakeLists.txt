@@ -1,5 +1,5 @@
 # Runtime tests link the full engine (SDL/imgui). They drive systems and render
-# modules through their seams (a mock IRenderer, stub services), so they run
+# modules through their seams (a mock IRenderer, stub backends), so they run
 # headless with no window or GPU. add_runtime_test(name source)
 # declares one in a line.
 function(add_runtime_test name source)
@@ -74,6 +74,8 @@ add_runtime_test(debugLinesTests rendering/debugLinesTests.cpp)
 
 # serialization/
 add_runtime_test(sceneSerializerTests serialization/sceneSerializerTests.cpp)
+sfs_event_traits(sceneSerializerTests FILES
+    "${CMAKE_CURRENT_SOURCE_DIR}/serialization/sceneSerializerTests.cpp")
 add_runtime_test(prefabTests serialization/prefabTests.cpp)
 
 # scripting/

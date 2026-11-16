@@ -11,7 +11,7 @@ inline bool Entity::isValid() const
 }
 
 template <typename TComponent, typename... TArgs>
-Entity& Entity::addComponent(TArgs&&... args)
+const Entity& Entity::addComponent(TArgs&&... args) const
 {
   if (!registry)
     Registry::refuseAdd(
@@ -23,7 +23,7 @@ Entity& Entity::addComponent(TArgs&&... args)
 }
 
 template <typename TComponent, typename... TArgs>
-Entity& Entity::addTag(TArgs&&... args)
+const Entity& Entity::addTag(TArgs&&... args) const
 {
   if (!registry)
     Registry::refuseAdd(

@@ -8,6 +8,7 @@
 #include <engine/core/components/transformComponent.h>
 #include <engine/core/hierarchy/hierarchy.h>
 #include <engine/core/particles/particleEffect.h>
+#include <engine/core/reflection/reflection.h>
 #include <engine/core/util/fatalError.h>
 #include <engine/runtime/assetStore/assetStore.h>
 #include <engine/runtime/game/gameObject.h>
@@ -25,6 +26,7 @@
 #include <cstdint>
 #include <string>
 #include <thread>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -36,10 +38,15 @@ struct Tagged
 {
 };
 
+struct [[sfs::scene_data]] Scoreboard
+{
+  int home = 0;
+};
+
 struct World
 {
   AssetStore store;
-  Scene scene{0, SceneServices{.assetStore = store}};
+  Scene scene{0, SceneBackends{.assetStore = store}};
 
   Entity named(const std::string& name, const Entity& parent = {})
   {
@@ -163,6 +170,53 @@ protected:
 private:
   TimeStep m_kind;
   EventConsumer<BeatEvent> m_beats;
+};
+
+// A turn number on an entity, replaced by TurnService and read by
+// TurnSystem.
+struct Turn
+{
+  int number = 0;
+};
+
+struct [[sfs::event_entity_news]] TurnEvent
+{
+  int number = 0;
+};
+
+// Gives an entity the turn its news names, one add over the old turn.
+class TurnService : public Service
+{
+protected:
+  void create() override
+  {
+    m_turns = consumer<TurnEvent>().onLatest(
+        [](const Entity& entity, const TurnEvent& turn)
+        {
+          if (entity)
+            entity.addComponent<Turn>(Turn{turn.number});
+        });
+  }
+
+private:
+  EventConsumer<TurnEvent> m_turns;
+};
+
+// Each step notes its entity's turn and asks for the next.
+class TurnSystem : public System
+{
+public:
+  Entity turning;
+  std::vector<int> seen;
+
+protected:
+  void update(double) override
+  {
+    const Turn* turn = turning.getComponent<Turn>();
+    const int number = turn ? turn->number : 0;
+    seen.push_back(number);
+    send(turning, TurnEvent{number + 1});
+  }
 };
 
 // A request and its response, for the responses taken in between steps.
@@ -413,6 +467,19 @@ std::vector<glm::vec2> particlePlaces(const ParticleEngine& particles)
 
 int main()
 {
+  TEST("a scene's scene data should be added, read const and removed")
+  {
+    World world;
+    CHECK(world.scene.sceneData<const Scoreboard>() == nullptr);
+    Scoreboard& board = world.scene.addSceneData<Scoreboard>(Scoreboard{2});
+    const Scoreboard* read = world.scene.sceneData<const Scoreboard>();
+    static_assert(std::is_same_v<decltype(read), const Scoreboard*>);
+    CHECK(read == &board && read->home == 2);
+    CHECK(world.scene.sceneData<Scoreboard>() == &board);
+    world.scene.removeSceneData<Scoreboard>();
+    CHECK(world.scene.sceneData<const Scoreboard>() == nullptr);
+  }
+
   TEST("findEntity should find by name, parents before children")
   {
     World world;
@@ -442,6 +509,25 @@ int main()
         world.scene.query<NameComponent, Tagged>();
     CHECK(both.size() == 1u && both[0] == tagged);
     CHECK(named.isValid());
+  }
+
+  TEST("holdersOf should list the holders of a reflected component type")
+  {
+    World world;
+    Entity town = world.named("Town");
+    Entity gate = world.named("Gate");
+    world.scene.flushEntities();
+
+    const reflect::TypeInfo* name = reflect::types().find("NameComponent");
+    CHECK(name != nullptr);
+    if (name)
+    {
+      const std::vector<Entity>& holders = world.scene.holdersOf(*name);
+      CHECK(holders.size() == 2u && holders[0] == town && holders[1] == gate);
+    }
+    const reflect::TypeInfo notComponent{
+        .name = "Settings", .kind = reflect::TypeKind::ScriptableObject};
+    CHECK(world.scene.holdersOf(notComponent).empty());
   }
 
   TEST("findEntity should follow a path of names from a root")
@@ -499,9 +585,9 @@ int main()
   {
     AssetStore store;
     testing3d::MockRenderer renderer;
-    SceneServices services{.assetStore = store, .renderer = &renderer};
+    SceneBackends backends{.assetStore = store, .renderer = &renderer};
     SceneManager manager;
-    manager.setSceneServices(&services);
+    manager.setSceneBackends(&backends);
     StandardScene& scene = *manager.createScene<StandardScene>();
     scene.createEntity().addComponent<NameComponent>("Old");
     scene.flushEntities();
@@ -590,9 +676,9 @@ int main()
   TEST("a scene's objects should get onDestroy as the scene manager ends it")
   {
     AssetStore store;
-    SceneServices services{.assetStore = store};
+    SceneBackends backends{.assetStore = store};
     SceneManager manager;
-    manager.setSceneServices(&services);
+    manager.setSceneBackends(&backends);
     Scene& scene = *manager.createScene<Scene>();
     int destroys = 0;
     scene.createObject<Actor>().destroys = &destroys;
@@ -666,9 +752,9 @@ int main()
     AssetStore store;
     store.setDatabase(&database);
     testing3d::MockRenderer renderer;
-    SceneServices services{.assetStore = store, .renderer = &renderer};
+    SceneBackends backends{.assetStore = store, .renderer = &renderer};
     SceneManager manager;
-    manager.setSceneServices(&services);
+    manager.setSceneBackends(&backends);
     StandardScene& scene = *manager.createScene<StandardScene>();
     Timed& stepped = scene.addSystem<Timed>(System::TimeStep::Stepped);
     Registry& registry = stepped.world();
@@ -898,6 +984,40 @@ int main()
       CHECK((reader.seen[0] == std::vector<int>{1}));
       CHECK((reader.seen[1] == std::vector<int>{2}));
     }
+  }
+
+  TEST("services should run at the start of every step, before the systems")
+  {
+    World world;
+    world.scene.addService<TurnService>();
+    TurnSystem& turns = world.scene.addSystem<TurnSystem>();
+    turns.turning = world.scene.createEntity();
+    BeatWriter& writer =
+        world.scene.addSystem<BeatWriter>(System::TimeStep::Frame);
+    writer.world().setMaxTimeStep(1.0 / 240.0);
+    world.scene.update(1.0 / 60.0);
+    world.scene.update(1.0 / 60.0);
+    // Four steps a frame: the service's swap reaches the system every step.
+    CHECK((turns.seen == std::vector<int>{0, 1, 2, 3, 4, 5, 6, 7}));
+    int services = 0;
+    world.scene.forEachService([&](Service&) { ++services; });
+    CHECK(services == 1);
+  }
+
+  TEST("services should still run while paused, at time scale 0")
+  {
+    World world;
+    world.scene.addService<TurnService>();
+    TurnSystem& turns = world.scene.addSystem<TurnSystem>();
+    turns.turning = world.scene.createEntity();
+    BeatWriter& writer =
+        world.scene.addSystem<BeatWriter>(System::TimeStep::Frame);
+    writer.world().setPaused(true);
+    writer.world().setTimeScale(0.0);
+    world.scene.update(0.1);
+    world.scene.update(0.1);
+    world.scene.update(0.1);
+    CHECK((turns.seen == std::vector<int>{0, 1, 2}));
   }
 
   return testing::report("sceneTests");

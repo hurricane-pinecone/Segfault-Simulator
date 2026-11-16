@@ -143,7 +143,7 @@ struct Specs
 struct World
 {
   AssetStore store;
-  Scene scene{0, SceneServices{.assetStore = store}};
+  Scene scene{0, SceneBackends{.assetStore = store}};
   PhysicsSystem3D& physics = scene.addSystem<PhysicsSystem3D>();
   NavigationSystem& navigation = scene.addSystem<NavigationSystem>();
   // What the navigation's agents heard, read after each frame.

@@ -39,4 +39,16 @@ struct UnresolvedComponents
   nlohmann::json refs;
 };
 
+/**
+ * A scene file's scene data whose type isn't registered right now (typically
+ * a game's, whose module hasn't been built or loaded yet), kept by
+ * SceneSerializer as the scene's own scene data and saved back unchanged, to
+ * apply the next time the scene loads once it can.
+ */
+struct [[sfs::scene_data]] UnresolvedSceneData
+{
+  /** { "TypeName": { fields... }, ... }, as read. */
+  nlohmann::json types = nlohmann::json::object();
+};
+
 } // namespace sfs

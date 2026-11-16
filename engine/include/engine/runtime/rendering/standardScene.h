@@ -65,14 +65,16 @@ public:
   MeshHandle builtinMesh(BuiltinMesh mesh) const;
 
   /**
-   * The game systems (System scripts, by name) this scene runs when it plays.
-   * Saved with the scene.
+   * The game systems and services (System and Service scripts, by name) this
+   * scene runs when it plays. Saved with the scene.
+   * @return them, to read or change
    */
-  std::vector<std::string>& gameSystems() { return m_gameSystems; }
+  SceneScripts& sceneScripts() { return m_scripts; }
 
   /**
-   * Replace the scene's contents with a scene file and start its scripts and
-   * game systems: what playing a scene file means, in a game or the editor.
+   * Replace the scene's contents with a scene file and start its scripts,
+   * game systems and services: what playing a scene file means, in a game or
+   * the editor.
    *
    * @return false (logged) if the file can't be loaded
    */
@@ -94,7 +96,7 @@ private:
   MeshLibrary::Provider modelMeshes();
 
   RenderSystem* m_render = nullptr;
-  std::vector<std::string> m_gameSystems;
+  SceneScripts m_scripts;
   uint64_t m_seenLoads = 0; // the asset store's loadGeneration() last seen
 
   MeshHandle m_cube;

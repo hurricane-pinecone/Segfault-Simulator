@@ -44,7 +44,7 @@ namespace
 struct World
 {
   sfs::AssetStore store;
-  sfs::Scene scene{0, sfs::SceneServices{.assetStore = store}};
+  sfs::Scene scene{0, sfs::SceneBackends{.assetStore = store}};
   std::map<std::string, json> prefabs;
 
   sfs::SceneSerializer serializer()
@@ -317,7 +317,7 @@ int main()
     const auto rebuild = [&](const Entity& root)
     {
       const std::vector<references::Inbound> inbound =
-          references::inboundTo(root);
+          references::inboundTo(w.scene, root);
       const json entry = w.serializer().instanceEntry(root);
       w.scene.destroyBranch(root);
       w.scene.flushEntities();
@@ -328,7 +328,7 @@ int main()
     };
 
     // By its path in the instance (no scene ids given yet).
-    CHECK(references::inboundTo(rig).size() == 2u);
+    CHECK(references::inboundTo(w.scene, rig).size() == 2u);
     const Entity again = rebuild(rig);
     CHECK(lamp.getComponent<PartsComponent>()->arm == childNamed(again, "Arm"));
     CHECK(lamp.getComponent<PartsComponent>()->blades[0] == again);
@@ -337,7 +337,7 @@ int main()
     // By the scene id a save gave it.
     w.serializer().save(w.scene);
     const std::vector<references::Inbound> inbound =
-        references::inboundTo(again);
+        references::inboundTo(w.scene, again);
     CHECK(inbound.size() == 2u && inbound[0].sceneId.has_value());
     const Entity third = rebuild(again);
     CHECK(lamp.getComponent<PartsComponent>()->arm == childNamed(third, "Arm"));

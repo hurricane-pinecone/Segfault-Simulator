@@ -22,7 +22,7 @@ struct World
 {
   AssetStore store;
   MockRenderer renderer;
-  Scene scene{0, SceneServices{.assetStore = store, .renderer = &renderer}};
+  Scene scene{0, SceneBackends{.assetStore = store, .renderer = &renderer}};
   MeshLibrary meshes{renderer};
   MeshHandle cube = meshes.add(meshes::box({1, 1, 1}));
   MeshHandle floor = meshes.add(meshes::box({20, 20, 0.1f}));

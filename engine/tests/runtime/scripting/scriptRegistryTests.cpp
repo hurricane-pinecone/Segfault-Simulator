@@ -36,6 +36,16 @@ protected:
   }
 };
 
+// A service as a module would declare it: counts the ones made.
+class CountingService : public Service
+{
+public:
+  static inline int created = 0;
+
+protected:
+  void create() override { ++created; }
+};
+
 // A game object script that overrides its hooks as protected, like the
 // editor's template.
 class Mover : public GameObject
@@ -72,6 +82,14 @@ void registerTestScripts()
   { return scene.addSystem<TickSystem>(); };
   scripts().add(tick);
 
+  ScriptType counting;
+  counting.name = "CountingService";
+  counting.module = "test";
+  counting.kind = ScriptType::Kind::Service;
+  counting.addService = [](Scene& scene) -> Service&
+  { return scene.addService<CountingService>(); };
+  scripts().add(counting);
+
   ScriptType mover;
   mover.name = "Mover";
   mover.module = "test";
@@ -96,7 +114,7 @@ void registerTestScripts()
 struct World
 {
   AssetStore store;
-  Scene scene{0, SceneServices{.assetStore = store}};
+  Scene scene{0, SceneBackends{.assetStore = store}};
 };
 } // namespace
 
@@ -163,7 +181,7 @@ int main()
     counted.addComponent<Counter>();
     world.scene.flushEntities();
 
-    startScripts(world.scene, {"TickSystem"});
+    startScripts(world.scene, {{"TickSystem"}});
     world.scene.update(0.1);
     world.scene.update(0.1);
     CHECK(counted.getComponent<Counter>()->ticks == 2);
@@ -176,8 +194,27 @@ int main()
     entity.addComponent<ScriptComponent>("Missing");
     world.scene.flushEntities();
 
-    startScripts(world.scene, {"NoSuchSystem"});
+    startScripts(world.scene, {{"NoSuchSystem"}, {"NoSuchService"}});
     CHECK(world.scene.tryFindObject<Mover>() == nullptr);
+    int services = 0;
+    world.scene.forEachService([&](Service&) { ++services; });
+    CHECK(services == 0);
+  }
+
+  TEST("startScripts should add services by name, after the systems")
+  {
+    World world;
+    CountingService::created = 0;
+    // A system's name among the services, or a service's among the systems,
+    // isn't one of that kind.
+    startScripts(
+        world.scene,
+        {{"TickSystem", "CountingService"}, {"CountingService", "TickSystem"}});
+    CHECK(CountingService::created == 1);
+    int services = 0;
+    world.scene.forEachService([&](Service&) { ++services; });
+    CHECK(services == 1);
+    CHECK(world.scene.tryGetSystem<TickSystem>() != nullptr);
   }
 
   TEST("a module's scripts should be removable as a unit")
@@ -189,11 +226,17 @@ int main()
     ScriptType b;
     b.name = "B";
     b.module = "other";
+    ScriptType c;
+    c.name = "C";
+    c.module = "game";
+    c.kind = ScriptType::Kind::Service;
     registry.add(a);
     registry.add(b);
+    registry.add(c);
     registry.removeModule("game");
     CHECK(registry.find("A") == nullptr);
     CHECK(registry.find("B") != nullptr);
+    CHECK(registry.find("C") == nullptr);
   }
 
   TEST("startObjects should start only the entities it's given")

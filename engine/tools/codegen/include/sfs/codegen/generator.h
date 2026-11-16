@@ -61,6 +61,18 @@ std::string generateEventTraits(const std::vector<EventModel>& events,
                                 std::vector<Diagnostic>& diagnostics);
 
 /**
+ * The part of a target's traits header (after generateEventTraits()'s text)
+ * for its scene data types: a SceneDataTraits specialization
+ * (engine/core/ecs/sceneData.h) for each type marked [[sfs::scene_data]],
+ * after a declaration of each type.
+ * Each type is written once, however often it's seen.
+ *
+ * @param types the target's types; those that aren't scene data are skipped
+ * @return the text; empty when none is scene data
+ */
+std::string generateSceneDataTraits(const std::vector<TypeModel>& types);
+
+/**
  * The qualified names a type name written inside some namespaces may mean,
  * innermost first, as C++ looks a name up through the enclosing namespaces.
  *

@@ -19,7 +19,7 @@ constexpr double kFrame = 1.0 / 60.0;
 struct World
 {
   AssetStore store;
-  Scene scene{0, SceneServices{.assetStore = store}};
+  Scene scene{0, SceneBackends{.assetStore = store}};
   PhysicsSystem2D& physics = scene.addSystem<PhysicsSystem2D>(&scene);
 
   // A static box: `half` either side of `centre`.
@@ -196,8 +196,8 @@ int main()
   TEST("a scene should get 2D physics by listing the system")
   {
     AssetStore store;
-    Scene scene{0, SceneServices{.assetStore = store}};
-    startScripts(scene, {"PhysicsSystem2D"});
+    Scene scene{0, SceneBackends{.assetStore = store}};
+    startScripts(scene, {{"PhysicsSystem2D"}});
     CHECK(scene.tryGetSystem<PhysicsSystem2D>() != nullptr);
   }
 

@@ -4,6 +4,7 @@
 #include "engine/core/ecs/entity.h"
 #include "engine/core/hierarchy/hierarchy.h"
 #include "engine/core/logger/logger.h"
+#include "engine/core/reflection/reflection.h"
 #include "engine/core/util/cpuTiming.h"
 #include "engine/core/util/fatalError.h"
 #include "engine/runtime/input/input.h"
@@ -23,10 +24,10 @@ namespace
 // A scene asked for a renderer its backend doesn't have: a setup bug, not a
 // runtime condition, so name it and stop (as getSystem does).
 template <typename T>
-T& requireService(T* service, const char* name)
+T& requireBackend(T* backend, const char* name)
 {
-  if (service)
-    return *service;
+  if (backend)
+    return *backend;
 
   fatalError(std::string("Scene: the render backend provides no ") + name);
 }
@@ -64,7 +65,7 @@ std::vector<KeyClaim> activeClaims(Registry& registry)
 
 IRenderer& Scene::renderer() const
 {
-  return requireService(m_renderer, "renderer");
+  return requireBackend(m_renderer, "renderer");
 }
 
 Game& Scene::game() const
@@ -79,6 +80,28 @@ const std::string& Scene::name() const { return m_name; }
 
 Registry& Scene::registry() { return m_registry; }
 const Registry& Scene::registry() const { return m_registry; }
+
+const std::vector<Entity>& Scene::holdersOf(const reflect::TypeInfo& type)
+{
+  static const std::vector<Entity> kNone;
+  return type.component.holders ? type.component.holders(m_registry) : kNone;
+}
+
+void* Scene::sceneDataOf(const reflect::TypeInfo& type)
+{
+  return type.sceneData.get ? type.sceneData.get(m_registry) : nullptr;
+}
+
+void* Scene::addSceneData(const reflect::TypeInfo& type)
+{
+  return type.sceneData.add ? type.sceneData.add(m_registry) : nullptr;
+}
+
+void Scene::removeSceneData(const reflect::TypeInfo& type)
+{
+  if (type.sceneData.remove)
+    type.sceneData.remove(m_registry);
+}
 
 Entity Scene::createEntity() { return m_registry.createEntity(); }
 Entity Scene::getEntity(Entity::EntityId id)
@@ -196,6 +219,8 @@ void Scene::updateObjects(double deltaTime)
       if (i > 0)
         m_registry.events().takeIn();
       m_registry.advanceGameTime(step);
+      // Services first, so what they change reaches the systems this step.
+      m_registry.runServices();
       m_registry.forEachSystem(
           [&](System& system)
           {

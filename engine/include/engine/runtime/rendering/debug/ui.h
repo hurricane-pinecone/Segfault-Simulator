@@ -129,9 +129,9 @@ inline static void renderModuleSetting(const ModuleSetting& setting)
     ImGui::EndDisabled();
 }
 
-// Debug-only controls: toggle each system (except the render system) and tweak
-// its settings, see what the renderer drew, and tweak each render module's
-// own settings live.
+// Debug-only controls: toggle each system (except the render system) and
+// service and tweak its settings, see what the renderer drew, and tweak each
+// render module's own settings live.
 inline static void renderDebugControls(Scene* scene)
 {
   if (!scene)
@@ -140,37 +140,49 @@ inline static void renderDebugControls(Scene* scene)
   ImGui::SetNextWindowSize(ImVec2(300, 320), ImGuiCond_FirstUseEver);
   ImGui::Begin("Debug Systems");
 
+  // A system's or service's toggle, and its live settings (the same
+  // UI-agnostic descriptors render modules use) indented under it.
+  const auto toggle = [](auto& owner)
+  {
+    const std::string name = prettyTypeName(typeid(owner));
+
+    bool enabled = owner.enabled();
+    if (ImGui::Checkbox(name.c_str(), &enabled))
+      owner.setEnabled(enabled);
+
+    const std::vector<ModuleSetting> ownerSettings = owner.settings();
+    if (!ownerSettings.empty())
+    {
+      ImGui::PushID(name.c_str());
+      ImGui::Indent();
+      for (const ModuleSetting& setting : ownerSettings)
+        renderModuleSetting(setting);
+      ImGui::Unindent();
+      ImGui::PopID();
+    }
+  };
+
   ImGui::TextUnformatted("Systems");
   ImGui::Separator();
 
   scene->forEachSystem(
-      [](System& system)
+      [&toggle](System& system)
       {
         // The render system is required for anything to draw, and the
         // transform pass for anything drawn to be where it is.
         if (typeid(system) == typeid(RenderSystem) ||
             typeid(system) == typeid(TransformSystem))
           return;
-
-        const std::string name = prettyTypeName(typeid(system));
-
-        bool enabled = system.enabled();
-        if (ImGui::Checkbox(name.c_str(), &enabled))
-          system.setEnabled(enabled);
-
-        // Systems expose live settings as the same UI-agnostic descriptors
-        // render modules use; render them indented under the toggle.
-        const std::vector<ModuleSetting> systemSettings = system.settings();
-        if (!systemSettings.empty())
-        {
-          ImGui::PushID(name.c_str());
-          ImGui::Indent();
-          for (const ModuleSetting& setting : systemSettings)
-            renderModuleSetting(setting);
-          ImGui::Unindent();
-          ImGui::PopID();
-        }
+        toggle(system);
       });
+
+  bool anyService = false;
+  scene->forEachService([&anyService](Service&) { anyService = true; });
+  if (anyService)
+  {
+    ImGui::SeparatorText("Services");
+    scene->forEachService([&toggle](Service& service) { toggle(service); });
+  }
 
   if (auto* render = scene->tryGetSystem<RenderSystem>())
   {

@@ -18,9 +18,11 @@ enum class TypeKind
 {
   Component,
   System,
+  Service, // derives from sfs::Service
   GameObject,
   MeshSource,
   ScriptableObject, // derives from sfs::ScriptableObject
+  SceneData,        // [[sfs::scene_data]]: data the scene holds one of
   // Derives from another reflected type (the engine's or the module's own,
   // e.g. `struct TruckSpec : sfs::VehicleSpec`): its kind is its base's,
   // decided when the generated code compiles; for now a scriptable object.
@@ -78,6 +80,10 @@ struct TypeModel
 {
   std::string name;          // unqualified, e.g. "Player"
   std::string qualifiedName; // with namespaces, e.g. "game::Player"
+  /** Its enclosing namespaces, outermost first; "" for an unnamed one. */
+  std::vector<std::string> scopes;
+  /** "struct" or "class", as declared. */
+  std::string classKey = "struct";
   TypeKind kind = TypeKind::Component;
   bool uiLayer = false; // a GameObject that's an sfs::ui::Layer
   std::string base;     // Derived: the base's name, unqualified ("VehicleSpec")
@@ -224,7 +230,10 @@ struct Suppressions
 struct ParseResult
 {
   std::optional<TypeModel> type; // the header's script type, if found
-  /** [[sfs::component]] types besides the file's, in declaration order. */
+  /**
+   * [[sfs::component]] and [[sfs::scene_data]] types besides the file's, in
+   * declaration order.
+   */
   std::vector<TypeModel> components;
   /** The event types it declares, in declaration order. */
   std::vector<EventModel> events;

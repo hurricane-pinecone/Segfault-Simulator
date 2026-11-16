@@ -1441,6 +1441,7 @@ void AssetBrowserPanel::drawFolderMenu(EditorContext& context,
     using scriptTemplates::Kind;
     for (const Kind kind : {Kind::GameObject,
                             Kind::System,
+                            Kind::Service,
                             Kind::Component,
                             Kind::ScriptableObject})
     {

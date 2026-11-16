@@ -20,10 +20,33 @@
 #include <utility>
 #include <vector>
 
+namespace sfs
+{
+class MeshLibrary;
+} // namespace sfs
+
 namespace sfs::reflect
 {
 struct FieldInfo;
+struct TypeInfo;
 } // namespace sfs::reflect
+
+class EditorHistory;
+
+/**
+ * An object's reflected fields, with the inspector's widgets: each with the
+ * widget its kind and attributes call for, hidden while its showIf switch is
+ * off, every edit recorded for undo. Entity fields are left out (only an
+ * entity's components have reference slots).
+ * @param type the object's reflected type
+ * @param object the object
+ * @param meshes the mesh library a mesh field picks from; may be null
+ * @param history where edits are recorded; may be null
+ */
+void reflectedFields(const sfs::reflect::TypeInfo& type,
+                     void* object,
+                     sfs::MeshLibrary* meshes,
+                     EditorHistory* history);
 
 /**
  * An entity reference picker's search, kept between frames: the entities it

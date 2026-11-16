@@ -70,10 +70,10 @@ void MyScene::onInit()
 Without a `Space2D` that's a 3D game. A 2D game also gives the render system
 its plane with `setSpace2D()`; see [Styles](./styles/index.md).
 
-## Scene services
+## Scene backends
 
 A scene reaches the backend's renderer and the asset store through the
-`SceneServices` the backend supplies:
+`SceneBackends` the backend supplies:
 
 | Accessor | Returns |
 | --- | --- |

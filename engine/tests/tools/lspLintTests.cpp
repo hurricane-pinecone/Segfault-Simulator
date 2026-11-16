@@ -97,6 +97,8 @@ std::vector<std::pair<std::string, std::string>> everyRuleFixtures()
       {"t/Both.h", "struct [[sfs::component, sfs::event_news]] Both {};\n"},
       {"t/Twice.h",
        "struct [[sfs::event_news, sfs::event_response]] Twice {};\n"},
+      {"t/Scoreboard.h",
+       "struct [[sfs::component, sfs::scene_data]] Scoreboard {};\n"},
       {"t/Rig.h",
        "struct Rig : sfs::GameObject { "
        "[[sfs::hide]] int a; sfs::Entity target; "
@@ -142,6 +144,11 @@ std::vector<std::pair<std::string, std::string>> everyRuleFixtures()
       {"systems/HealthSystem.cpp",
        "void HealthSystem::update(double) { "
        "registry->getSystem<SpawnSystem>(); }\n"},
+      {"t/Squad.h",
+       "class Squad : public sfs::Service\n{\n"
+       "  void create() override {}\n  void update(double);\n"
+       "  sfs::Registry* m_registry = nullptr;\n};\n"
+       "inline int g = sfs::detail::EventHost::kind;\n"},
   };
 }
 
@@ -537,9 +544,10 @@ int main()
     const auto* first = lspTest::first(*doc, RuleId::ResponseSentTwice);
     CHECK(first && first->range.startRow == 6u &&
           first->message ==
-              "The response type PathFoundResponse is sent by one system, the "
-              "one that consumes its request, and CombatSystem already sends "
-              "it. Give this system's responses a type of their own.");
+              "The response type PathFoundResponse is sent by one system or "
+              "service, the one that consumes its request, and CombatSystem "
+              "already sends it. Give this one's responses a type of their "
+              "own.");
     // The sender itself isn't its own second sender.
     const auto own =
         lspTest::analysed("void CombatSystem::update(double) { "
@@ -910,8 +918,8 @@ int main()
     };
     CHECK(named("using nav::Found;\nusing Name = Found;\n")
               .starts_with("The response type nav::Found is sent by one "
-                           "system, the one that consumes its request, and "
-                           "NavSystem already sends it."));
+                           "system or service, the one that consumes its "
+                           "request, and NavSystem already sends it."));
     CHECK(named("using Name = nav::Found;\n").find("NavSystem") !=
           std::string::npos);
     CHECK(named("using Name = ::Found;\n").find("TopSystem") !=
@@ -1410,6 +1418,154 @@ int main()
                          edited->tree.get(),
                          edited->text);
     CHECK(!project.index.isSystem("SpawnSystem"));
+  }
+
+  TEST("the project index should know services")
+  {
+    Project project;
+    lspTest::writeFile(project.root / "scripts/services/SquadService.h",
+                       "#pragma once\nclass SquadService : public "
+                       "sfs::Service { void create() override; };\n");
+    project.index.rescan();
+    project.index.indexAll(lspTest::parser());
+    CHECK(project.index.isService("SquadService"));
+    CHECK(!project.index.isSystem("SquadService"));
+    CHECK(!project.index.isService("SpawnSystem"));
+  }
+
+  TEST("service-reaches-registry should flag a service's registry or scene, "
+       "and nothing in a system")
+  {
+    const auto doc = lspTest::analysed(
+        "class Squad : public sfs::Service\n{\n"
+        "public:\n"
+        "  explicit Squad(sfs::Registry& registry);\n"
+        "  Squad(int count, sfs::Scene* scene) {}\n"
+        "protected:\n"
+        "  void create() override\n  {\n"
+        "    sfs::Scene* local = nullptr;\n"
+        "    m_hits = consumer<HitEvent>().onEvent(\n"
+        "        [](const sfs::Entity& e, const HitEvent&) {});\n"
+        "    auto later = [](sfs::Registry& r) {};\n  }\n"
+        "  void help(const sfs::Entity& target, int count);\n"
+        "private:\n"
+        "  sfs::Registry* m_registry = nullptr;\n"
+        "  sfs::Scene m_scene;\n"
+        "  std::unique_ptr<sfs::Scene> m_owned;\n"
+        "  sfs::QueryView<Guard> m_guards;\n"
+        "  sfs::EventConsumer<HitEvent> m_hits;\n"
+        "  std::vector<sfs::Entity> m_seen;\n"
+        "};\n"
+        "class Patrol : public sfs::System\n{\n"
+        "  sfs::Registry* m_other = nullptr;\n"
+        "  void update(double) override { sfs::Scene* s = nullptr; }\n"
+        "};\n");
+    CHECK(lspTest::count(*doc, RuleId::ServiceReachesRegistry) == 8u);
+    const auto* first = lspTest::first(*doc, RuleId::ServiceReachesRegistry);
+    CHECK(first && first->range.startRow == 3u &&
+          first->message ==
+              "A Service works on the entities its events hand it and never "
+              "reaches the registry. Do work over lists of entities in a "
+              "System.");
+    std::size_t lists = 0;
+    for (const auto& diagnostic : doc->diagnostics)
+      if (diagnostic.message.find("never reaches a list of entities") !=
+          std::string::npos)
+        ++lists;
+    CHECK(lists == 1u);
+  }
+
+  TEST("service-update-method should flag a service's update or hooks, and "
+       "not a system's")
+  {
+    const auto doc =
+        lspTest::analysed("class Squad : public sfs::Service\n{\n"
+                          "protected:\n"
+                          "  void create() override {}\n"
+                          "  void update(double deltaTime);\n"
+                          "  void lateUpdate(double) {}\n"
+                          "  void render();\n"
+                          "  void onEntityAdded(const sfs::Entity& e) {}\n"
+                          "  void onEntityRemoved(const sfs::Entity& e);\n"
+                          "  void updateRoutes();\n"
+                          "};\n"
+                          "class Patrol : public sfs::System\n{\n"
+                          "  void update(double) override {}\n"
+                          "};\n");
+    CHECK(lspTest::count(*doc, RuleId::ServiceUpdateMethod) == 5u);
+    const auto* first = lspTest::first(*doc, RuleId::ServiceUpdateMethod);
+    CHECK(first && first->range.startRow == 4u &&
+          first->message ==
+              "A Service has no update or hooks, so update() is never "
+              "called. Do the work in an event handler, or make it a "
+              "System.");
+  }
+
+  TEST("engine-internal should flag sfs::detail in a project, and nothing "
+       "outside one")
+  {
+    Project project;
+    const std::string source =
+        "#include <sfs/sfs.h>\n"
+        "sfs::Registry* reach(const sfs::Entity& e)\n"
+        "{ return sfs::detail::EntityAccess::registry(e); }\n"
+        "namespace mine { using namespace sfs; bool b = detail::EventHost::on; "
+        "}\n"
+        "using namespace sfs::detail;\n"
+        "auto* host = ::sfs::detail::EventHost::owner;\n"
+        "namespace d = sfs::detail;\n"
+        "namespace e = ::sfs::detail;\n";
+    const auto inProject = lspTest::analysed(
+        source, project.root / "scripts/utils/Reach.h", &project.index);
+    CHECK(lspTest::count(*inProject, RuleId::EngineInternal) == 6u);
+    const auto* first = lspTest::first(*inProject, RuleId::EngineInternal);
+    CHECK(first && first->range.startRow == 2u);
+    // A project's own detail, where SFS's names aren't visible.
+    const auto own = lspTest::analysed(
+        "namespace other { namespace detail { int x; } int y = detail::x; }\n",
+        project.root / "scripts/utils/Other.h",
+        &project.index);
+    CHECK(lspTest::count(*own, RuleId::EngineInternal) == 0u);
+    // The SFS tree isn't a project: no index.
+    const auto engine = lspTest::analysed(source, "engine/src/reach.cpp");
+    CHECK(lspTest::count(*engine, RuleId::EngineInternal) == 0u);
+  }
+
+  TEST("per-entity-map and event-handle-outside-create should cover services")
+  {
+    const auto doc = lspTest::analysed(
+        "class Squad : public sfs::Service\n{\n"
+        "  std::unordered_map<sfs::Entity, int> m_orders;\n"
+        "  sfs::EventConsumer<HitEvent> m_hits;\n"
+        "  sfs::EventConsumer<Moved> m_moved;\n"
+        "  void create() override\n  {\n"
+        "    m_hits = consumer<HitEvent>().onEvent(\n"
+        "        [this](const HitEvent&) { m_moved = consumer<Moved>(); });\n"
+        "  }\n"
+        "  void later() { m_moved = consumer<Moved>(); }\n"
+        "};\n");
+    CHECK(lspTest::count(*doc, RuleId::PerEntityMap) == 1u);
+    const auto* map = lspTest::first(*doc, RuleId::PerEntityMap);
+    CHECK(map && map->message.starts_with("A service should not keep"));
+    CHECK(lspTest::count(*doc, RuleId::EventHandleOutsideCreate) == 1u);
+    const auto* handle = lspTest::first(*doc, RuleId::EventHandleOutsideCreate);
+    CHECK(handle && handle->range.startRow == 8u);
+  }
+
+  TEST("response-sent-twice should count a service's sends as its own")
+  {
+    Project project;
+    const auto doc = lspTest::analysed(
+        "class Planner : public sfs::Service\n{\n"
+        "  void create() override\n  {\n"
+        "    m_paths = consumer<PathRequest>().onEvent(\n"
+        "        [](const sfs::Entity&, const PathRequest&,\n"
+        "           const sfs::Responder<PathRequest>& responder)\n"
+        "        { responder.respond(PathFoundResponse{1}); });\n"
+        "  }\n};\n",
+        project.root / "scripts/services/Planner.cpp",
+        &project.index);
+    CHECK(lspTest::count(*doc, RuleId::ResponseSentTwice) == 1u);
   }
 
   TEST("--check over a fixture tree should print the golden listing")

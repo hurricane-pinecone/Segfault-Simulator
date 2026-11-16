@@ -142,8 +142,8 @@ void Game::setup()
 {
   sfs::ScopedMemoryTracking tracking{sfs::MemoryTrackingPhase::Setup};
 
-  m_services = m_backend->sceneServices();
-  sceneManager.setSceneServices(m_services);
+  m_backends = m_backend->sceneBackends();
+  sceneManager.setSceneBackends(m_backends);
   sceneManager.setGame(this);
 
   onSetup();
@@ -219,8 +219,8 @@ void Game::frame()
       SFS_CPU_SCOPE("render");
       render();
     }
-    if (std::exchange(m_collectUnusedAssets, false) && m_services)
-      m_services->assetStore.collectUnused();
+    if (std::exchange(m_collectUnusedAssets, false) && m_backends)
+      m_backends->assetStore.collectUnused();
     if (m_backend && m_backend->deviceLost())
       onFatalError("The graphics device stopped working (it was lost: a "
                    "driver crash or update, or the GPU was removed).");
@@ -314,13 +314,13 @@ void Game::onLoadScene(const std::filesystem::path& scene)
 
 bool Game::playScene(const std::filesystem::path& scene)
 {
-  if (!m_services || !m_services->renderer)
+  if (!m_backends || !m_backends->renderer)
   {
     LOG_ERROR("Playing " + scene.generic_string() +
               ": scene files need a renderer, and this game has none");
     return false;
   }
-  AssetStore& store = m_services->assetStore;
+  AssetStore& store = m_backends->assetStore;
   if (!store.database())
   {
     std::error_code error;
@@ -349,8 +349,8 @@ bool Game::playScene(const std::filesystem::path& scene)
 
 void Game::setAssetDatabase(const AssetDatabase* database)
 {
-  if (m_services)
-    m_services->assetStore.setDatabase(database);
+  if (m_backends)
+    m_backends->assetStore.setDatabase(database);
 }
 
 StandardScene& Game::replaceScene()

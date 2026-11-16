@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/core/ecs/entity.h"
+#include "engine/core/ecs/sceneData.h"
 #include "engine/core/util/typeKey.h"
 
 #include <string_view>
@@ -42,11 +43,13 @@ public:
   /**
    * The id of component T, shared by every entity and every module: entity1's
    * and entity2's TransformComponent both have id 1, say. A const T is T
-   * (`getComponent<const T>()`, a `const T` query term), with T's id.
+   * (`getComponent<const T>()`, a `const T` query term), with T's id. A
+   * type marked [[sfs::scene_data]] isn't a component: it fails to compile.
    * @return T's id
    */
   static int getId()
   {
+    (void)sizeof(detail::NotAComponent<std::remove_cv_t<T>>);
     return detail::moduleTypeId<std::remove_cv_t<T>,
                                 &detail::componentTypeId>();
   }

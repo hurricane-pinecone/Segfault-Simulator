@@ -3,7 +3,7 @@
 A render backend owns the window, the GPU device and the per-frame lifecycle
 (begin frame, end frame), and provides the renderer scenes draw through.
 Scenes never touch the backend directly: they draw through the
-`SceneServices` it provides (`renderer()`, `assetStore()`).
+`SceneBackends` it provides (`renderer()`, `assetStore()`).
 
 The engine has one backend, `WebGpuRenderBackend`, and it runs everywhere the
 engine does. Backends are pluggable, so a program can add its own.
@@ -55,7 +55,7 @@ interface every backend implements:
 | `init(title, w, h)` | Create the window and GPU device. Returns false (and logs) on failure. |
 | `window()` | The SDL window, for event routing in `Game` |
 | `onResize(w, h)` | Called when the window changes size |
-| `sceneServices()` | The renderer and asset store scenes are constructed with |
+| `sceneBackends()` | The renderer and asset store scenes are constructed with |
 | `beginFrame(w, h)` / `endFrame()` | Acquire and clear the backbuffer; submit and present |
 | `setVsync(on)` | Wait for the display when presenting, before `init()` or any time after. |
 | `deviceLost()` | Whether the GPU device was lost; `Game` ends the game (with a message) if so. |
@@ -218,9 +218,9 @@ A backend for another graphics API implements two interfaces: an
    material graphs compile to WGSL. A backend on an API that doesn't take WGSL
    translates them.
 3. **The backend.** Implement `IRenderBackend`: create the window in `init()`,
-   build a `SceneServices` (the asset store and your renderer) that
-   `sceneServices()` returns, and point your renderer at each frame's target in
-   `beginFrame()`. `Game::setup()` calls `sceneServices()` straight after the
+   build a `SceneBackends` (the asset store and your renderer) that
+   `sceneBackends()` returns, and point your renderer at each frame's target in
+   `beginFrame()`. `Game::setup()` calls `sceneBackends()` straight after the
    backend initialises.
 4. **Offer it.** `RenderBackends::add("mine", [] { return
    std::make_unique<MyBackend>(); })`, before the game starts, or return it

@@ -5,8 +5,8 @@
 #include <typeinfo>
 
 // Names and ids for C++ types that every module agrees on: the engine, an
-// editor and a game module loaded at runtime. Component, system and event ids
-// all come from here, each from a table of their own.
+// editor and a game module loaded at runtime. Component, system, event and
+// scene data ids all come from here, each from a table of their own.
 namespace sfs::detail
 {
 
@@ -39,8 +39,9 @@ std::string readableTypeName(std::string_view typeKey);
 std::string readableTypeName(const std::type_info& type);
 
 /**
- * T's id from `idOf` (componentTypeId, systemTypeId or eventTypeId), asked for
- * the first time and then remembered in the calling module. The table behind
+ * T's id from `idOf` (componentTypeId, systemTypeId, eventTypeId or
+ * sceneDataTypeId), asked for the first time and then remembered in the
+ * calling module. The table behind
  * `idOf` is shared, so every module gets the same id. If `idOf` raises a fatal
  * error, nothing is remembered and the next call asks again.
  * @return T's id

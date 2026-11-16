@@ -47,6 +47,7 @@ ignored; everything else is a warning.
 | `show-if-target` | sfs-codegen | warning | `[[sfs::showIf]]` should name a reflected `bool` field of its type. Name one of the type's bool fields. |
 | `event-and-component` | sfs-codegen | warning | A type should not be marked both as an event (`[[sfs::event_news]]` and the like) and `[[sfs::component]]`, since an event is what one system tells another and a component is state; it's taken as an event. Remove one of the two marks. |
 | `event-declaration` | sfs-codegen | error | An event type must be declared so the compiler can check it: one event attribute, on a named struct at namespace scope outside inline namespaces; a request naming its success response first, then any `progress =` and `failure =` ones, each an `[[sfs::event_response]]` type in one role; news deriving only from news of its own kind, each base once, and requests and responses deriving from nothing; and no name declared twice differently. An attribute on an enum can't be read, so it isn't checked. |
+| `scene-data-declaration` | sfs-codegen | error | `[[sfs::scene_data]]` marks data the scene holds one of, so it goes on a named plain struct or class at namespace scope with no base, never on a component, an event, a system, a service, a game object or a scriptable object. |
 | `single-any` | sfs-lsp | warning | An `sfs::Any` group of one component is just that component. Write the component instead. |
 | `any-always-met` | sfs-lsp | warning | An `sfs::Any` group that shares a component with the required ones is always met. Remove the group. |
 | `duplicate-term` | sfs-lsp | warning | A term list should not name a component twice in one role. Remove the repeat. |
@@ -56,7 +57,7 @@ ignored; everything else is a warning.
 | `late-register` | sfs-lsp | warning | `registerComponent()` should not run once the system is in a registry, where it's ignored. Register components in `create()`. |
 | `hook-mutates` | sfs-lsp | warning | `onEntityAdded()`, `onEntityRemoved()` and `observe` callbacks should change only their own entity's components. Change other entities, and create or destroy entities and systems, in `update()`. |
 | `system-reads-system` | sfs-lsp | warning | Systems should not read other systems. Read the state another system writes on components, and send what one system tells another as an event. |
-| `per-entity-map` | sfs-lsp | warning | A system should not keep per-entity data in a map or set keyed by entity. Put the data on a component, in a hidden field. |
+| `per-entity-map` | sfs-lsp | warning | A system or service should not keep per-entity data in a map or set keyed by entity. Put the data on a component, in a hidden field. |
 | `own-entity` | sfs-lsp | warning | A component should not store the entity it's on. Drop the field, and use the entity the system already has. |
 | `unknown-attribute` | sfs-lsp | warning | An attribute should be standard C++, an `sfs::` one, or in a vendor's namespace. Fix the name or the namespace. |
 | `has-then-get` | sfs-lsp | warning | A component should not be looked up twice, with `hasComponent<T>()` and then `getComponent<T>()`. Use `getComponent<T>()` alone, which gives null when T is missing. |
@@ -69,7 +70,10 @@ ignored; everything else is a warning.
 | `row-component-copy` | sfs-lsp | warning | A query loop should not copy a row's component only to read it. Read it in place with `const T&`, or, for a copy it changes, keep it as scratch or use `T&`. |
 | `event-handle-outside-create` | sfs-lsp | warning | An event consumer or requester should be made in `create()` (an object's in `onCreate`) and kept as a member. Made anywhere else it receives nothing, or has no owner to run its handlers. |
 | `reader-on-component` | sfs-lsp | warning | A component should not hold an `sfs::EventConsumer`, `sfs::EventRequester`, `sfs::EventBroadcast` or `sfs::Responder`, which belong to whoever reads, asks, sends or responds. Keep it in that system, object or job. |
-| `response-sent-twice` | sfs-lsp | warning | A response type should be sent by one system, the one that consumes its request. Give each system's responses a type of their own. |
+| `response-sent-twice` | sfs-lsp | warning | A response type should be sent by one system or service, the one that consumes its request. Give each one's responses a type of their own. |
+| `service-reaches-registry` | sfs-lsp | warning | A Service works on the entities its events hand it and never reaches the registry, the scene or a list of entities. Do work over lists of entities in a System. |
+| `service-update-method` | sfs-lsp | warning | A Service has no update or hooks, so this is never called. Do the work in an event handler, or make it a System. |
+| `engine-internal` | sfs-lsp | warning | `sfs::detail` is the engine's internals: it changes without notice, and some of it opens what the API keeps closed. Use the public API. |
 | `bad-ignore` | sfs-codegen, sfs-lsp | warning | An `sfs-ignore` comment should name known warning rules in the right form. Fix the comment. |
 <!-- sfs-rules:end -->
 
@@ -120,10 +124,11 @@ taken for SFS's.
   systems. A system reads the state others write on components, and what one
   system tells another goes through [events](../../core/events/index.md).
   The engine's own systems
-  (`RenderSystem::debugLines()`, raycasts) are its service API and aren't
+  (`RenderSystem::debugLines()`, raycasts) are its public API and aren't
   flagged, and game objects and UI may read systems.
-- `per-entity-map`: a system member that's a map or set keyed by `sfs::Entity`
-  or its id. Per-entity data goes on a component, in a hidden field.
+- `per-entity-map`: a system's or [service](../../core/services/index.md)'s
+  member that's a map or set keyed by `sfs::Entity` or its id. Per-entity
+  data goes on a component, in a hidden field.
 - `own-entity`: `state.entity = entity`, where `state` is a component of
   `entity`. A component doesn't store the entity it's on: systems are given it.
 
@@ -188,9 +193,9 @@ and so is responding with a type the request doesn't name in that role.
   one header as you type; the build checks all of a module's headers
   together.
 - `event-handle-outside-create`: a consumer or requester made where it can't
-  work. A system makes its handles once, in `create()` (or a helper that
-  `create()` calls), with its own `consumer<E>()` and `requester<R>()`, and
-  keeps them as members:
+  work. A system or a service makes its handles once, in `create()` (or a
+  helper that `create()` calls), with its own `consumer<E>()` and
+  `requester<R>()`, and keeps them as members:
 
   ```cpp
   void DamageSystem::update(double dt)
@@ -217,7 +222,9 @@ and so is responding with a type the request doesn't name in that role.
   `registry->events()`, which gives it no owner, so its handlers never run.
   A game object makes its handles with `scene().events()` in `onCreate()`;
   made in `onUpdate()`, `onDestroy()` or another callback, a handle has no
-  owner to run its handlers. And a handle made in the right place but not
+  owner to run its handlers. A service's handles are checked as a system's:
+  one made in an event handler, its constructor, its destructor or a member's
+  initialiser is reported. And a handle made in the right place but not
   kept (held by a local, or never stored) is dropped when the function
   returns, so it receives nothing.
 - `reader-on-component`: a component that holds an `sfs::EventConsumer`,
@@ -235,9 +242,9 @@ and so is responding with a type the request doesn't name in that role.
 
   Keep the consumer as a member of the system, and put what each enemy
   remembers (the last noise it heard) on the component.
-- `response-sent-twice`: one response type sent by two systems. A response
-  type belongs to the system that consumes its request, so a requester knows
-  who answered:
+- `response-sent-twice`: one response type sent by two systems (or
+  services). A response type belongs to the system or service that consumes
+  its request, so a requester knows who answered:
 
   ```cpp
   // In NavigationSystem and in FlightSystem: two senders of one type.
@@ -252,9 +259,50 @@ and so is responding with a type the request doesn't name in that role.
   theirs a type of its own, so a watcher of the type knows who answered.
 
   Give each system's responses a type of its own (`PathFoundResponse` and
-  `FlightPathFoundResponse`). Responses a job or a free function sends count
-  as sent by its file's system, when the file has just one. It looks at every
-  script of the project, so the second sender may be in another file.
+  `FlightPathFoundResponse`). A service's responses count as that service's.
+  Responses a job or a free function sends count as sent by its file's
+  system or service, when the file has just one. It looks at every script of
+  the project, so the second sender may be in another file.
+
+### Services
+
+A [service](../../core/services/index.md) works on the entities its events
+hand it. The compiler already stops most of what it can't do (a query, a
+`registry->`, a consumer without a handler, `override` of `update()`); these
+catch the rest.
+
+- `service-reaches-registry`: a service's member, constructor or method
+  parameter, or local (in its methods and their lambdas) whose written type
+  holds an `sfs::Registry` or `sfs::Scene` (by pointer, reference or value, or
+  wrapped, as `std::unique_ptr<sfs::Scene>`), or an `sfs::QueryView<...>`
+  handed in. Handing a service the registry, the scene or a list gives it
+  what only a System goes through: do work over lists of entities in a
+  System. An `auto` local's type isn't written, so it isn't seen.
+
+  ```cpp
+  class SquadService : public sfs::Service
+  {
+  public:
+    // Wrong: a service never reaches the scene.
+    explicit SquadService(sfs::Scene& scene);
+  };
+  ```
+
+- `service-update-method`: a service declaring `update()`, `lateUpdate()`,
+  `render()`, `onEntityAdded()` or `onEntityRemoved()`. A service has none of
+  them (with `override` it doesn't compile; without, nothing calls it). Do
+  the work in an event handler, or make it a System.
+
+### Engine internals
+
+- `engine-internal`: a name in `sfs::detail` in a project's code, written
+  `sfs::detail::...` or `::sfs::detail::...` (or `using namespace
+  sfs::detail;`, or a namespace alias of it), or `detail::...`
+  where SFS's names are visible (after `using namespace sfs;`, or inside
+  `namespace sfs`). `sfs::detail` is the engine's internals: it changes
+  without notice, and some of it (`sfs::detail::EntityAccess`) opens what the
+  API keeps closed. Use the public API. The SFS tree itself (a root with
+  `.sfs-engine`) isn't a project, so it isn't checked.
 
 ### Attributes outside codegen
 

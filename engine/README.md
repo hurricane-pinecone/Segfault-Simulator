@@ -139,7 +139,7 @@ The tests split to match the two libraries:
   `engine/tests/core/CMakeLists.txt`.
 - **Runtime tests** (`engine/tests/runtime/`) link the full `engine` and drive
   systems and render modules through their seams (a mock `IRenderer`,
-  `engine/tests/runtime/rendering/mockRenderer.h`, and stub services), so they
+  `engine/tests/runtime/rendering/mockRenderer.h`, and stub backends), so they
   run headless: no window, no GPU, no display.
 - **WebGPU tests** (`engine/tests/webgpu/`) link `engine-webgpu` and drive the
   real `WebGpuRenderer` on a GPU, headless (no window), once on whatever wgpu

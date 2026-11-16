@@ -316,7 +316,8 @@ std::optional<uint32_t> SceneSerializer::sceneIdFor(const Entity& holder,
               entity.getComponent<MissingPrefabComponent>())
         keptSceneIds(missingPrefab->entry, op->usedSceneIds);
     };
-    for (const Entity& root : hierarchy::roots(*holder.registryOf()))
+    for (const Entity& root :
+         hierarchy::roots(*detail::EntityAccess::registry(holder)))
     {
       gather(root);
       for (const Entity& entity : hierarchy::descendants(root))
@@ -525,21 +526,10 @@ void SceneSerializer::giveSceneIds(Scene& scene, SaveOp& op) const
   // The targets that will be written scene-absolutely, found through each
   // referencing type's holders: the cost follows the references, not the
   // scene. Ids are handed out after, so no list changes while it's read.
-  // The scene's registry, through any of its entities (none: nothing to do).
-  Registry* registry = nullptr;
-  for (const Entity& root : scene.roots())
-  {
-    registry = root.registryOf();
-    break;
-  }
-  if (!registry)
-    return;
   std::vector<Entity> holders;
   for (const reflect::TypeInfo* type : m_types.referencingTypes())
   {
-    if (!type->component.holders)
-      continue;
-    for (const Entity& entity : type->component.holders(*registry))
+    for (const Entity& entity : scene.holdersOf(*type))
     {
       void* object = type->component.get(entity);
       if (!object)

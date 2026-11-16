@@ -14,6 +14,7 @@ enum class Kind
 {
   GameObject, // behaviour attached to an entity (onCreate / onUpdate)
   System,     // runs over every entity with certain components
+  Service,    // runs only when its events bring it something (sfs::Service)
   Component,  // plain data on an entity
   ScriptableObject,  // shared data kept in .asset files (sfs::ScriptableObject)
 };

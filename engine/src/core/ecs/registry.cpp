@@ -1,6 +1,8 @@
 #include <engine/core/ecs/entity.h>
 #include <engine/core/ecs/registry.h>
 #include <engine/core/logger/logger.h>
+#include <engine/core/util/cpuTiming.h>
+#include <engine/core/util/profiling.h>
 
 #include <algorithm>
 #include <string>
@@ -10,6 +12,12 @@ namespace sfs
 
 Registry::~Registry()
 {
+  // The services first: a service's scheduler joins its workers while the
+  // systems and the events they answer through still live.
+  std::vector<std::unique_ptr<Service>> services = std::move(m_services);
+  m_services.clear();
+  for (std::unique_ptr<Service>& service : services)
+    service.reset();
   // Taken out of the registry first, so a destructor that looks another system
   // up finds none rather than one already destroyed.
   std::vector<std::unique_ptr<System>> leaving = std::move(systems);
@@ -115,42 +123,21 @@ void Registry::follow(System& system, std::size_t index)
     system.tellJoined(index, entity);
 }
 
-void Registry::countChange(Entity::EntityId entity,
-                           std::size_t componentId,
-                           bool gained)
-{
-  ++m_componentChanges[componentId];
-  if (gained)
-  {
-    if (m_holderCount[componentId]++ == 0)
-      m_holder[componentId] = entity;
-  }
-  else
-  {
-    if (m_holderCount[componentId] > 0)
-      --m_holderCount[componentId];
-    if (m_holder[componentId] == entity)
-      m_holder[componentId] = kNoHolder;
-  }
-}
-
-void Registry::countChanges(Entity::EntityId entity,
-                            const Signature& before,
-                            const Signature& after)
+void Registry::countChanges(const Signature& before, const Signature& after)
 {
   const Signature changed = before ^ after;
 #if defined(__GLIBCXX__)
   // Straight from set bit to set bit.
   for (std::size_t id = changed._Find_first(); id < changed.size();
        id = changed._Find_next(id))
-    countChange(entity, id, after.test(id));
+    ++m_componentChanges[id];
 #else
   // Stops after the last set bit.
   for (std::size_t id = 0, left = changed.count(); left > 0; ++id)
     if (changed.test(id))
     {
       --left;
-      countChange(entity, id, after.test(id));
+      ++m_componentChanges[id];
     }
 #endif
 }
@@ -246,19 +233,16 @@ void Registry::syncQueries(Entity::EntityId id,
     }
 }
 
-Entity::EntityId Registry::findHolder(std::size_t componentId) const
+void Registry::clearSceneData()
 {
-  for (Entity::EntityId id = 0; id < entityComponentSignatures.size(); ++id)
-    if (alive(id) && entityComponentSignatures[id].test(componentId))
-      return id;
-  return kNoHolder;
+  for (std::unique_ptr<void, void (*)(void*)>& data : m_sceneData)
+    data.reset();
 }
 
-void Registry::warnNotSingle(std::size_t componentId, std::string_view type)
+void Registry::sceneDataExists(std::string_view type)
 {
-  m_warnedNotSingle[componentId] = true;
-  LOG_WARN("singleton(): " + std::to_string(m_holderCount[componentId]) +
-           " entities have a " + std::string(type) + "; using one of them");
+  LOG_ERROR("addSceneData<" + detail::readableTypeName(type) +
+            ">: the scene has one already; kept it, nothing added");
 }
 
 void Registry::componentsChanged(const Entity& entity,
@@ -267,7 +251,7 @@ void Registry::componentsChanged(const Entity& entity,
 {
   const Entity::EntityId id = entity.getId();
   const Signature& after = entityComponentSignatures[id];
-  countChange(id, componentId, after.test(componentId));
+  ++m_componentChanges[componentId];
 
   // Not in any query yet: it joins them, as it is then, at the next flush.
   if (isPending(id))
@@ -337,7 +321,7 @@ void Registry::flushEntities()
 
     if (id < entityComponentSignatures.size())
     {
-      countChanges(id, entityComponentSignatures[id], Signature());
+      countChanges(entityComponentSignatures[id], Signature());
       entityComponentSignatures[id].reset();
     }
 
@@ -382,6 +366,28 @@ void Registry::updateSystem(System& system, double deltaTime)
   if (system.enabled())
     system.update(deltaTime);
   owner.end();
+}
+
+void Registry::runServices()
+{
+  if (m_services.empty())
+    return;
+  ZoneScopedN("services");
+  // By index, and only those there now: a hook run from a service's change
+  // may add a service (which grows the list), and it runs from the next run.
+  for (std::size_t i = 0, count = m_services.size(); i < count; ++i)
+  {
+    Service& service = *m_services[i];
+    if (!service.enabled() || !service.hasUnconsumedEvents())
+      continue;
+    const cpuTiming::Scope timed(
+        cpuTiming::enabled() ? cpuTiming::label("service/", typeid(service))
+                             : nullptr);
+    detail::EventOwner& owner = detail::EventHost::owner(service);
+    owner.begin();
+    owner.dispatch();
+    owner.end();
+  }
 }
 
 void Registry::lateUpdateSystem(System& system, double deltaTime)

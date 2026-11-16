@@ -39,7 +39,7 @@ bool SceneDocument::beginOpen(const std::filesystem::path& path)
   nlohmann::json entities = file && file->contains("entities") ? std::move((*file)["entities"]) : nlohmann::json();
   if (file)
     (*file)["entities"] = nlohmann::json::array();
-  if (!file || !entities.is_array() || !serializerFor(*m_scene).load(*file, *m_scene, &m_scene->gameSystems()))
+  if (!file || !entities.is_array() || !serializerFor(*m_scene).load(*file, *m_scene, &m_scene->sceneScripts()))
   {
     if (file)
       LOG_ERROR("Can't open the scene " + path.string());
@@ -95,7 +95,7 @@ bool SceneDocument::save()
     return false;
   finishOpening(); // all of it, not what's in so far
 
-  if (!serializerFor(*m_scene).saveFile(*m_scene, m_path, m_scene->gameSystems()))
+  if (!serializerFor(*m_scene).saveFile(*m_scene, m_path, m_scene->sceneScripts()))
     return false;
   LOG_INFO("Saved scene " + m_path.filename().string());
   return true;
@@ -114,13 +114,13 @@ bool SceneDocument::saveAs(const std::filesystem::path& path)
 nlohmann::json SceneDocument::snapshot()
 {
   finishOpening();
-  return serializerFor(*m_scene).save(*m_scene, m_scene->gameSystems(), m_prefabContent);
+  return serializerFor(*m_scene).save(*m_scene, m_scene->sceneScripts(), m_prefabContent);
 }
 
 void SceneDocument::restore(const nlohmann::json& snapshot)
 {
   m_opening.reset();
   m_scene->clear();
-  serializerFor(*m_scene).load(snapshot, *m_scene, &m_scene->gameSystems());
+  serializerFor(*m_scene).load(snapshot, *m_scene, &m_scene->sceneScripts());
   m_scene->flushEntities();
 }

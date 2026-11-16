@@ -27,7 +27,7 @@ struct Harness
 {
   AssetStore store;
   MockRenderer renderer;
-  Scene scene{0, SceneServices{.assetStore = store, .renderer = &renderer}};
+  Scene scene{0, SceneBackends{.assetStore = store, .renderer = &renderer}};
   RenderSystem& system = scene.addSystem<RenderSystem>(renderer);
 
   Harness()

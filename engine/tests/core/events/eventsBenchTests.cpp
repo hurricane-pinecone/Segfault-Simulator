@@ -26,8 +26,8 @@
 // the test run:
 //
 // - send: 10,000 sends of a 32-byte trivially copyable event a round, in ns
-//   per send, against the same events pushed onto a component's vector found
-//   through singleton().
+//   per send, against the same events pushed onto a scene data vector found
+//   through sceneData().
 // - read: 10,000 kept events read by 1 and by 4 consumers, in ns per event
 //   per consumer.
 // - update: one frame boundary with 32 idle queues, and of a queue whose
@@ -80,8 +80,8 @@ struct [[sfs::event_news]] TickEvent
 };
 static_assert(sizeof(TickEvent) == 32);
 
-// The component a request list lives on today (an account's requests).
-struct Ledger
+// The scene data a request list lives on (an account's requests).
+struct [[sfs::scene_data]] Ledger
 {
   std::vector<TickEvent> requests;
 };
@@ -190,18 +190,16 @@ double benchSendBuilt()
 double benchPushBack()
 {
   Registry registry;
-  Entity owner = registry.createEntity();
-  owner.addComponent<Ledger>();
-  registry.flushEntities();
+  registry.addSceneData<Ledger>();
   double best = std::numeric_limits<double>::max();
   for (int round = 0; round < kRounds; ++round)
   {
     const Clock::time_point start = Clock::now();
     for (int i = 0; i < kEvents; ++i)
-      if (Ledger* ledger = registry.singleton<Ledger>())
+      if (Ledger* ledger = registry.sceneData<Ledger>())
         ledger->requests.push_back(TickEvent{static_cast<uint64_t>(i), {}});
     best = std::min(best, nsSince(start) / kEvents);
-    Ledger* ledger = registry.singleton<Ledger>();
+    Ledger* ledger = registry.sceneData<Ledger>();
     g_sink = g_sink + ledger->requests.size();
     ledger->requests.clear();
   }

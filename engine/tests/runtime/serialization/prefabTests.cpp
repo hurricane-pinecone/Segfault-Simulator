@@ -39,7 +39,7 @@ struct World
 {
   AssetStore store;
   MockRenderer renderer;
-  Scene scene{0, SceneServices{.assetStore = store, .renderer = &renderer}};
+  Scene scene{0, SceneBackends{.assetStore = store, .renderer = &renderer}};
   RenderSystem& render = scene.addSystem<RenderSystem>(renderer);
   MeshHandle cube = render.meshes().add(meshes::box({1, 1, 1}), "builtin:cube");
   std::map<std::string, json> prefabs;

@@ -15,7 +15,31 @@ const unsigned int MAX_COMPONENTS = 256;
 typedef std::bitset<MAX_COMPONENTS> Signature;
 
 class Registry;
+class Entity;
 
+namespace detail
+{
+/**
+ * The engine's own way from an entity to its registry, for its walks over
+ * entities (the hierarchy, the scene serializer's id scan). Engine-internal:
+ * game code never uses it (the engine-internal lint).
+ */
+struct EntityAccess
+{
+  /**
+   * The registry an entity belongs to.
+   * @param entity the handle
+   * @return its registry, or null for a default-made handle
+   */
+  static Registry* registry(const Entity& entity);
+};
+} // namespace detail
+
+/**
+ * A handle to an entity: its id, generation and component API. It doesn't
+ * lead to its registry: code that searches takes the list it searches from
+ * its system or scene.
+ */
 class Entity
 {
 public:
@@ -44,21 +68,18 @@ public:
    */
   bool isValid() const;
 
-  void setRegistry(Registry* registry) { this->registry = registry; }
-  /** The registry the entity belongs to; null for a default-made handle. */
-  Registry* registryOf() const { return registry; }
-
   /**
    * Gives the entity a TComponent made from `args`, replacing one it has. On
-   * a handle that isn't valid it logs an error and adds nothing.
+   * a handle that isn't valid it logs an error and adds nothing. Const: a
+   * handle's constness is the handle's, not the entity's.
    * @return this handle, so calls chain
    */
   template <typename TComponent, typename... TArgs>
-  Entity& addComponent(TArgs&&... args);
+  const Entity& addComponent(TArgs&&... args) const;
 
   /** addComponent(), for a tag (an empty component): it reads better. */
   template <typename TComponent, typename... TArgs>
-  Entity& addTag(TArgs&&... args);
+  const Entity& addTag(TArgs&&... args) const;
 
   /** Takes its TComponent away; nothing happens if it has none. */
   template <typename TComponent>
@@ -114,6 +135,11 @@ public:
 
 private:
   friend class Registry;
+  friend struct detail::EntityAccess;
+
+  void setRegistry(Registry* registry) { this->registry = registry; }
+  /** The registry the entity belongs to; null for a default-made handle. */
+  Registry* registryOf() const { return registry; }
 
   EntityId id;         // Id is reused when entities are destroyed, because ECS
                        // uses vector storage. This is to avoid infinite memory
@@ -122,5 +148,13 @@ private:
   DebugId debugId;     // Remains consistent.
   Registry* registry = nullptr;
 };
+
+namespace detail
+{
+inline Registry* EntityAccess::registry(const Entity& entity)
+{
+  return entity.registryOf();
+}
+} // namespace detail
 
 } // namespace sfs

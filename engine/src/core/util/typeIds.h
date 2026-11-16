@@ -5,15 +5,17 @@
 #include <string_view>
 #include <unordered_map>
 
-// engine-core's own: the tables behind componentTypeId(), systemTypeId() and
-// eventTypeId(). Kept out of the public headers, which only need the ids.
+// engine-core's own: the tables behind componentTypeId(), systemTypeId(),
+// eventTypeId() and sceneDataTypeId(). Kept out of the public headers, which
+// only need the ids.
 namespace sfs::detail
 {
 
 /**
  * Ids by type key, numbered from 0 in the order they're first asked for. Each
- * kind of id (components', systems', events') is one table defined once in
- * engine-core, so every module that asks gets the same id. Thread-safe.
+ * kind of id (components', systems', events', scene data's) is one table
+ * defined once in engine-core, so every module that asks gets the same id.
+ * Thread-safe.
  */
 class TypeIds
 {

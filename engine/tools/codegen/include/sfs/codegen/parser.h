@@ -29,6 +29,10 @@ namespace sfs::codegen
  * (`struct [[sfs::component]] TipBody {};`) is a component too, in
  * ParseResult::components; a header may hold only marked types. A marked type
  * can't have a base; nested and template ones are warned about and skipped.
+ * [[sfs::scene_data]] marks data the scene holds one of
+ * (TypeKind::SceneData), the file's type or another, registered as
+ * [[sfs::component]] registers a component; on a component, an event, a type
+ * with a base, or an unnamed, nested or template type it's an error.
  */
 // A UI header (*.ui.h) is skipped: nothing in it is a script or a component.
 ParseResult parseHeader(std::string_view source, const std::filesystem::path& path);

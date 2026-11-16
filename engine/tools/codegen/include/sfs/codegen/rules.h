@@ -55,6 +55,7 @@ enum class RuleId : uint8_t
   ShowIfTarget,
   EventAndComponent,
   EventDeclaration,
+  SceneDataDeclaration,
   SingleAny,
   AnyAlwaysMet,
   DuplicateTerm,
@@ -80,6 +81,9 @@ enum class RuleId : uint8_t
   EventHandleOutsideCreate,
   ReaderOnComponent,
   ResponseSentTwice,
+  ServiceReachesRegistry,
+  ServiceUpdateMethod,
+  EngineInternal,
   BadIgnore,
   Count,
 };

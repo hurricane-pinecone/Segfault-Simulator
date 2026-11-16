@@ -172,8 +172,9 @@ target_compile_options(engine-core PUBLIC
 # is. Without codegen a stub registers nothing.
 if(SFS_CODEGEN_AVAILABLE)
     set(ENGINE_COMPONENT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/include/engine/core/components")
-    # The engine's own event types' traits go where eventTraits.h includes
-    # them, for the engine and the games built on it alike.
+    # The engine's own event and scene data types' traits go where
+    # eventTraits.h and sceneData.h include them, for the engine and the games
+    # built on it alike.
     set(ENGINE_GENERATED_INCLUDE "${CMAKE_CURRENT_BINARY_DIR}/generated/include")
     set(ENGINE_COMPONENT_HEADERS
             "${ENGINE_COMPONENT_DIR}/nameComponent.h"

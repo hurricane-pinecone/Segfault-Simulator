@@ -253,7 +253,7 @@ ChildRows<TTerm, TTerms...> childrenOf(const Entity& entity)
 {
   if (!entity.isValid())
     return {};
-  Registry* registry = entity.registryOf();
+  Registry* registry = detail::EntityAccess::registry(entity);
   return {registry, registry->links().nodes[entity.getId()].firstChild};
 }
 
@@ -457,7 +457,8 @@ template <typename TTerm, typename... TTerms>
 DescendantRows<TTerm, TTerms...> descendants(const Entity& root)
 {
   return root.isValid()
-             ? DescendantRows<TTerm, TTerms...>(root.registryOf(), root.getId())
+             ? DescendantRows<TTerm, TTerms...>(
+                   detail::EntityAccess::registry(root), root.getId())
              : DescendantRows<TTerm, TTerms...>();
 }
 

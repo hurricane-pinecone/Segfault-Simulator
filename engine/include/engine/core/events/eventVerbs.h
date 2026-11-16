@@ -20,22 +20,22 @@ namespace detail
 
 /**
  * What a host that runs event handle owners calls: the Registry for its
- * systems, the Scene for its game objects (later a service's host). Handles
+ * systems and services, the Scene for its game objects. Handles
  * are made only while their owner sets up; each update is one span, with the
  * owner's handlers run first.
  */
 struct EventHost
 {
   /**
-   * Gives a system the events it sends to and makes handles of.
-   * @param user the system
+   * Gives a system or service the events it sends to and makes handles of.
+   * @param user the system or service
    * @param events its events; null: none
    */
   static inline void attach(EventVerbs& user, Events* events);
   /**
-   * A system's set-up (create()) starts or ends: it may make handles only in
-   * between.
-   * @param user the system
+   * A system's or service's set-up (create()) starts or ends: it may make
+   * handles only in between.
+   * @param user the system or service
    * @param on whether set-up is starting
    */
   static inline void declaring(EventVerbs& user, bool on);
@@ -49,9 +49,9 @@ struct EventHost
   static inline void
   settingUp(Events& events, EventOwner* owner, const std::type_info* who);
   /**
-   * A system's handle owner part, which its host runs (begin(), dispatch(),
-   * end()).
-   * @param user the system
+   * A system's or service's handle owner part, which its host runs (begin(),
+   * dispatch(), end()).
+   * @param user the system or service
    * @return it
    */
   static inline EventOwner& owner(EventVerbs& user);
@@ -60,12 +60,13 @@ struct EventHost
 } // namespace detail
 
 /**
- * What a system sends and receives events with (docs/core/events): send()
- * and send(key, event) to tell others something, broadcast<E>() for a worker
- * job's news, and the handles it makes in create() and keeps as members:
+ * What a system or a service sends and receives events with
+ * (docs/core/events): send() and send(key, event) to tell others something,
+ * cancel<E>(key) to take back entity news, broadcast<E>() for a worker job's
+ * news, and the handles it makes in create() and keeps as members:
  * consumer<E>() to read a type (or give it handlers the engine calls before
  * update()), requester<R>() to ask for a request type and receive its
- * responses. A later event-only base can share it.
+ * responses.
  */
 class EventVerbs
 {
@@ -80,6 +81,24 @@ public:
    * @return whether it has unconsumed events
    */
   bool hasUnconsumedEvents() const;
+
+  /**
+   * Whether it runs: a disabled system or service is skipped by its host
+   * (and by render providers), its handles keeping their places so it
+   * misses nothing. For debug toggling; the render system is never disabled.
+   * @return whether it's enabled
+   */
+  bool enabled() const { return m_enabled; }
+  /**
+   * Enables or disables it (see enabled()).
+   * @param enabled whether it runs
+   */
+  inline void setEnabled(bool enabled)
+  {
+    m_enabled = enabled;
+    if (!enabled)
+      m_eventOwner.wasDisabled = true;
+  }
 
 protected:
   EventVerbs() = default;
@@ -109,6 +128,18 @@ protected:
   }
 
   /**
+   * Cancels the key's current entity news of TEvent, so readLatest() no
+   * longer gives it (Events::cancel()).
+   * @param key the entity it's about
+   */
+  template <typename TEvent>
+  void cancel(const Entity& key)
+  {
+    if (Events* events = eventsOrLog()) [[likely]]
+      events->template cancel<TEvent>(key);
+  }
+
+  /**
    * A broadcast of TEvent for a worker job's news (Events::broadcast()).
    * @return the broadcast; one to nowhere without events
    */
@@ -121,10 +152,11 @@ protected:
   }
 
   /**
-   * A consumer of TEvent owned by this system, made in create() and kept as
-   * a member: registered at once, so nothing sent from then on is lost, and
-   * its handlers run before update(). Made elsewhere it is logged and a
-   * consumer of nothing is returned.
+   * A consumer of TEvent owned by this system or service, made in create()
+   * and kept as a member: registered at once, so nothing sent from then on
+   * is lost, and its handlers run before update() (a service's whenever it
+   * runs). Made elsewhere it is logged and a consumer of nothing is
+   * returned.
    * @return the consumer
    */
   template <typename TEvent>
@@ -143,11 +175,12 @@ protected:
   }
 
   /**
-   * A requester of TRequest owned by this system, made in create() and kept
-   * as a member: its builder, which handles the request's responses by role
-   * (onResponse(), onProgress(), onFailure() and their batch forms, or
-   * ignoreFailure()) and is assigned to an EventRequester<R>. Its response
-   * handlers run before update(). Made elsewhere it is logged and a
+   * A requester of TRequest owned by this system or service, made in
+   * create() and kept as a member: its builder, which handles the request's
+   * responses by role (onResponse(), onProgress(), onFailure() and their
+   * batch forms, or ignoreFailure()) and is assigned to an
+   * EventRequester<R>. Its response handlers run before update() (a
+   * service's whenever it runs). Made elsewhere it is logged and a
    * requester of nothing is built.
    * @return the requester's builder
    */
@@ -188,6 +221,7 @@ private:
   Events* m_events = nullptr;
   detail::EventOwner m_eventOwner;
   bool m_declaring = false;
+  bool m_enabled = true;
   bool m_warnedOutside = false;
   mutable bool m_warnedNoEvents = false;
 };

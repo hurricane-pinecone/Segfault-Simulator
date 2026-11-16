@@ -18,9 +18,10 @@
 //
 // With --ui-previews, the headers are UI headers (*.ui.h) and the output is
 // the editor's UI preview module: their views, filled with placeholders.
-// --event-traits also writes the event traits header of the files' event
-// types (generateEventTraits()), which the target includes first, with those
-// of each --event-source file (scanned for events alone); --events-only
+// --event-traits also writes the traits header of the files' event types
+// (generateEventTraits()) and [[sfs::scene_data]] types
+// (generateSceneDataTraits()), which the target includes first, with those
+// of each --event-source file (scanned for traits alone); --events-only
 // writes only that, from any source files (a test's .cpp).
 //
 // Diagnostics print as `file:line: severity: message [rule]`; a header's
@@ -64,38 +65,47 @@ void writeIfChanged(const std::filesystem::path& path, const std::string& text)
   std::ofstream(path, std::ios::binary) << text;
 }
 
-// Whether a diagnostic is about event declarations: all that a file scanned
-// for events alone shows.
-bool aboutEvents(const sfs::codegen::Diagnostic& diagnostic)
+// Whether a diagnostic is about what the traits header says (event and
+// scene data declarations): all that a file scanned for traits alone shows.
+bool aboutTraits(const sfs::codegen::Diagnostic& diagnostic)
 {
   using sfs::codegen::RuleId;
   return diagnostic.rule == RuleId::EventDeclaration ||
-         diagnostic.rule == RuleId::EventAndComponent;
+         diagnostic.rule == RuleId::EventAndComponent ||
+         diagnostic.rule == RuleId::SceneDataDeclaration;
 }
 
-// The event traits header for the event types `results` declare; false if a
-// declaration is wrong.
+// The traits header for the event types and scene data types `results`
+// declare; false if a declaration is wrong.
 bool generateTraits(const std::vector<sfs::codegen::ParseResult>& results,
                     std::string& generated)
 {
   std::vector<sfs::codegen::EventModel> events;
   std::vector<std::string> plainTypes;
+  std::vector<sfs::codegen::TypeModel> sceneData;
   for (const sfs::codegen::ParseResult& result : results)
   {
     events.insert(events.end(), result.events.begin(), result.events.end());
     plainTypes.insert(
         plainTypes.end(), result.plainTypes.begin(), result.plainTypes.end());
+    if (result.type && result.type->kind == sfs::codegen::TypeKind::SceneData)
+      sceneData.push_back(*result.type);
+    for (const sfs::codegen::TypeModel& type : result.components)
+      if (type.kind == sfs::codegen::TypeKind::SceneData)
+        sceneData.push_back(type);
   }
   std::vector<sfs::codegen::Diagnostic> diagnostics;
   generated =
-      sfs::codegen::generateEventTraits(events, plainTypes, diagnostics);
+      sfs::codegen::generateEventTraits(events, plainTypes, diagnostics) +
+      sfs::codegen::generateSceneDataTraits(sceneData);
   for (const sfs::codegen::Diagnostic& diagnostic : diagnostics)
     print(diagnostic);
   return diagnostics.empty();
 }
 
-// Parses each of `files` for its event types alone into `results`, printing
-// its event diagnostics; false if one is an error.
+// Parses each of `files` for its traits alone (event types, scene data
+// types) into `results`, printing those diagnostics; false if one is an
+// error.
 bool scanEvents(const std::vector<std::filesystem::path>& files,
                 std::vector<sfs::codegen::ParseResult>& results)
 {
@@ -105,7 +115,7 @@ bool scanEvents(const std::vector<std::filesystem::path>& files,
     sfs::codegen::ParseResult& result = results.emplace_back(
         sfs::codegen::parseHeader(sfs::codegen::readFile(file), file));
     for (const sfs::codegen::Diagnostic& diagnostic : result.diagnostics)
-      if (aboutEvents(diagnostic))
+      if (aboutTraits(diagnostic))
       {
         print(diagnostic);
         failed |= isError(diagnostic);
@@ -122,8 +132,8 @@ bool generateScripts(const std::vector<std::filesystem::path>& headers,
                      std::string& generated,
                      std::string* traits)
 {
-  std::vector<sfs::codegen::TypeModel> types;
   std::vector<sfs::codegen::ParseResult> results;
+  results.reserve(headers.size() + eventSources.size());
   bool failed = false;
   for (const std::filesystem::path& header : headers)
   {
@@ -134,14 +144,20 @@ bool generateScripts(const std::vector<std::filesystem::path>& headers,
       print(diagnostic);
       failed |= isError(diagnostic);
     }
+  }
+  if (traits && (!scanEvents(eventSources, results) ||
+                 !generateTraits(results, *traits)))
+    failed = true;
+  // The headers' types, taken once the traits have read them.
+  std::vector<sfs::codegen::TypeModel> types;
+  for (std::size_t i = 0; i < headers.size(); ++i)
+  {
+    sfs::codegen::ParseResult& result = results[i];
     if (result.type)
       types.push_back(std::move(*result.type));
     for (sfs::codegen::TypeModel& type : result.components)
       types.push_back(std::move(type));
   }
-  if (traits && (!scanEvents(eventSources, results) ||
-                 !generateTraits(results, *traits)))
-    failed = true;
   for (const sfs::codegen::Diagnostic& diagnostic :
        sfs::codegen::checkNames(types))
   {

@@ -181,19 +181,16 @@ bool copy(const TypeInfo& type,
   return true;
 }
 
-std::vector<Inbound> inboundTo(const sfs::Entity& root)
+std::vector<Inbound> inboundTo(sfs::Scene& scene, const sfs::Entity& root)
 {
   std::vector<Inbound> out;
-  sfs::Registry* registry = root.isValid() ? root.registryOf() : nullptr;
-  if (!registry)
+  if (!root.isValid())
     return out;
   const auto inside = [&](const sfs::Entity& entity)
   { return entity == root || sfs::hierarchy::isAncestor(root, entity); };
   for (const TypeInfo* type : sfs::reflect::types().referencingTypes())
   {
-    if (!type->component.holders)
-      continue;
-    for (const sfs::Entity& holder : type->component.holders(*registry))
+    for (const sfs::Entity& holder : scene.holdersOf(*type))
     {
       if (inside(holder))
         continue; // the instance's own: its entry names them

@@ -184,7 +184,7 @@ fill(const fs::path& project, std::string_view which, bool write)
                                     sfs::AssetDatabase::projectFolders());
   sfs::AssetStore store;
   store.setDatabase(&database);
-  sfs::Scene scene{0, sfs::SceneServices{.assetStore = store}};
+  sfs::Scene scene{0, sfs::SceneBackends{.assetStore = store}};
   // A prefab is read from its edited text while that's checked.
   std::string checking;
   std::optional<json> edited;

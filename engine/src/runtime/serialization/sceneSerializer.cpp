@@ -36,6 +36,7 @@ namespace
 
 // The key an entity's children are nested under, beside its components.
 constexpr const char* kChildrenKey = "children";
+constexpr const char* kSceneDataKey = "sceneData";
 
 // A float as the double with the same shortest decimal spelling, so 0.45f is
 // saved as 0.45 rather than its widened value 0.44999998807907104.
@@ -842,6 +843,11 @@ void SceneSerializer::loadComponents(const json& entry,
     const reflect::TypeInfo* type = m_types.find(typeName);
     if (!type || type->kind != reflect::TypeKind::Component)
     {
+      if (type && type->kind == reflect::TypeKind::SceneData)
+        LOG_ERROR("Loading an entity: " + typeName +
+                  " is scene data, not a component, so it isn't added to "
+                  "an entity; kept as it was saved. Move it to the scene's "
+                  "\"sceneData\"");
       // Keep it rather than lose it: its module may just not be loaded.
       unresolved[typeName] = fields;
       continue;
@@ -863,7 +869,7 @@ void SceneSerializer::loadComponents(const json& entry,
 }
 
 json SceneSerializer::save(Scene& scene,
-                           const std::vector<std::string>& gameSystems,
+                           const SceneScripts& scripts,
                            bool prefabContent) const
 {
   // Every scene id a reference needs is given before any entry is written.
@@ -890,8 +896,14 @@ json SceneSerializer::save(Scene& scene,
   }
 
   json out = {{"formatVersion", kSceneFormatVersion},
-              {"systems", gameSystems},
+              {"systems", scripts.systems},
               {"entities", std::move(entities)}};
+  // A prefab holds no scene data: it's the scene's.
+  if (!prefabContent)
+    if (json data = saveSceneData(scene); !data.empty())
+      out[kSceneDataKey] = std::move(data);
+  if (!scripts.services.empty())
+    out["services"] = scripts.services;
   if (const RenderSystem* render = scene.tryGetSystem<RenderSystem>())
     out["render"] = renderToJson(*render);
   return out;
@@ -899,7 +911,7 @@ json SceneSerializer::save(Scene& scene,
 
 bool SceneSerializer::load(const json& in,
                            Scene& scene,
-                           std::vector<std::string>* gameSystems) const
+                           SceneScripts* scripts) const
 {
   if (!in.is_object() || !in.contains("entities") || !in["entities"].is_array())
   {
@@ -920,6 +932,8 @@ bool SceneSerializer::load(const json& in,
     if (entry.is_object())
       loadEntity(entry, scene, {}, op);
   resolveRefs(op.refs, scene, nullptr, nullptr, nullptr);
+  if (const auto data = in.find(kSceneDataKey); data != in.end())
+    loadSceneData(*data, scene);
 
   if (!unresolvedTypes.empty())
   {
@@ -934,30 +948,98 @@ bool SceneSerializer::load(const json& in,
     if (RenderSystem* render = scene.tryGetSystem<RenderSystem>())
       renderFromJson(in["render"], *render);
 
-  if (gameSystems)
+  if (scripts)
   {
-    gameSystems->clear();
-    for (const json& name : in.value("systems", json::array()))
-      if (name.is_string())
-        gameSystems->push_back(name.get<std::string>());
+    const auto names = [&in](const char* key, std::vector<std::string>& out)
+    {
+      out.clear();
+      for (const json& name : in.value(key, json::array()))
+        if (name.is_string())
+          out.push_back(name.get<std::string>());
+    };
+    names("systems", scripts->systems);
+    names("services", scripts->services);
   }
   return true;
 }
 
-bool SceneSerializer::saveFile(
-    Scene& scene,
-    const std::filesystem::path& path,
-    const std::vector<std::string>& gameSystems) const
+json SceneSerializer::saveSceneData(Scene& scene) const
 {
-  return writeJsonFile(save(scene, gameSystems), path);
+  json data = json::object();
+  for (const reflect::TypeInfo& type : m_types.types())
+    if (type.kind == reflect::TypeKind::SceneData)
+      if (void* object = scene.sceneDataOf(type))
+        data[type.name] = saveObject(type, object);
+  // Those that didn't load (type not registered) go back out as read.
+  if (const UnresolvedSceneData* unresolved =
+          scene.sceneData<const UnresolvedSceneData>())
+    for (const auto& [name, fields] : unresolved->types.items())
+      if (!data.contains(name))
+        data[name] = fields;
+  return data;
+}
+
+void SceneSerializer::loadSceneData(const json& data, Scene& scene) const
+{
+  if (!data.is_object())
+  {
+    LOG_ERROR("Loading a scene: its \"sceneData\" isn't an object; skipped");
+    return;
+  }
+  std::string unregistered;
+  // Kept rather than lost, to be saved back as read.
+  const auto keep = [&scene](const std::string& typeName, const json& fields)
+  {
+    UnresolvedSceneData* unresolved = scene.sceneData<UnresolvedSceneData>();
+    if (!unresolved)
+      unresolved = &scene.addSceneData<UnresolvedSceneData>();
+    unresolved->types[typeName] = fields;
+  };
+  for (const auto& [typeName, fields] : data.items())
+  {
+    const reflect::TypeInfo* type = m_types.find(typeName);
+    if (!type)
+    {
+      // Its module may just not be loaded.
+      keep(typeName, fields);
+      unregistered += (unregistered.empty() ? "" : ", ") + typeName;
+      continue;
+    }
+    if (type->kind != reflect::TypeKind::SceneData)
+    {
+      LOG_ERROR("Loading a scene's scene data: " + typeName +
+                " isn't scene data (marked [[sfs::scene_data]]); kept as it "
+                "was saved, not added");
+      keep(typeName, fields);
+      continue;
+    }
+    if (scene.sceneDataOf(*type))
+    {
+      LOG_WARN("Loading a scene's scene data: the scene has a " + typeName +
+               " already; kept it, skipped the file's");
+      continue;
+    }
+    if (void* made = scene.addSceneData(*type))
+      loadObject(*type, made, fields);
+  }
+  if (!unregistered.empty())
+    LOG_INFO("Scene uses scene data that isn't loaded (" + unregistered +
+             "); its data is kept and loads once it's built");
+}
+
+bool SceneSerializer::saveFile(Scene& scene,
+                               const std::filesystem::path& path,
+                               const SceneScripts& scripts) const
+{
+  return writeJsonFile(save(scene, scripts), path);
 }
 
 bool SceneSerializer::loadFile(const std::filesystem::path& path,
                                Scene& scene,
-                               std::vector<std::string>* gameSystems) const
+                               SceneScripts* scripts) const
 {
   const std::optional<json> data = readJsonFile(path);
-  return data && load(*data, scene, gameSystems);
+  return data && load(*data, scene, scripts);
 }
 
 bool SceneSerializer::writeJsonFile(const json& data,

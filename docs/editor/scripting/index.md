@@ -7,8 +7,8 @@ calls and no scripting language.
 
 ## Creating a script
 
-Choose **Scripts → New GameObject Script / New System / New Component / New
-Scriptable Object Template**, and name it. The editor writes `scripts/<Name>.h`
+Choose **Scripts → New GameObject Script / New System / New Service / New
+Component / New Scriptable Object Template**, and name it. The editor writes `scripts/<Name>.h`
 from a template and opens it in the [Code panel](../index.md#code-panel). To
 put it in a folder inside `scripts/` (say `scripts/components/`), right-click
 that folder in the Assets panel and choose it there. Class names must be unique
@@ -40,6 +40,7 @@ files to `scripts/`; they're compiled into the module.
 | --- | --- | --- |
 | GameObject script | `sfs::GameObject` | On the entity it's attached to: `onCreate`, then `onUpdate` every frame; `onProcessInput` gets the keyboard and mouse |
 | System | `sfs::System` | Every frame, over each entity that has its registered components |
+| Service | `sfs::Service` | Only when its events bring it something, at the start of a step, on the entities they hand it (see [Services](../../core/services/index.md)) |
 | Component | none | Nothing; plain data on an entity, edited in the inspector |
 | Mesh source | `sfs::MeshSource` | When a scene is created: adds meshes built in code, by name (see below) |
 | Scriptable object | `sfs::ScriptableObject` | Nothing; shared data in `.asset` files (see below) |
@@ -58,6 +59,9 @@ component is a `struct`, or a class with public fields.
 - **Systems:** in **Scene Settings → Systems**, choose **Add System**. The
   list also offers the engine's optional systems, such as physics. The scene
   saves the list, and the systems are added when it plays.
+- **Services:** in **Scene Settings → Services**, below Systems, choose **Add
+  Service**. Their order doesn't matter. The scene saves the list, and the
+  services are added when it plays, after the systems.
 - **Components:** select an entity and choose **Add Component**. Your
   components are listed with the engine's.
 

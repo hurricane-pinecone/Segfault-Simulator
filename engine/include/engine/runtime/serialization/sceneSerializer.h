@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/core/ecs/entity.h"
+#include "engine/runtime/scripting/sceneScripts.h"
 #include "nlohmann/json.hpp"
 
 #include <cstdint>
@@ -391,7 +392,9 @@ public:
    * The scene in scene-file form (see above).
    *
    * @param scene         the scene
-   * @param gameSystems   its game systems' names, saved under "systems"
+   * @param scripts       its game systems' and services' names, saved under
+   *                      "systems" and "services" (written only when it has
+   *                      some)
    * @param prefabContent the scene holds a prefab's content, open on its own
    *                      (the editor's prefab tab): plain entries keep their
    *                      prefab "$id"s, so a save and load (an undo snapshot)
@@ -399,19 +402,19 @@ public:
    * @return the JSON
    */
   nlohmann::json save(Scene& scene,
-                      const std::vector<std::string>& gameSystems = {},
+                      const SceneScripts& scripts = {},
                       bool prefabContent = false) const;
 
   /**
    * Add the saved entities to `scene` (existing entities are kept) and apply
-   * the saved render settings. The saved game system names go to
-   * `gameSystems` when given.
+   * the saved render settings. The saved game system and service names go to
+   * `scripts` when given (none when the file lists none).
    *
    * @return false (logged) if `json` isn't a scene this version understands.
    */
   bool load(const nlohmann::json& json,
             Scene& scene,
-            std::vector<std::string>* gameSystems = nullptr) const;
+            SceneScripts* scripts = nullptr) const;
 
   /**
    * One object's reflected fields as JSON ({ "field": value, ... }), the form
@@ -465,12 +468,12 @@ public:
   /** Save to a file (pretty-printed). @return false (logged) on failure. */
   bool saveFile(Scene& scene,
                 const std::filesystem::path& path,
-                const std::vector<std::string>& gameSystems = {}) const;
+                const SceneScripts& scripts = {}) const;
 
   /** Load from a file. @return false (logged) on failure. */
   bool loadFile(const std::filesystem::path& path,
                 Scene& scene,
-                std::vector<std::string>* gameSystems = nullptr) const;
+                SceneScripts* scripts = nullptr) const;
 
   /**
    * Write JSON the way scene files are written: indented, with short arrays
@@ -595,6 +598,12 @@ private:
                   const Entity& entity,
                   std::vector<PendingRef>* pending,
                   std::string_view source) const;
+  // The scene's scene data, by type name, the unresolved kept included
+  // (empty when it has none).
+  nlohmann::json saveSceneData(Scene& scene) const;
+  // A scene file's "sceneData": each type the scene hasn't got yet added and
+  // loaded; an unregistered type's kept, unresolved.
+  void loadSceneData(const nlohmann::json& data, Scene& scene) const;
   void loadComponents(const nlohmann::json& components,
                       Entity& entity,
                       std::set<std::string>* unresolvedTypes,

@@ -199,7 +199,7 @@ struct ResponseSender
 {
   /** The file the send is written in. */
   const std::filesystem::path* file = nullptr;
-  /** The system it's sent for. */
+  /** The system or service it's sent for. */
   std::string_view system;
 };
 
@@ -298,6 +298,12 @@ public:
    * deriving from sfs::GameObject, or from another of its game objects.
    */
   bool isGameObject(std::string_view name) const;
+
+  /**
+   * Whether `name` (unqualified) is one of the project's services: deriving
+   * from sfs::Service, or from another of the project's services.
+   */
+  bool isService(std::string_view name) const;
 
   /**
    * The type `name` (unqualified) a script header declares, as codegen

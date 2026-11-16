@@ -262,10 +262,10 @@ Rows of requests and responses carry their ticket beside the key and stamp.
 
 ## Owners and handlers
 
-A system (through `EventVerbs`) and a game object each hold a
-`detail::EventOwner`: an update stamp, the consumers it made, and their
-handlers (`std::function<void(EventQueueBase&, uint32_t)>`, made once in
-`create()`).
+A system and a service (both through `EventVerbs`) and a game object each
+hold a `detail::EventOwner`: an update stamp, the consumers it made, and
+their handlers (`std::function<void(EventQueueBase&, uint32_t)>`, made once
+in `create()`).
 
 - `Registry::updateSystem()` and the scene's object loop run
   `begin()` (a new stamp), `dispatch()` (each handler whose consumer has
@@ -293,6 +293,10 @@ handlers (`std::function<void(EventQueueBase&, uint32_t)>`, made once in
   handlers per consumer. It never runs.
 - `dispatch()` runs handlers by index, and a handler given during dispatch
   is refused (it would move the running one).
+- `Registry::runServices()` hosts the services: for each enabled one whose
+  handles have something new (`hasUnconsumed()`, one compare per handle),
+  `begin()`, `dispatch()`, `end()`, with no update between. See
+  [Services internals](../services/index.md).
 - An object's handles get their owner through `Events::m_settingUp`, which
   `Scene::create()` sets around `onCreate`.
 

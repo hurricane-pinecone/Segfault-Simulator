@@ -1,6 +1,7 @@
 #include "panels/sceneSettingsPanel.h"
 
 #include "editorContext.h"
+#include "panels/inspectorPanel.h"
 #include "history/editorHistory.h"
 #include "scene/editorScene.h"
 #include "scene/entityLabel.h"
@@ -8,6 +9,7 @@
 #include "widgets/widgets.h"
 
 #include "engine/core/ecs/ecs.h" // IWYU pragma: keep (Entity templates)
+#include "engine/core/reflection/reflection.h"
 #include "engine/runtime/rendering/debug/ui.h"
 #include "engine/runtime/rendering/renderSystem.h"
 #include "engine/runtime/rendering/visualStyles.h"
@@ -24,44 +26,56 @@
 
 namespace
 {
-// The systems the scene runs when it plays: the engine's optional ones (such as
-// physics) and the game's System scripts.
-void gameSystems(EditorScene& scene, EditorHistory& history)
+// A list of scripts the scene runs when it plays, by name (its systems, or its
+// services): each with its remove button, "(not built)" for one no module
+// has, and an Add combo of the rest of that kind, the engine's first, then
+// each game module's.
+void sceneScriptList(const char* title,
+                     sfs::ScriptType::Kind kind,
+                     std::vector<std::string>& names,
+                     EditorHistory& history)
 {
-  std::vector<std::string>& systems = scene.gameSystems();
-
-  if (!ImGui::CollapsingHeader("Systems", ImGuiTreeNodeFlags_DefaultOpen))
+  const bool systems = kind == sfs::ScriptType::Kind::System;
+  const bool open =
+      ImGui::CollapsingHeader(title, ImGuiTreeNodeFlags_DefaultOpen);
+  if (!systems)
+    ImGui::SetItemTooltip("Services run only when their events bring them "
+                          "something, at the start of each step. Their order "
+                          "doesn't matter.");
+  if (!open)
     return;
 
-  for (std::size_t i = 0; i < systems.size(); ++i)
+  ImGui::PushID(title);
+  for (std::size_t i = 0; i < names.size(); ++i)
   {
     ImGui::PushID(static_cast<int>(i));
-    const bool known = sfs::scripts().find(systems[i]) != nullptr;
+    const bool known = sfs::scripts().find(names[i]) != nullptr;
     if (ImGui::SmallButton("x"))
     {
       history.change(
-          [&]
-          { systems.erase(systems.begin() + static_cast<std::ptrdiff_t>(i)); });
+          [&] { names.erase(names.begin() + static_cast<std::ptrdiff_t>(i)); });
       ImGui::PopID();
       break;
     }
     ImGui::SameLine();
     if (known)
-      ImGui::TextUnformatted(systems[i].c_str());
+      ImGui::TextUnformatted(names[i].c_str());
     else
-      ImGui::TextDisabled("%s (not built)", systems[i].c_str());
+      ImGui::TextDisabled("%s (not built)", names[i].c_str());
     ImGui::PopID();
   }
-  if (systems.empty())
-    ImGui::TextDisabled("None");
+  if (names.empty())
+    ImGui::TextDisabled(systems ? "None"
+                                : "No services (create one under Scripts, "
+                                  "then Build)");
 
-  if (ImGui::BeginCombo("##addSystem", "Add System"))
+  if (ImGui::BeginCombo("##add", systems ? "Add System" : "Add Service"))
   {
     // The engine's first, then the game's.
     std::vector<const sfs::ScriptType*> candidates;
     for (const sfs::ScriptType& type : sfs::scripts().types())
-      if (type.kind == sfs::ScriptType::Kind::System &&
-          std::find(systems.begin(), systems.end(), type.name) == systems.end())
+      if (type.kind == kind &&
+          std::find(names.begin(), names.end(), type.name) == names.end())
         candidates.push_back(&type);
     std::stable_sort(candidates.begin(),
                      candidates.end(),
@@ -79,13 +93,91 @@ void gameSystems(EditorScene& scene, EditorHistory& history)
                                                   : section->c_str());
       }
       if (ImGui::Selectable(type->name.c_str()))
-        history.change([&] { systems.push_back(type->name); });
+        history.change([&] { names.push_back(type->name); });
     }
     if (candidates.empty())
-      ImGui::TextDisabled(
-          "No other systems (create one under Scripts, then Build)");
+      ImGui::TextDisabled(systems ? "No other systems (create one under "
+                                    "Scripts, then Build)"
+                                  : "No other services (create one under "
+                                    "Scripts, then Build)");
     ImGui::EndCombo();
   }
+  ImGui::PopID();
+}
+
+// The scene's scene data: each it holds, its fields edited as the Inspector
+// edits a component's, with a remove button; and an Add combo of the
+// registered scene data types it hasn't got, the engine's first, then each
+// game module's. A prefab's tab only says a prefab holds none.
+void sceneData(EditorScene& scene, EditorHistory& history, bool prefab)
+{
+  const bool open =
+      ImGui::CollapsingHeader("Scene Data", ImGuiTreeNodeFlags_DefaultOpen);
+  ImGui::SetItemTooltip("Data the scene holds one of each type of, apart "
+                        "from its entities ([[sfs::scene_data]]), which "
+                        "systems, services and scripts read");
+  if (!open)
+    return;
+  if (prefab)
+  {
+    ImGui::TextDisabled("A prefab holds no scene data: it's the scene's");
+    return;
+  }
+
+  ImGui::PushID("sceneData");
+  std::vector<const sfs::reflect::TypeInfo*> held;
+  std::vector<const sfs::reflect::TypeInfo*> candidates;
+  for (const sfs::reflect::TypeInfo& type : sfs::reflect::types().types())
+    if (type.kind == sfs::reflect::TypeKind::SceneData)
+      (scene.sceneDataOf(type) ? held : candidates).push_back(&type);
+
+  sfs::MeshLibrary* meshes = &scene.renderSystem().meshes();
+  for (const sfs::reflect::TypeInfo* type : held)
+  {
+    ImGui::PushID(type->name.c_str());
+    if (ImGui::SmallButton("x"))
+    {
+      history.change([&] { scene.removeSceneData(*type); });
+      ImGui::PopID();
+      break;
+    }
+    ImGui::SetItemTooltip("Remove %s", type->displayName.c_str());
+    ImGui::SameLine();
+    ImGui::SeparatorText(type->displayName.c_str());
+    if (void* object = scene.sceneDataOf(*type))
+      reflectedFields(*type, object, meshes, &history);
+    ImGui::PopID();
+  }
+  if (held.empty())
+    ImGui::TextDisabled("None");
+
+  if (ImGui::BeginCombo("##add", "Add Scene Data"))
+  {
+    std::stable_sort(
+        candidates.begin(),
+        candidates.end(),
+        [](const sfs::reflect::TypeInfo* a, const sfs::reflect::TypeInfo* b)
+        { return (a->module == "engine") > (b->module == "engine"); });
+    const std::string* section = nullptr;
+    for (const sfs::reflect::TypeInfo* type : candidates)
+    {
+      if (!section || *section != type->module)
+      {
+        section = &type->module;
+        ImGui::SeparatorText(*section == "engine" ? "Engine"
+                                                  : section->c_str());
+      }
+      if (ImGui::Selectable(type->displayName.c_str()))
+        history.change([&] { scene.addSceneData(*type); });
+    }
+    if (candidates.empty())
+      ImGui::TextDisabled(held.empty()
+                              ? "No scene data types (mark a struct "
+                                "[[sfs::scene_data]], then Build)"
+                              : "The scene has every scene data type");
+    ImGui::EndCombo();
+  }
+  ImGui::PopID();
 }
 
 // The scene's style: 3D, or a 2D game's plane (flat or isometric) and how its
@@ -479,7 +571,15 @@ void SceneSettingsPanel::drawContents(EditorContext& context)
     return;
 
   EditorHistory& history = *context.history;
-  gameSystems(*context.scene, history);
+  sceneScriptList("Systems",
+                  sfs::ScriptType::Kind::System,
+                  context.scene->sceneScripts().systems,
+                  history);
+  sceneScriptList("Services",
+                  sfs::ScriptType::Kind::Service,
+                  context.scene->sceneScripts().services,
+                  history);
+  sceneData(*context.scene, history, context.editingPrefab);
   sfs::RenderSystem& render = *context.render;
   sceneStyle(render, history);
   sceneLook(context, render, history);

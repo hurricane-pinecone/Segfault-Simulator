@@ -72,9 +72,9 @@ void SceneManager::load(const std::string& name)
 
 Scene* SceneManager::current() { return m_currentScene; }
 
-void SceneManager::setSceneServices(SceneServices* services)
+void SceneManager::setSceneBackends(SceneBackends* backends)
 {
-  m_services = services;
+  m_backends = backends;
 }
 
 } // namespace sfs

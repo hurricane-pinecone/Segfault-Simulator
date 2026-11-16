@@ -88,8 +88,8 @@ bool WebGpuRenderBackend::init(const char* title, int width, int height)
   // to its edge (soft particles and marks).
   m_assetStore->addWhitePixelTexture("white_pixel");
   m_assetStore->addRadialTexture("white_dot", 32);
-  m_services.emplace(
-      SceneServices{.assetStore = *m_assetStore, .renderer = m_renderer.get()});
+  m_backends.emplace(
+      SceneBackends{.assetStore = *m_assetStore, .renderer = m_renderer.get()});
 
   return initImGui();
 }
@@ -221,9 +221,9 @@ void WebGpuRenderBackend::imguiRenderDrawData()
 #endif
 }
 
-SceneServices* WebGpuRenderBackend::sceneServices()
+SceneBackends* WebGpuRenderBackend::sceneBackends()
 {
-  return m_services ? &*m_services : nullptr;
+  return m_backends ? &*m_backends : nullptr;
 }
 
 void WebGpuRenderBackend::onResize(int width, int height)
@@ -405,7 +405,7 @@ void WebGpuRenderBackend::endFrame()
 void WebGpuRenderBackend::shutdown()
 {
   shutdownImGui(); // its GPU objects live on the device released below
-  m_services.reset();
+  m_backends.reset();
   m_assetStore.reset();
   m_renderer.reset(); // before the device it was built on
   m_context.release();

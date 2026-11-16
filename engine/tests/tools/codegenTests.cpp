@@ -278,6 +278,17 @@ int main()
     CHECK(result.type->qualifiedName == std::string("a::b::Regen"));
   }
 
+  TEST("services should be recognised by their base")
+  {
+    const ParseResult qualified = parseHeader(
+        "class SquadService : public sfs::Service {};", "SquadService.h");
+    CHECK(qualified.type && qualified.type->kind == TypeKind::Service);
+    const ParseResult plain = parseHeader(
+        "using namespace sfs; class LootService : public Service {};",
+        "LootService.h");
+    CHECK(plain.type && plain.type->kind == TypeKind::Service);
+  }
+
   TEST("display names should split words, acronyms and numbers")
   {
     CHECK(displayName("castsShadow", false) == std::string("Casts Shadow"));
@@ -330,6 +341,29 @@ int main()
     CHECK(
         code.find("static_assert(std::is_base_of_v<sfs::GameObject, Player>") !=
         std::string::npos);
+  }
+
+  TEST("services should register how to add them, and be reflected as "
+       "services")
+  {
+    TypeModel squad = *parseHeader("class SquadService : public sfs::Service "
+                                   "{};",
+                                   "/project/scripts/SquadService.h")
+                           .type;
+    GeneratorOptions options;
+    options.module = "game";
+    options.function = "sfsRegisterModule";
+    options.includeRoot = "/project/scripts";
+
+    const std::string code = generateRegistration({squad}, options);
+    CHECK(code.find("#include \"engine/runtime/scripting/scriptRegistry.h\"") !=
+          std::string::npos);
+    CHECK(code.find("static_assert(std::is_base_of_v<sfs::Service, "
+                    "SquadService>") != std::string::npos);
+    CHECK(code.find("script.kind = sfs::ScriptType::Kind::Service;") !=
+          std::string::npos);
+    CHECK(code.find("scene.addService<SquadService>()") != std::string::npos);
+    CHECK(code.find("type.kind = TypeKind::Service;") != std::string::npos);
   }
 
   TEST("scriptable object types and references to them should be recognised "
@@ -604,6 +638,7 @@ sfs::ui::View look(sfs::ui::View view);
                     "/project/scripts/Listy.h");
     CHECK(hasDiagnostic(
         templated, Severity::Error, "isn't a base a script type can have"));
+    CHECK(hasDiagnostic(templated, Severity::Error, "sfs::Service"));
   }
 
   TEST("an AssetRef to a namespaced type should name it as registered")
@@ -1331,6 +1366,141 @@ struct [[sfs::event_request(sfs::EngineResponse)]] AskEngine { int g = 0; };
     CHECK(result.components.empty());
   }
 
+  TEST("[[sfs::scene_data]] should mark scene data, the file's type or another")
+  {
+    const ParseResult result = parseHeader(R"(
+      namespace game {
+      struct [[sfs::scene_data]] Scoreboard { int home = 0; };
+      class [[sfs::scene_data]] Rules { public: float speed = 1.0f; };
+      struct [[sfs::scene_data]] Ready {};
+      struct [[sfs::component]] Player {};
+      }
+    )",
+                                           "Scoreboard.h");
+    CHECK(result.diagnostics.empty());
+    CHECK(result.type && result.type->name == "Scoreboard" &&
+          result.type->kind == TypeKind::SceneData);
+    CHECK(findField(*result.type, "home") != nullptr);
+    CHECK(result.components.size() == 3);
+    CHECK(result.components[0].name == "Rules" &&
+          result.components[0].kind == TypeKind::SceneData &&
+          result.components[0].classKey == "class");
+    CHECK(result.components[1].name == "Ready" &&
+          result.components[1].kind == TypeKind::SceneData);
+    CHECK(result.components[2].name == "Player" &&
+          result.components[2].kind == TypeKind::Component);
+
+    GeneratorOptions options;
+    options.module = "game";
+    options.function = "game::registerTypes";
+    const std::string code = generateRegistration({*result.type}, options);
+    CHECK(code.find("TypeInfo type = sceneDataType<game::Scoreboard>(") !=
+          std::string::npos);
+  }
+
+  TEST("[[sfs::scene_data]] anywhere but on a plain named type should be an "
+       "error")
+  {
+    const ParseResult onEvent = parseHeader(
+        "struct [[sfs::scene_data, sfs::event_news]] Scored { int points; };",
+        "Scored.h");
+    CHECK(hasDiagnostic(onEvent,
+                        Severity::Error,
+                        "The event Scored can't be [[sfs::scene_data]] too"));
+    CHECK(!onEvent.type.has_value() && onEvent.components.empty());
+
+    const ParseResult onComponent = parseHeader(
+        "struct [[sfs::component, sfs::scene_data]] Score { int points; };",
+        "Board.h");
+    CHECK(hasDiagnostic(onComponent,
+                        Severity::Error,
+                        "Score can't be both [[sfs::scene_data]] and "
+                        "[[sfs::component]]"));
+    CHECK(onComponent.components.empty());
+
+    const ParseResult onSystem =
+        parseHeader("struct [[sfs::scene_data]] ScoreSystem : sfs::System {};",
+                    "ScoreSystem.h");
+    CHECK(hasDiagnostic(onSystem,
+                        Severity::Error,
+                        "ScoreSystem derives from sfs::System, but scene data "
+                        "is a plain type with no base"));
+    CHECK(!onSystem.type.has_value());
+
+    const ParseResult onDerived = parseHeader(
+        "struct [[sfs::scene_data]] Bonus : Other { int points = 0; };",
+        "Board.h");
+    CHECK(hasDiagnostic(onDerived,
+                        Severity::Error,
+                        "Bonus derives from Other, but scene data"));
+    CHECK(onDerived.components.empty());
+
+    const ParseResult nested = parseHeader(R"(
+      struct Outer { struct [[sfs::scene_data]] Inner {}; int a = 0; };
+      template <typename T> struct [[sfs::scene_data]] Box { T value; };
+      struct [[sfs::scene_data]] { int a = 0; } unnamed;
+    )",
+                                           "Outer.h");
+    CHECK(nested.components.empty());
+    CHECK(hasDiagnostic(nested,
+                        Severity::Error,
+                        "The scene data type Inner is nested or a template"));
+    CHECK(hasDiagnostic(nested,
+                        Severity::Error,
+                        "The scene data type Box is nested or a template"));
+    CHECK(hasDiagnostic(nested,
+                        Severity::Error,
+                        "An unnamed type can't be [[sfs::scene_data]]"));
+
+    const ParseResult onField = parseHeader(
+        "struct Score { [[sfs::scene_data]] int points = 0; };", "Score.h");
+    CHECK(hasDiagnostic(onField, Severity::Warning, "sfs::scene_data"));
+
+    const ParseResult withArguments =
+        parseHeader("struct [[sfs::scene_data(2)]] Score {};", "Score.h");
+    CHECK(hasDiagnostic(withArguments, Severity::Warning, "sfs::scene_data"));
+  }
+
+  TEST("scene data traits should mark each type once, after declaring it")
+  {
+    const ParseResult parsed = parseHeader(R"(
+      namespace game {
+      struct [[sfs::scene_data]] Scoreboard { int home = 0; };
+      class [[sfs::scene_data]] Rules { public: float speed = 1.0f; };
+      struct [[sfs::component]] Player {};
+      }
+      namespace { struct [[sfs::scene_data]] Local {}; }
+    )",
+                                           "Scoreboard.h");
+    CHECK(parsed.diagnostics.empty());
+    std::vector<TypeModel> types = parsed.components;
+    types.push_back(*parsed.type);
+    types.push_back(*parsed.type);
+    const std::string traits = generateSceneDataTraits(types);
+    const auto has = [&](std::string_view text)
+    {
+      const bool found = traits.find(text) != std::string::npos;
+      if (!found)
+        std::fprintf(
+            stderr, "the traits lack:\n%s\n", std::string(text).c_str());
+      return found;
+    };
+    CHECK(has("#include <engine/core/ecs/sceneData.h>\n"));
+    CHECK(has("namespace game { struct Scoreboard; }\n"));
+    CHECK(has("namespace game { class Rules; }\n"));
+    CHECK(has("namespace { struct Local; }\n"));
+    CHECK(has("template <>\nstruct SceneDataTraits<::game::Scoreboard>\n{\n"
+              "  static constexpr bool marked = true;\n};\n"));
+    CHECK(has("struct SceneDataTraits<::game::Rules>\n"));
+    CHECK(has("struct SceneDataTraits<::Local>\n"));
+    CHECK(traits.find("Player") == std::string::npos);
+    CHECK(traits.find("SceneDataTraits<::game::Scoreboard>") ==
+          traits.rfind("SceneDataTraits<::game::Scoreboard>"));
+    // None marked: nothing at all.
+    CHECK(generateSceneDataTraits({}).empty());
+    CHECK(generateSceneDataTraits({parsed.components[1]}).empty());
+  }
+
   TEST("an unknown [[sfs::...]] attribute on a type should warn")
   {
     const ParseResult result =
@@ -1632,7 +1802,7 @@ struct [[sfs::event_request(sfs::EngineResponse)]] AskEngine { int g = 0; };
        "and ignorable")
   {
     // After stale-saved-name, in this order, before bad-ignore.
-    const std::array<std::string_view, 11> names = {
+    const std::array<std::string_view, 14> names = {
         "has-then-get",
         "is-alive",
         "row-lookup",
@@ -1643,7 +1813,10 @@ struct [[sfs::event_request(sfs::EngineResponse)]] AskEngine { int g = 0; };
         "row-component-copy",
         "event-handle-outside-create",
         "reader-on-component",
-        "response-sent-twice"};
+        "response-sent-twice",
+        "service-reaches-registry",
+        "service-update-method",
+        "engine-internal"};
     std::size_t at = static_cast<std::size_t>(RuleId::StaleSavedName);
     for (const std::string_view name : names)
     {

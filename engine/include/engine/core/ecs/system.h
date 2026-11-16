@@ -66,17 +66,6 @@ public:
   /** What an entity must match to be one of getEntities(). */
   const QuerySignature& getComponentSignature() const;
 
-  // Disabled systems are skipped by Scene update/render and by render
-  // providers. Intended for debug toggling; the render system is never
-  // disabled.
-  bool enabled() const { return m_enabled; }
-  inline void setEnabled(bool enabled)
-  {
-    m_enabled = enabled;
-    if (!enabled)
-      detail::EventHost::owner(*this).wasDisabled = true;
-  }
-
   // How the scene's game time (Registry::timeScale()) reaches update().
   // Stepped, the default: game time, in steps no longer than the registry's
   // longest step (several a frame when the game runs fast), so what steers,
@@ -220,7 +209,6 @@ private:
   // The registry's query list for m_signature, then for each observer, set
   // when the system is added to a registry.
   std::vector<const detail::QueryList*> m_lists;
-  bool m_enabled = true;
   TimeStep m_timeStep = TimeStep::Stepped;
 
   friend class Registry;

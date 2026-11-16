@@ -400,7 +400,10 @@ void PlanScheduler::run()
             m_queue.push_back(std::move(next));
           }
           else if (job.doneWaits)
+          {
             job.state = State::Done;
+            forgetUncollectedLocked(job);
+          }
         }
       }
       else
@@ -435,7 +438,22 @@ void PlanScheduler::finishStep(const std::shared_ptr<Job>& job,
   if (job->forks > 0)
     job->doneWaits = true;
   else
+  {
     job->state = State::Done;
+    forgetUncollectedLocked(*job);
+  }
+}
+
+void PlanScheduler::forgetUncollectedLocked(const Job& job)
+{
+  if (job.request.collected)
+    return;
+  const auto it = m_jobs.find(job.id);
+  if (it == m_jobs.end())
+    return;
+  // Its step and what it holds are let go on a worker, as release() does.
+  m_releases.push_back(std::move(it->second));
+  m_jobs.erase(it);
 }
 
 void PlanScheduler::publish(Job& job, std::any leg)
@@ -524,6 +542,7 @@ void PlanScheduler::fail(Job& job, const std::string& what)
                                [&](const std::shared_ptr<Task>& t)
                                { return t->job->id == id; }),
                 m_queue.end());
+  forgetUncollectedLocked(job);
 }
 
 } // namespace sfs::nav

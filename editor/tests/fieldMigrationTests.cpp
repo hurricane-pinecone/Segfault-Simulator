@@ -19,6 +19,11 @@ Layout component(const std::string& name, std::vector<Field> fields)
   return {name, TypeKind::Component, std::move(fields)};
 }
 
+Layout sceneData(const std::string& name, std::vector<Field> fields)
+{
+  return {name, TypeKind::SceneData, std::move(fields)};
+}
+
 // A scene with one Spin script on an entity.
 json spinScene(json fields)
 {
@@ -165,14 +170,50 @@ int main()
     CHECK(scene["entities"][1]["$overrides"]["1"]["Health"]["hp"] == 5);
   }
 
+  TEST("scene data's renamed and removed fields should follow in a scene's sceneData")
+  {
+    const Changes changes =
+        diff({sceneData("Scoreboard", {{"homeGoals", FieldKind::Int}, {"referee", FieldKind::String}})},
+             {sceneData("Scoreboard", {{"home", FieldKind::Int}})});
+    json scene = {{"entities", json::array()},
+                  {"sceneData", {{"Scoreboard", {{"homeGoals", 3}, {"referee", "Lee"}}}}}};
+    CHECK(apply(changes, scene));
+    CHECK(scene["sceneData"]["Scoreboard"] == json({{"home", 3}}));
+    CHECK(!apply(changes, scene));
+  }
+
+  TEST("a renamed scene data type should move its saved data")
+  {
+    const Changes changes = diff({sceneData("Scoreboard", {{"home", FieldKind::Int}, {"away", FieldKind::Int}})},
+                                 {sceneData("MatchScore", {{"home", FieldKind::Int}, {"away", FieldKind::Int}})});
+    CHECK(changes.renamedComponents.at("Scoreboard") == "MatchScore");
+    json scene = {{"entities", json::array()}, {"sceneData", {{"Scoreboard", {{"home", 2}, {"away", 1}}}}}};
+    CHECK(apply(changes, scene));
+    CHECK(!scene["sceneData"].contains("Scoreboard"));
+    CHECK(scene["sceneData"]["MatchScore"] == json({{"home", 2}, {"away", 1}}));
+  }
+
   TEST("a renamed system should be renamed in a scene's systems")
   {
     const Changes changes = diff({{"GrowthSystem", TypeKind::System, {}}, {"Weather", TypeKind::System, {}}},
                                  {{"CropGrowth", TypeKind::System, {}}, {"Weather", TypeKind::System, {}}});
-    CHECK(changes.renamedSystems.at("GrowthSystem") == "CropGrowth");
+    CHECK(changes.renamedSceneScripts.at("GrowthSystem") == "CropGrowth");
     json scene = {{"systems", {"GrowthSystem", "Weather"}}, {"entities", json::array()}};
     CHECK(apply(changes, scene));
     CHECK(scene["systems"] == json({"CropGrowth", "Weather"}));
+  }
+
+  TEST("a renamed service should be renamed in a scene's services")
+  {
+    const Changes changes = diff({{"SquadService", TypeKind::Service, {}}, {"LootService", TypeKind::Service, {}}},
+                                 {{"PatrolService", TypeKind::Service, {}}, {"LootService", TypeKind::Service, {}}});
+    CHECK(changes.renamedSceneScripts.at("SquadService") == "PatrolService");
+    json scene = {{"systems", {"PatrolSystem"}},
+                  {"services", {"SquadService", "LootService"}},
+                  {"entities", json::array()}};
+    CHECK(apply(changes, scene));
+    CHECK(scene["services"] == json({"PatrolService", "LootService"}));
+    CHECK(scene["systems"] == json({"PatrolSystem"}));
   }
 
   TEST("types that can't be told apart should not be guessed at")

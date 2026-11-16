@@ -18,7 +18,7 @@ namespace sfs
 class GameObject;
 class Scene;
 class UiModule;
-struct SceneServices;
+struct SceneBackends;
 namespace ui
 {
 class Layer;
@@ -42,7 +42,7 @@ class UiPreviewPanel : public Panel
 {
 public:
   UiPreviewPanel(sfs::IRenderBackend& backend,
-                 const sfs::SceneServices& services,
+                 const sfs::SceneBackends& backends,
                  const CodePanel& code);
   ~UiPreviewPanel() override;
 
@@ -100,7 +100,7 @@ private:
               bool screenGuides);
 
   sfs::IRenderBackend& m_backend;
-  const sfs::SceneServices& m_services;
+  const sfs::SceneBackends& m_backends;
   const CodePanel& m_code;
   std::unique_ptr<sfs::IRenderer> m_renderer;
   std::unique_ptr<sfs::IRenderTarget> m_target;

@@ -14,7 +14,7 @@ isometric 2D and 3D games, which run on the desktop and in the browser.
 ## Features
 
 **Engine core**
-- An ECS of entities, components and systems, with cached queries, observers and scene singletons.
+- An ECS of entities, components and systems, with cached queries, observers and scene data.
 - Reflection generated from your headers by `sfs-codegen`. Fields take `[[sfs::...]]` attributes, and there are no
   registration macros.
 - Typed events between systems, parent and child hierarchies, prefabs, and scriptable objects (`.asset` files) for

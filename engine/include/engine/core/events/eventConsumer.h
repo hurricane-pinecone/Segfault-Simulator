@@ -576,6 +576,94 @@ private:
   uint32_t m_slot = 0;
 };
 
+/**
+ * What a service's consumer<E>() gives: an EventConsumer<E> being built,
+ * which becomes the consumer it's assigned to only once it has a handler
+ * (onEvent(), onEvents(), onLatest(), onLatestEvents(), each as the
+ * consumer's), checked as it compiles: an owner with no update to read in
+ * runs only its handlers. It is moved, never copied.
+ */
+template <typename TEvent, bool kHandled = false>
+class [[nodiscard]] EventConsumerBuilder
+{
+public:
+  /**
+   * Builds on a consumer just made.
+   * @param consumer the consumer, moved in
+   */
+  explicit EventConsumerBuilder(EventConsumer<TEvent>&& consumer)
+      : m_consumer(std::move(consumer))
+  {
+  }
+
+  /**
+   * Gives it a handler for each new event (EventConsumer::onEvent()).
+   * @param fn the handler
+   * @return the builder, handled
+   */
+  template <typename TFunction>
+  EventConsumerBuilder<TEvent, true> onEvent(TFunction fn) &&
+  {
+    m_consumer.onEvent(std::move(fn));
+    return EventConsumerBuilder<TEvent, true>(std::move(m_consumer));
+  }
+
+  /**
+   * Gives it a handler for each run's new events at once
+   * (EventConsumer::onEvents()).
+   * @param fn the handler
+   * @return the builder, handled
+   */
+  template <typename TFunction>
+  EventConsumerBuilder<TEvent, true> onEvents(TFunction fn) &&
+  {
+    m_consumer.onEvents(std::move(fn));
+    return EventConsumerBuilder<TEvent, true>(std::move(m_consumer));
+  }
+
+  /**
+   * Gives it a handler for each key's newest current event among the new
+   * ones (EventConsumer::onLatest()).
+   * @param fn the handler
+   * @return the builder, handled
+   */
+  template <typename TFunction>
+  EventConsumerBuilder<TEvent, true> onLatest(TFunction fn) &&
+  {
+    m_consumer.onLatest(std::move(fn));
+    return EventConsumerBuilder<TEvent, true>(std::move(m_consumer));
+  }
+
+  /**
+   * Gives it a handler for each run's newest current events per key at once
+   * (EventConsumer::onLatestEvents()).
+   * @param fn the handler
+   * @return the builder, handled
+   */
+  template <typename TFunction>
+  EventConsumerBuilder<TEvent, true> onLatestEvents(TFunction fn) &&
+  {
+    m_consumer.onLatestEvents(std::move(fn));
+    return EventConsumerBuilder<TEvent, true>(std::move(m_consumer));
+  }
+
+  /**
+   * The consumer built, once it has a handler.
+   * @return the consumer
+   */
+  operator EventConsumer<TEvent>() &&
+  {
+    static_assert(kHandled,
+                  "A Service's consumer needs a handler (onEvent(), "
+                  "onEvents(), onLatest() or onLatestEvents()): a Service "
+                  "has no update() to read it in");
+    return std::move(m_consumer);
+  }
+
+private:
+  EventConsumer<TEvent> m_consumer;
+};
+
 namespace detail
 {
 

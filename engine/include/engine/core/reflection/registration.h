@@ -63,6 +63,26 @@ TypeInfo scriptableObjectType(std::string name,
   return type;
 }
 
+/** A TypeInfo for scene data type T (marked [[sfs::scene_data]]), ready for
+ * fields to be appended. */
+template <typename T>
+TypeInfo
+sceneDataType(std::string name, std::string displayName, std::string module)
+{
+  TypeInfo type;
+  type.name = std::move(name);
+  type.displayName = std::move(displayName);
+  type.module = std::move(module);
+  type.kind = TypeKind::SceneData;
+  type.sceneData.get = [](Registry& registry) -> void*
+  { return registry.sceneData<T>(); };
+  type.sceneData.add = [](Registry& registry) -> void*
+  { return &registry.addSceneData<T>(); };
+  type.sceneData.remove = [](Registry& registry)
+  { registry.removeSceneData<T>(); };
+  return type;
+}
+
 /**
  * A T from the pointer the editor and serializer hand a field's address
  * function: a scriptable object as its sfs::ScriptableObject (what its

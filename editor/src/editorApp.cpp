@@ -145,7 +145,7 @@ void EditorApp::onSetup()
   m_codePanel = codePanel.get();
   m_panels.push_back(std::move(codePanel));
   auto uiPreview = std::make_unique<UiPreviewPanel>(
-      backend, *backend.sceneServices(), *m_codePanel);
+      backend, *backend.sceneBackends(), *m_codePanel);
   m_uiPreview = uiPreview.get();
   auto assetPanel = std::make_unique<AssetBrowserPanel>(
       AssetBrowserPanel::Actions{
@@ -946,6 +946,7 @@ void EditorApp::drawScriptsMenu()
 
   for (const Kind kind : {Kind::GameObject,
                           Kind::System,
+                          Kind::Service,
                           Kind::Component,
                           Kind::ScriptableObject})
   {
@@ -2176,7 +2177,7 @@ void EditorApp::migrateProjectFiles(const fieldMigration::Changes& changes)
       if (m_assets)
         if (const sfs::AssetRecord* record =
                 m_assets->findByPath(file.lexically_relative(m_assets->root())))
-          renderBackend()->sceneServices()->assetStore.forgetPrefab(record->id);
+          renderBackend()->sceneBackends()->assetStore.forgetPrefab(record->id);
     }
   }
   if (updated > 0)
@@ -2346,7 +2347,7 @@ void EditorApp::play()
        m_context.scene->query<sfs::RestPoseComponent>())
     sfs::hierarchy::recordRestPose(entity);
   sfs::startScripts(*m_context.scene,
-                    m_context.scene->gameSystems(),
+                    m_context.scene->sceneScripts(),
                     &m_context.scene->renderSystem().meshes());
   m_mode = Mode::Playing;
   m_context.playing = true;

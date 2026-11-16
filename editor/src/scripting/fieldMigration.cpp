@@ -129,7 +129,7 @@ bool walk(json& data, const Changes& changes, const TypeChanges& unnamedScript)
   bool changed = false;
   if (data.is_object())
   {
-    // Components under a renamed type's name: under its new one.
+    // Components (and scene data) under a renamed type's name: under its new one.
     std::vector<std::pair<std::string, std::string>> moves;
     for (const auto& [key, value] : data.items())
       if (const auto renamed = changes.renamedComponents.find(key); renamed != changes.renamedComponents.end())
@@ -141,16 +141,17 @@ bool walk(json& data, const Changes& changes, const TypeChanges& unnamedScript)
       data.erase(from);
       changed = true;
     }
-    // A scene's game systems, by name.
-    if (const auto systems = data.find("systems"); systems != data.end() && systems->is_array())
-      for (json& name : *systems)
-        if (name.is_string())
-          if (const auto renamed = changes.renamedSystems.find(name.get<std::string>());
-              renamed != changes.renamedSystems.end())
-          {
-            name = renamed->second;
-            changed = true;
-          }
+    // A scene's game systems and services, by name.
+    for (const char* list : {"systems", "services"})
+      if (const auto names = data.find(list); names != data.end() && names->is_array())
+        for (json& name : *names)
+          if (name.is_string())
+            if (const auto renamed = changes.renamedSceneScripts.find(name.get<std::string>());
+                renamed != changes.renamedSceneScripts.end())
+            {
+              name = renamed->second;
+              changed = true;
+            }
 
     for (auto& [key, value] : data.items())
     {
@@ -226,7 +227,8 @@ Changes diff(const std::vector<Layout>& before, const std::vector<Layout>& after
     TypeChanges type = compare(was, now);
     if (type.renamed.empty() && type.removed.empty())
       return;
-    if (now.kind == sfs::reflect::TypeKind::Component)
+    // Scene data is saved by type name with its fields, as a component is.
+    if (now.kind == sfs::reflect::TypeKind::Component || now.kind == sfs::reflect::TypeKind::SceneData)
       changes.components[now.type] = std::move(type);
     else if (now.kind == sfs::reflect::TypeKind::GameObject)
       changes.scripts[now.type] = std::move(type);
@@ -252,13 +254,15 @@ Changes diff(const std::vector<Layout>& before, const std::vector<Layout>& after
     switch (now.kind)
     {
     case sfs::reflect::TypeKind::Component:
+    case sfs::reflect::TypeKind::SceneData:
       changes.renamedComponents[was.type] = now.type;
       break;
     case sfs::reflect::TypeKind::GameObject:
       changes.renamedScripts[was.type] = now.type;
       break;
     case sfs::reflect::TypeKind::System:
-      changes.renamedSystems[was.type] = now.type;
+    case sfs::reflect::TypeKind::Service:
+      changes.renamedSceneScripts[was.type] = now.type;
       break;
     case sfs::reflect::TypeKind::ScriptableObject:
       changes.renamedScriptableObjects[was.type] = now.type;
@@ -306,7 +310,7 @@ Changes diff(const std::vector<Layout>& before, const std::vector<Layout>& after
 std::string Changes::describe() const
 {
   std::string out;
-  for (const auto* renamed : {&renamedComponents, &renamedScripts, &renamedSystems, &renamedScriptableObjects})
+  for (const auto* renamed : {&renamedComponents, &renamedScripts, &renamedSceneScripts, &renamedScriptableObjects})
     for (const auto& [from, to] : *renamed)
       out += (out.empty() ? "" : ", ") + from + " -> " + to;
   const auto add = [&](const std::map<std::string, TypeChanges>& types)

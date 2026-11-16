@@ -108,6 +108,7 @@ int main()
   {
     const auto head = complete("struct [[sfs::|]] Thing\n{\n  int a;\n};\n");
     CHECK((head == std::vector<std::string>{"component",
+                                            "scene_data",
                                             "event_news",
                                             "event_entity_news",
                                             "event_request",

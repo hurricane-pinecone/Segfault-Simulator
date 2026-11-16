@@ -24,6 +24,11 @@ namespace
 {
 constexpr Entity::EntityId kNone = HierarchyLinks::kNone;
 
+Registry* registryOf(const Entity& entity)
+{
+  return detail::EntityAccess::registry(entity);
+}
+
 // How many levels a world walk keeps on the stack; a deeper chain is walked
 // in parts of this many.
 constexpr int kChainLevels = 32;
@@ -114,7 +119,7 @@ Composed composedOf(const Entity& entity, bool useCaches)
 {
   Composed composed;
   if (entity.isValid())
-    composeChain(*entity.registryOf(), entity.getId(), useCaches, composed);
+    composeChain(*registryOf(entity), entity.getId(), useCaches, composed);
   return composed;
 }
 
@@ -136,7 +141,7 @@ const HierarchyNode* nodeOf(const Entity& entity)
 {
   if (!entity.isValid())
     return nullptr;
-  return &entity.registryOf()->links().nodes[entity.getId()];
+  return &registryOf(entity)->links().nodes[entity.getId()];
 }
 } // namespace
 
@@ -145,26 +150,26 @@ Entity parentOf(const Entity& entity)
   const HierarchyNode* node = nodeOf(entity);
   if (!node || node->parent == kNone)
     return {};
-  return entity.registryOf()->getEntity(node->parent);
+  return registryOf(entity)->getEntity(node->parent);
 }
 
 Entity rootOf(const Entity& entity)
 {
   if (!entity.isValid())
     return {};
-  const std::vector<HierarchyNode>& nodes = entity.registryOf()->links().nodes;
+  const std::vector<HierarchyNode>& nodes = registryOf(entity)->links().nodes;
   Entity::EntityId at = entity.getId();
   while (nodes[at].parent != kNone)
     at = nodes[at].parent;
-  return at == entity.getId() ? entity : entity.registryOf()->getEntity(at);
+  return at == entity.getId() ? entity : registryOf(entity)->getEntity(at);
 }
 
 bool isAncestor(const Entity& ancestor, const Entity& entity)
 {
   if (!entity.isValid() || !ancestor.isValid() ||
-      ancestor.registryOf() != entity.registryOf())
+      registryOf(ancestor) != registryOf(entity))
     return false;
-  const std::vector<HierarchyNode>& nodes = entity.registryOf()->links().nodes;
+  const std::vector<HierarchyNode>& nodes = registryOf(entity)->links().nodes;
   for (Entity::EntityId at = nodes[entity.getId()].parent; at != kNone;
        at = nodes[at].parent)
     if (at == ancestor.getId())
@@ -175,9 +180,9 @@ bool isAncestor(const Entity& ancestor, const Entity& entity)
 bool canParent(const Entity& child, const Entity& parent)
 {
   // No parent at all (a default-made handle): a root, always.
-  if (!parent.registryOf() || parent.getId() == Entity::InvalidId)
+  if (!registryOf(parent) || parent.getId() == Entity::InvalidId)
     return true;
-  if (!child.isValid() || parent.registryOf() != child.registryOf())
+  if (!child.isValid() || registryOf(parent) != registryOf(child))
     return false;
   // A destroyed parent makes the child a root.
   return !parent.isValid() || (parent != child && !isAncestor(child, parent));
@@ -191,13 +196,13 @@ bool setParent(Entity child, const Entity& parent)
         "hierarchy::setParent: entity " + std::to_string(child.getId());
     if (!child.isValid())
       LOG_ERROR(which + " was destroyed, so it can't be put under a parent");
-    else if (parent.registryOf() != child.registryOf())
+    else if (registryOf(parent) != registryOf(child))
       LOG_ERROR(which + " and its new parent are in different registries");
     return false;
   }
   if (!child.isValid())
     return true; // made a root: there's nothing to take it out of
-  child.registryOf()->relink(
+  registryOf(child)->relink(
       child.getId(), parent.isValid() ? parent.getId() : kNone);
   return true;
 }
@@ -221,8 +226,7 @@ bool hasChildren(const Entity& entity)
 ChildRange childrenOf(const Entity& entity)
 {
   const HierarchyNode* node = nodeOf(entity);
-  return node ? ChildRange(entity.registryOf(), node->firstChild)
-              : ChildRange();
+  return node ? ChildRange(registryOf(entity), node->firstChild) : ChildRange();
 }
 
 DescendantRange::iterator& DescendantRange::iterator::operator++()
@@ -256,7 +260,7 @@ DescendantRange::iterator DescendantRange::begin() const
 
 DescendantRange descendants(const Entity& root)
 {
-  return root.isValid() ? DescendantRange(root.registryOf(), root.getId())
+  return root.isValid() ? DescendantRange(registryOf(root), root.getId())
                         : DescendantRange();
 }
 
@@ -347,7 +351,7 @@ glm::mat4 cachedWorldMatrix(const Entity& entity)
 {
   const WorldTransformComponent* cache =
       entity.isValid()
-          ? entity.registryOf()->find<WorldTransformComponent>(entity.getId())
+          ? registryOf(entity)->find<WorldTransformComponent>(entity.getId())
           : nullptr;
   return cache ? cachedWorldMatrix(entity, *cache) : worldMatrix(entity);
 }

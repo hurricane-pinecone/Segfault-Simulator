@@ -14,6 +14,7 @@
 #include <engine/core/components/transformComponent.h>
 #include <engine/core/hierarchy/hierarchy.h>
 #include <engine/core/reflection/reflection.h>
+#include <engine/core/reflection/registration.h>
 #include <engine/core/rendering/grass.h>
 #include <engine/core/rendering/meshPrimitives.h>
 #include <engine/core/util/random.h>
@@ -32,6 +33,7 @@
 #include <vector>
 
 using namespace sfs;
+using sfs::testing3d::LogLines;
 using sfs::testing3d::MockRenderer;
 using sfs::testing3d::registerRig;
 using sfs::testing3d::RigComponent;
@@ -39,12 +41,42 @@ using json = nlohmann::json;
 
 namespace
 {
+// Scene data, registered by hand as sfs-codegen would.
+struct [[sfs::scene_data]] Scoreboard
+{
+  int home = 0;
+  int away = 0;
+};
+
+void registerScoreboard()
+{
+  if (reflect::types().find("Scoreboard"))
+    return;
+  reflect::TypeInfo type =
+      reflect::sceneDataType<Scoreboard>("Scoreboard", "Scoreboard", "tests");
+  reflect::FieldInfo home;
+  home.name = "home";
+  home.displayName = "Home";
+  home.kind = reflect::FieldKind::Int;
+  home.address = [](void* object) -> void*
+  { return &static_cast<Scoreboard*>(object)->home; };
+  type.fields.push_back(std::move(home));
+  reflect::FieldInfo away;
+  away.name = "away";
+  away.displayName = "Away";
+  away.kind = reflect::FieldKind::Int;
+  away.address = [](void* object) -> void*
+  { return &static_cast<Scoreboard*>(object)->away; };
+  type.fields.push_back(std::move(away));
+  reflect::types().add(std::move(type));
+}
+
 // A 3D scene with a named cube mesh, like an editor scene.
 struct World
 {
   AssetStore store;
   MockRenderer renderer;
-  Scene scene{0, SceneServices{.assetStore = store, .renderer = &renderer}};
+  Scene scene{0, SceneBackends{.assetStore = store, .renderer = &renderer}};
   RenderSystem& render = scene.addSystem<RenderSystem>(renderer);
   MeshHandle cube = render.meshes().add(meshes::box({1, 1, 1}), "builtin:cube");
 
@@ -521,6 +553,31 @@ int main()
     CHECK(world.scene.entities().empty());
   }
 
+  TEST("a scene's systems and services should round-trip; services are saved "
+       "only when there are some")
+  {
+    World world;
+    world.named("Gate");
+    world.scene.flushEntities();
+    const SceneScripts scripts{
+        {"PatrolSystem", "DoorSystem"}, {"SquadService"}};
+    const nlohmann::json saved = world.serializer().save(world.scene, scripts);
+    CHECK(saved["services"] == nlohmann::json({"SquadService"}));
+    World target;
+    SceneScripts loaded{{"Stale"}, {"Stale"}};
+    CHECK(target.serializer().load(saved, target.scene, &loaded));
+    CHECK((loaded.systems ==
+           std::vector<std::string>{"PatrolSystem", "DoorSystem"}));
+    CHECK((loaded.services == std::vector<std::string>{"SquadService"}));
+
+    const nlohmann::json plain =
+        world.serializer().save(world.scene, SceneScripts{{"PatrolSystem"}});
+    CHECK(!plain.contains("services"));
+    CHECK(target.serializer().load(plain, target.scene, &loaded));
+    CHECK(loaded.services.empty());
+    CHECK((loaded.systems == std::vector<std::string>{"PatrolSystem"}));
+  }
+
   TEST("save, load, save should give an identical file in the same order")
   {
     const std::filesystem::path dir =
@@ -990,6 +1047,73 @@ int main()
           w.findByName("Left"));
     CHECK(w.findByName("Right Pointer").getComponent<RigComponent>()->arm ==
           w.findByName("Right"));
+  }
+
+  TEST("a scene's scene data should save under sceneData and load back")
+  {
+    registerScoreboard();
+    World source;
+    const json none = source.serializer().save(source.scene);
+    CHECK(!none.contains("sceneData"));
+
+    source.scene.addSceneData<Scoreboard>(Scoreboard{3, 1});
+    source.named("Ball");
+    const json saved = source.serializer().save(source.scene);
+    CHECK(saved["sceneData"] ==
+          json({{"Scoreboard", {{"home", 3}, {"away", 1}}}}));
+    // It's the scene's, not an entity's.
+    CHECK(!saved["entities"][0].contains("Scoreboard"));
+    // A prefab holds none.
+    CHECK(!source.serializer()
+               .save(source.scene, {}, true)
+               .contains("sceneData"));
+
+    World target;
+    CHECK(target.serializer().load(saved, target.scene));
+    const Scoreboard* board = target.scene.sceneData<Scoreboard>();
+    CHECK(board != nullptr && board->home == 3 && board->away == 1);
+    CHECK(target.serializer().save(target.scene) == saved);
+  }
+
+  TEST("loading scene data should keep an unregistered type and one that "
+       "isn't scene data, and skip one the scene has")
+  {
+    registerScoreboard();
+    LogLines log;
+    World empty;
+    json file = empty.serializer().save(empty.scene);
+    file["sceneData"] = {{"Scoreboard", {{"home", 5}}},
+                         {"NotBuiltYet", {{"level", 2}}},
+                         {"TransformComponent", {{"position", {1, 2, 3}}}}};
+    World target;
+    target.scene.addSceneData<Scoreboard>(Scoreboard{1, 0});
+    CHECK(target.serializer().load(file, target.scene));
+    CHECK(target.scene.sceneData<Scoreboard>()->home == 1);
+    CHECK(log.count("has a Scoreboard already; kept it") == 1);
+    CHECK(log.count("TransformComponent isn't scene data") == 1);
+    CHECK(log.count("scene data that isn't loaded (NotBuiltYet)") == 1);
+    // The unregistered one goes back out as it was read.
+    const json saved = target.serializer().save(target.scene);
+    CHECK(saved["sceneData"]["NotBuiltYet"] == json({{"level", 2}}));
+    CHECK(saved["sceneData"]["Scoreboard"]["home"] == 1);
+    CHECK(saved["sceneData"]["TransformComponent"] ==
+          json({{"position", {1, 2, 3}}}));
+  }
+
+  TEST("scene data saved on an entity should be logged and kept, not added")
+  {
+    registerScoreboard();
+    LogLines log;
+    World source;
+    source.named("Board");
+    json file = source.serializer().save(source.scene);
+    file["entities"][0]["Scoreboard"] = {{"home", 7}};
+    World target;
+    CHECK(target.serializer().load(file, target.scene));
+    CHECK(target.scene.sceneData<Scoreboard>() == nullptr);
+    CHECK(log.count("Scoreboard is scene data, not a component") == 1);
+    const json saved = target.serializer().save(target.scene);
+    CHECK(saved["entities"][0]["Scoreboard"] == json({{"home", 7}}));
   }
 
   return testing::report("sceneSerializerTests");

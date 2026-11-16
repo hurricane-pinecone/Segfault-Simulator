@@ -98,7 +98,7 @@ struct World
   AssetDatabase database;
   AssetStore store;
   testing3d::MockRenderer renderer;
-  SceneServices services{.assetStore = store, .renderer = &renderer};
+  SceneBackends backends{.assetStore = store, .renderer = &renderer};
   SceneManager manager;
   StandardScene* scene = nullptr;
   PrefabSystem* prefabs = nullptr;
@@ -110,7 +110,7 @@ struct World
                  AssetDatabase::projectFolders())
   {
     store.setDatabase(&database);
-    manager.setSceneServices(&services);
+    manager.setSceneBackends(&backends);
     scene = manager.createScene<StandardScene>();
     prefabs = scene->tryGetSystem<PrefabSystem>();
     physics = &scene->addSystem<PhysicsSystem3D>();

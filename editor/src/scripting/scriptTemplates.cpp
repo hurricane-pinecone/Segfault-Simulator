@@ -59,6 +59,25 @@ std::string source(Kind kind, const std::string& name)
            "    // }\n"
            "  }\n"
            "};\n";
+  case Kind::Service:
+    return "#pragma once\n"
+           "#include <sfs/sfs.h>\n"
+           "\n"
+           "class " + name + " : public sfs::Service\n"
+           "{\n"
+           "protected:\n"
+           "  void create() override\n"
+           "  {\n"
+           "    // Make the consumers it reacts to, each with its handler, and keep them.\n"
+           "    // A handler checks the entity it's handed first: it may be gone.\n"
+           "    // m_events = consumer<YourEvent>().onEvent(\n"
+           "    //     [](const sfs::Entity& entity, const YourEvent& event)\n"
+           "    //     {\n"
+           "    //       if (!entity)\n"
+           "    //         return;\n"
+           "    //     });\n"
+           "  }\n"
+           "};\n";
   case Kind::Component:
     return "#pragma once\n"
            "#include <sfs/sfs.h>\n"
@@ -88,6 +107,8 @@ const char* label(Kind kind)
     return "GameObject Script";
   case Kind::System:
     return "System";
+  case Kind::Service:
+    return "Service";
   case Kind::Component:
     return "Component";
   case Kind::ScriptableObject:

@@ -88,9 +88,11 @@ enum class TypeKind : uint8_t
 {
   Component,
   System,
+  Service, // runs only when its events bring it something (sfs::Service)
   GameObject,
   MeshSource,       // provides procedural meshes (sfs::MeshSource)
   ScriptableObject, // shared data in an .asset file (sfs::ScriptableObject)
+  SceneData,        // data the scene holds one of, apart from entities
 };
 
 /** Type-erased access to component T on an entity. */
@@ -102,6 +104,18 @@ struct ComponentOps
   void (*remove)(const Entity& entity) = nullptr;
   /** The registry's entities with T, as of its last flush (its query list). */
   const std::vector<Entity>& (*holders)(Registry& registry) = nullptr;
+};
+
+/**
+ * Type-erased access to a registry's scene data T (a type marked
+ * [[sfs::scene_data]]): Registry::sceneData<T>() and the rest.
+ */
+struct SceneDataOps
+{
+  void* (*get)(Registry& registry) = nullptr; // nullptr if it has none
+  /** Default-made; when it has one, that one, with an error logged. */
+  void* (*add)(Registry& registry) = nullptr;
+  void (*remove)(Registry& registry) = nullptr;
 };
 
 /** Making and freeing objects of a scriptable object type
@@ -136,6 +150,7 @@ struct TypeInfo
   std::vector<FieldInfo> fields;
   ComponentOps component;   // valid when kind == Component
   ScriptableOps scriptable; // valid when kind == Data
+  SceneDataOps sceneData;   // valid when kind == SceneData
 };
 
 /**

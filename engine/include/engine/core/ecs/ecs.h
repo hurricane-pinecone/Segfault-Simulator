@@ -7,4 +7,5 @@
 #include "engine/core/ecs/query.h"     // IWYU pragma: keep
 #include "engine/core/ecs/queryView.h" // IWYU pragma: keep
 #include "engine/core/ecs/registry.h"  // IWYU pragma: keep
+#include "engine/core/ecs/service.h"   // IWYU pragma: keep
 #include "engine/core/ecs/system.h"    // IWYU pragma: keep

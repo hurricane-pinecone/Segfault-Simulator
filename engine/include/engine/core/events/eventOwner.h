@@ -6,7 +6,7 @@
 #include <string_view>
 #include <vector>
 
-// What owns event handles: a system or a game object (later a service).
+// What owns event handles: a system, a service or a game object.
 namespace sfs::detail
 {
 
@@ -41,8 +41,8 @@ struct EventHandler
 };
 
 /**
- * What an owner of event handles keeps for them (a system, a game object,
- * later a service): its update stamp, so each of its updates is one span for
+ * What an owner of event handles keeps for them (a system, a service, a game
+ * object): its update stamp, so each of its updates is one span for
  * all its consumers; whether it's in one; its consumers, which are what wakes
  * it; and their handlers, which its host runs in its slot (dispatch()). Its
  * handles point at it through their slots, so it outlives them: they're its

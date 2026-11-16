@@ -33,10 +33,10 @@ public:
 
   Scene* current();
 
-  // The drawing/asset services scenes are constructed against, supplied by the
-  // active render backend. Must be set (Game::setup does this) before any scene
-  // is created.
-  void setSceneServices(SceneServices* services);
+  // The renderer and asset store scenes are constructed against, supplied by
+  // the active render backend. Must be set (Game::setup does this) before any
+  // scene is created.
+  void setSceneBackends(SceneBackends* backends);
 
   // The game the scenes run in, handed to each scene (Scene::game()).
   void setGame(Game* game) { m_game = game; }
@@ -48,7 +48,7 @@ private:
   std::unordered_map<SceneId, std::unique_ptr<Scene>> m_scenes;
   std::unordered_map<std::string, SceneId> m_nameToId;
 
-  SceneServices* m_services = nullptr;
+  SceneBackends* m_backends = nullptr;
   Game* m_game = nullptr;
 
   SceneId nextSceneId = 0;
@@ -57,19 +57,19 @@ private:
 template <typename TScene, typename... TArgs>
 TScene* SceneManager::createScene(TArgs&&... args)
 {
-  // Services must be wired (Game::setup does this) before a scene exists: they
+  // Backends must be wired (Game::setup does this) before a scene exists: they
   // are constructor-injected as references, so a missing bundle can't be
   // deferred to a null check later.
-  if (!m_services)
+  if (!m_backends)
   {
-    LOG_ERROR("createScene called before engine services were set");
+    LOG_ERROR("createScene called before the scene backends were set");
     return nullptr;
   }
 
   SceneId id = nextSceneId++;
 
   auto scene =
-      std::make_unique<TScene>(id, *m_services, std::forward<TArgs>(args)...);
+      std::make_unique<TScene>(id, *m_backends, std::forward<TArgs>(args)...);
 
   TScene* ptr = scene.get();
   static_cast<Scene*>(ptr)->m_game = m_game;
