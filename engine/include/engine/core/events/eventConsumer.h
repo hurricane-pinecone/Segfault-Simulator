@@ -10,6 +10,7 @@
 #include "engine/core/util/typeKey.h"
 
 #include <algorithm>
+#include <array>
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
@@ -309,9 +310,139 @@ public:
    */
   bool valid() const { return queueBase() != nullptr; }
 
+  /**
+   * Sends the success response to every requester whose current request
+   * about `key` is still open: a server answering later, by entity, holding
+   * no Responder ("tell me once you're finished"). Each requester hears only
+   * its own; a replaced, cancelled or gone request isn't reached; the
+   * request closes, so waiting() and open() turn false. Owning thread only
+   * (a job responds through a Responder).
+   * @param key the entity the requests are about
+   * @param response the request's success response (copied to each)
+   * @return whether any request was open
+   */
+  template <typename TResponse>
+  bool respond(const Entity& key, const TResponse& response)
+  {
+    return respondOpen<detail::ResponseRole::Success>(key, response);
+  }
+
+  /**
+   * Sends a progress response, with more to come, to every requester whose
+   * current request about `key` is still open, as respond() does, if the
+   * request declares one (`progress = P`).
+   * @param key the entity the requests are about
+   * @param response the request's progress response (copied to each)
+   * @return whether any request was open
+   */
+  template <typename TResponse>
+  bool progress(const Entity& key, const TResponse& response)
+  {
+    return respondOpen<detail::ResponseRole::Progress>(key, response);
+  }
+
+  /**
+   * Sends the failure response, closing the request as respond() does, to
+   * every requester whose current request about `key` is still open, if the
+   * request declares one (`failure = F`).
+   * @param key the entity the requests are about
+   * @param response the request's failure response (copied to each)
+   * @return whether any request was open
+   */
+  template <typename TResponse>
+  bool fail(const Entity& key, const TResponse& response)
+  {
+    return respondOpen<detail::ResponseRole::Failure>(key, response);
+  }
+
+  /**
+   * Whether a request of R about `key` is still open: current, from a
+   * requester that lives, with no final response taken in yet (a worker's
+   * comes in at the next frame step). Owning thread only: off it, logged
+   * and false.
+   * @param key the entity
+   * @return whether one is open
+   */
+  bool open(const Entity& key) const
+  {
+    static_assert(detail::kRequest<TEvent>,
+                  "open(entity) asks a request type's consumer "
+                  "([[sfs::event_request(...)]])");
+    const detail::EventQueue<TEvent>* queue = this->queue();
+    if (!queue)
+      return false;
+    const detail::KeyedChannel& channel = *queue->channel();
+    if (channel.owner.load(std::memory_order_relaxed) !=
+        detail::currentThreadId()) [[unlikely]]
+    {
+      Events::refuseOffThread<TEvent>("open", true);
+      return false;
+    }
+    if (channel.stale(key))
+      return false;
+    return channel.tickets->open(key.getId());
+  }
+
 private:
   friend class Events;
   friend class EventVerbs;
+
+  // respond(), progress() and fail(): the response to each open request
+  // about the key, through its response queue, as a Responder would on this
+  // thread.
+  template <detail::ResponseRole kRole, typename TResponse>
+  bool respondOpen(const Entity& key, const TResponse& response)
+  {
+    static_assert(detail::kRequest<TEvent>,
+                  "respond(), progress() and fail() by entity answer through "
+                  "a request type's consumer ([[sfs::event_request(...)]])");
+    using Value = std::remove_cvref_t<TResponse>;
+    constexpr bool last = kRole != detail::ResponseRole::Progress;
+    static_assert(std::is_copy_constructible_v<Value>,
+                  "An answer by entity is copied to each open request about "
+                  "it, so its response type must be copyable; answer a "
+                  "move-only response through the request's Responder");
+    if constexpr (!detail::kRequest<TEvent> ||
+                  !std::is_copy_constructible_v<Value>)
+      return false;
+    else if constexpr (!detail::checkRoleSent<TEvent, kRole, Value>() ||
+                       !std::is_same_v<detail::RoleType<TEvent, kRole>, Value>)
+      return false;
+    else
+    {
+      detail::EventQueue<TEvent>* queue = this->queue();
+      if (!queue)
+        return false;
+      detail::KeyedChannel& channel = *queue->channel();
+      if (channel.owner.load(std::memory_order_relaxed) !=
+          detail::currentThreadId()) [[unlikely]]
+      {
+        constexpr const char* call =
+            kRole == detail::ResponseRole::Success    ? "respond"
+            : kRole == detail::ResponseRole::Progress ? "progress"
+                                                      : "fail";
+        Events::refuseOffThread<TEvent>(call, true);
+        return false;
+      }
+      if (!channel.events || channel.stale(key))
+        return false;
+      auto& responses =
+          channel.events->template queue<detail::ResponseTo<TEvent, Value>>();
+      bool reached = false;
+      channel.tickets->forEachOpen(
+          key.getId(),
+          [&](uint32_t ticket, uint32_t generation)
+          {
+            reached |=
+                responses.respond(detail::ResponseTo<TEvent, Value>{response},
+                                  key,
+                                  generation,
+                                  last,
+                                  ticket);
+          });
+      return reached;
+    }
+  }
 
   // Registers a consumer with `queue`, at the oldest event kept, owned by
   // `owner` (null: none).
@@ -431,9 +562,10 @@ private:
       return;
     if (detail::EventQueueBase* queue = m_link->queue)
     {
-      if (detail::EventOwner* owner = queue->consumer(m_slot).owner)
-        owner->forget(m_link.get(), m_slot);
+      detail::EventOwner* owner = queue->consumer(m_slot).owner;
       queue->removeConsumer(m_slot);
+      if (owner)
+        owner->forget();
     }
     m_link.reset();
     m_owner = nullptr;
@@ -447,74 +579,67 @@ private:
 namespace detail
 {
 
-/**
- * Fails to compile, naming the request and the response, when a requester
- * becomes an EventRequester<R> with one of R's responses neither handled nor
- * ignored.
- */
-template <typename TRequest, typename TResponse>
-struct ResponseHasNoHandler
+/** Fails to compile, naming a request whose success isn't handled. */
+template <typename TRequest>
+struct SuccessNotHandled
 {
-  static_assert(sizeof(TResponse) == 0,
-                "A request's response (ResponseHasNoHandler<Request, "
-                "Response>) has no onResponse handler; handle it with "
-                "onResponse<Response>() "
-                "or onResponses<Response>(), or .ignore<Response>()");
+  static_assert(sizeof(TRequest) == 0,
+                "A request's success response (SuccessNotHandled<Request>) "
+                "has no handler; give the requester onResponse() or "
+                "onResponses()");
 };
 
-/**
- * Fails to compile, naming the request and the type, when a requester is
- * given a handler for a type its request doesn't list.
- */
-template <typename TRequest, typename TResponse>
-struct ResponseNotInRequest
+/** Fails to compile, naming a request whose failure isn't handled. */
+template <typename TRequest>
+struct FailureNotHandled
 {
-  static_assert(sizeof(TResponse) == 0,
-                "onResponse<A>(), onResponses<A>() and ignore<A>() take one of "
-                "the request's responses; this type (ResponseNotInRequest<"
-                "Request, Response>) isn't listed");
+  static_assert(sizeof(TRequest) == 0,
+                "A request's failure response (FailureNotHandled<Request>) "
+                "has no handler; give the requester onFailure() or "
+                "onFailures(), or .ignoreFailure()");
 };
 
-/**
- * Fails to compile, naming the request and the response, when a requester
- * handles or ignores a response twice.
- */
-template <typename TRequest, typename TResponse>
-struct ResponseHandledTwice
+/** Fails to compile, naming a request whose role is handled twice. */
+template <typename TRequest>
+struct RoleHandledTwice
 {
-  static_assert(sizeof(TResponse) == 0,
-                "A requester handles or ignores each response once; this one "
-                "(ResponseHandledTwice<Request, Response>) is twice");
+  static_assert(sizeof(TRequest) == 0,
+                "A requester handles each of the request's roles once; this "
+                "one (RoleHandledTwice<Request>) is handled twice");
 };
 
-// A requester builder's step: A is one of R's responses, not handled yet.
-template <typename TRequest, typename TResponse, typename... THandled>
-constexpr void checkResponseStep()
+/** Fails to compile, naming a request with no progress role to handle. */
+template <typename TRequest>
+struct NoProgressToHandle
 {
-  if constexpr (!kListed<TResponse, typename EventTraits<TRequest>::Responses>)
-    static_cast<void>(sizeof(ResponseNotInRequest<TRequest, TResponse>));
-  else if constexpr (kCount<TResponse, THandled...> != 0)
-    static_cast<void>(sizeof(ResponseHandledTwice<TRequest, TResponse>));
+  static_assert(sizeof(TRequest) == 0,
+                "This request (NoProgressToHandle<Request>) declares no "
+                "progress response, so there's none for onProgress() or "
+                "onProgresses() to handle");
+};
+
+/** Fails to compile, naming a request with no failure role to handle. */
+template <typename TRequest>
+struct NoFailureToHandle
+{
+  static_assert(sizeof(TRequest) == 0,
+                "This request (NoFailureToHandle<Request>) declares no "
+                "failure response, so there's none for onFailure(), "
+                "onFailures() or ignoreFailure()");
+};
+
+// A requester builder's step for a role: declared, and not handled yet.
+template <typename TRequest, ResponseRole kRole, bool kHandled>
+constexpr void checkRoleStep()
+{
+  using Declared = RoleType<TRequest, kRole>;
+  if constexpr (kRole == ResponseRole::Progress && std::is_void_v<Declared>)
+    static_cast<void>(sizeof(NoProgressToHandle<TRequest>));
+  else if constexpr (kRole == ResponseRole::Failure && std::is_void_v<Declared>)
+    static_cast<void>(sizeof(NoFailureToHandle<TRequest>));
+  else if constexpr (kHandled)
+    static_cast<void>(sizeof(RoleHandledTwice<TRequest>));
 }
-
-// One of R's responses is handled or ignored.
-template <typename TRequest, typename TResponse, typename... THandled>
-constexpr void checkResponseHandled()
-{
-  if constexpr (kCount<TResponse, THandled...> == 0)
-    static_cast<void>(sizeof(ResponseHasNoHandler<TRequest, TResponse>));
-}
-
-// Every one of R's responses is handled or ignored.
-template <typename TRequest, typename... THandled>
-struct AllResponsesHandled
-{
-  template <typename... TResponses>
-  static constexpr void check(TypeList<TResponses...>*)
-  {
-    (checkResponseHandled<TRequest, TResponses, THandled...>(), ...);
-  }
-};
 
 } // namespace detail
 
@@ -522,11 +647,13 @@ struct AllResponsesHandled
  * Asks for a request type R ([[sfs::event_request(...)]]) and receives its
  * responses: a system makes one in create() and keeps it as a member (an
  * object in onCreate, through scene().events()), built in one chain that
- * handles each of R's response types or ignores it:
+ * handles R's responses by role: its success (required), its failure if it
+ * declares one (or ignores it on purpose), its progress if it wants it:
  *
  *   m_paths = requester<PathRequest>()
- *                 .onResponse<PathFound>(...)
- *                 .ignore<PathFailed>();
+ *                 .onResponse(...)
+ *                 .onProgress(...)
+ *                 .ignoreFailure();
  *
  * then asks with request(). The handlers run in its owner's slot, before a
  * system's update() or an object's onUpdate(), and see only responses to each
@@ -627,7 +754,7 @@ public:
   bool valid() const { return m_events != nullptr; }
 
 private:
-  template <typename, typename...>
+  template <typename, bool, bool, bool>
   friend class EventRequesterBuilder;
   friend class Events;
   friend class EventVerbs;
@@ -682,10 +809,11 @@ private:
       if (detail::EventQueueBase* queue =
               responses.link ? responses.link->queue : nullptr)
       {
-        if (detail::EventOwner* owner = queue->consumer(responses.slot).owner)
-          owner->forget(responses.link.get(), responses.slot);
+        detail::EventOwner* owner = queue->consumer(responses.slot).owner;
         queue->removeConsumer(responses.slot);
         queue->closeRoute(m_id);
+        if (owner)
+          owner->forget();
       }
     m_responses.clear();
     // Its outstanding requests are superseded (their responders see it). A
@@ -710,111 +838,229 @@ private:
 
 /**
  * What requester<R>() gives: an EventRequester<R> being built, which knows
- * the responses handled so far (THandled). Each step handles or ignores one of
- * R's responses and gives the next builder; it becomes the EventRequester<R>
- * it's assigned to only when every one of R's responses is handled or ignored
- * exactly once, checked as it compiles. Handlers are given only here.
+ * the roles handled so far. Each step handles one of R's roles (a handler
+ * for one response at a time, or for the update's at once) and gives the
+ * next builder; it becomes the EventRequester<R> it's assigned to only when
+ * R's success is handled, and its failure (if R declares one) handled or
+ * ignored, checked as it compiles. Progress is optional: a requester that
+ * doesn't handle it gets none. Handlers are given only here, and the owner
+ * gets them in role order as the requester is made: progress, then success
+ * and failure, so a request's progress runs before its final in an update
+ * whatever order the chain gives them.
  */
-template <typename TRequest, typename... THandled>
+template <typename TRequest, bool kSuccess, bool kProgress, bool kFailure>
 class [[nodiscard]] EventRequesterBuilder
 {
+  using Success = detail::RoleType<TRequest, detail::ResponseRole::Success>;
+  using Progress = detail::RoleType<TRequest, detail::ResponseRole::Progress>;
+  using Failure = detail::RoleType<TRequest, detail::ResponseRole::Failure>;
+
 public:
   /**
-   * Handles each of R's responses of type A to a current request, called in
-   * the owner's slot: `fn(const Entity& key, const A& response)`.
+   * Handles each success response to a current request, in the owner's
+   * slot: `fn(const Entity& key, const Success& response)`.
    * @param fn the handler
-   * @return the builder with A handled
+   * @return the builder with the success handled
    */
-  template <typename TResponse, typename TFunction>
-  EventRequesterBuilder<TRequest, THandled..., TResponse>
+  template <typename TFunction>
+  EventRequesterBuilder<TRequest, true, kProgress, kFailure>
   onResponse(TFunction fn) &&
   {
-    detail::checkResponseStep<TRequest, TResponse, THandled...>();
-    static_assert(std::invocable<TFunction&, const Entity&, const TResponse&>,
-                  "onResponse<A>() takes fn(const Entity&, const A&)");
-    using Queue = detail::EventQueue<detail::ResponseTo<TRequest, TResponse>>;
-    m_requester.template addHandler<TResponse>(
-        [fn = std::move(fn), requester = m_requester.m_id](
-            detail::EventQueueBase& base, uint32_t slot) mutable
-        {
-          auto& queue = static_cast<Queue&>(base);
-          for (auto [key, response] :
-               detail::responseRange<TRequest, TResponse>(
-                   queue, slot, requester))
-            fn(key, response);
-        });
-    return EventRequesterBuilder<TRequest, THandled..., TResponse>(
-        std::move(m_requester));
+    detail::checkRoleStep<TRequest, detail::ResponseRole::Success, kSuccess>();
+    addOne<detail::ResponseRole::Success>(std::move(fn));
+    return next<true, kProgress, kFailure>();
   }
 
   /**
-   * Handles each update's responses of type A at once, called in the owner's
-   * slot when there are some: `fn(sfs::ResponseRange<R, A>)`, whose rows are
-   * `[key, response]`.
+   * Handles each update's success responses at once, in the owner's slot
+   * when there are some: `fn(sfs::ResponseRange<R, Success>)`.
    * @param fn the handler
-   * @return the builder with A handled
+   * @return the builder with the success handled
    */
-  template <typename TResponse, typename TFunction>
-  EventRequesterBuilder<TRequest, THandled..., TResponse>
+  template <typename TFunction>
+  EventRequesterBuilder<TRequest, true, kProgress, kFailure>
   onResponses(TFunction fn) &&
   {
-    detail::checkResponseStep<TRequest, TResponse, THandled...>();
-    static_assert(
-        std::invocable<TFunction&, ResponseRange<TRequest, TResponse>>,
-        "onResponses<A>() takes fn(sfs::ResponseRange<R, A>)");
-    using Queue = detail::EventQueue<detail::ResponseTo<TRequest, TResponse>>;
-    m_requester.template addHandler<TResponse>(
-        [fn = std::move(fn), requester = m_requester.m_id](
-            detail::EventQueueBase& base, uint32_t slot) mutable
-        {
-          auto& queue = static_cast<Queue&>(base);
-          ResponseRange<TRequest, TResponse> responses =
-              detail::responseRange<TRequest, TResponse>(
-                  queue, slot, requester);
-          if (!responses.empty())
-            fn(responses);
-        });
-    return EventRequesterBuilder<TRequest, THandled..., TResponse>(
-        std::move(m_requester));
+    detail::checkRoleStep<TRequest, detail::ResponseRole::Success, kSuccess>();
+    addBatch<detail::ResponseRole::Success>(std::move(fn));
+    return next<true, kProgress, kFailure>();
   }
 
   /**
-   * Ignores R's responses of type A, on purpose: this requester gets none.
-   * @return the builder with A counted as handled
+   * Handles each progress response (a request declaring `progress = P`):
+   * `fn(const Entity& key, const P& response)`.
+   * @param fn the handler
+   * @return the builder with progress handled
    */
-  template <typename TResponse>
-  EventRequesterBuilder<TRequest, THandled..., TResponse> ignore() &&
+  template <typename TFunction>
+  EventRequesterBuilder<TRequest, kSuccess, true, kFailure>
+  onProgress(TFunction fn) &&
   {
-    detail::checkResponseStep<TRequest, TResponse, THandled...>();
-    return EventRequesterBuilder<TRequest, THandled..., TResponse>(
-        std::move(m_requester));
+    detail::
+        checkRoleStep<TRequest, detail::ResponseRole::Progress, kProgress>();
+    if constexpr (!std::is_void_v<Progress>)
+      addOne<detail::ResponseRole::Progress>(std::move(fn));
+    return next<kSuccess, true, kFailure>();
   }
 
   /**
-   * The requester, once every one of R's responses is handled or ignored (a
-   * compile error names the first that isn't).
+   * Handles each update's progress responses at once:
+   * `fn(sfs::ResponseRange<R, P>)`.
+   * @param fn the handler
+   * @return the builder with progress handled
+   */
+  template <typename TFunction>
+  EventRequesterBuilder<TRequest, kSuccess, true, kFailure>
+  onProgresses(TFunction fn) &&
+  {
+    detail::
+        checkRoleStep<TRequest, detail::ResponseRole::Progress, kProgress>();
+    if constexpr (!std::is_void_v<Progress>)
+      addBatch<detail::ResponseRole::Progress>(std::move(fn));
+    return next<kSuccess, true, kFailure>();
+  }
+
+  /**
+   * Handles each failure response (a request declaring `failure = F`):
+   * `fn(const Entity& key, const F& response)`.
+   * @param fn the handler
+   * @return the builder with the failure handled
+   */
+  template <typename TFunction>
+  EventRequesterBuilder<TRequest, kSuccess, kProgress, true>
+  onFailure(TFunction fn) &&
+  {
+    detail::checkRoleStep<TRequest, detail::ResponseRole::Failure, kFailure>();
+    if constexpr (!std::is_void_v<Failure>)
+      addOne<detail::ResponseRole::Failure>(std::move(fn));
+    return next<kSuccess, kProgress, true>();
+  }
+
+  /**
+   * Handles each update's failure responses at once:
+   * `fn(sfs::ResponseRange<R, F>)`.
+   * @param fn the handler
+   * @return the builder with the failure handled
+   */
+  template <typename TFunction>
+  EventRequesterBuilder<TRequest, kSuccess, kProgress, true>
+  onFailures(TFunction fn) &&
+  {
+    detail::checkRoleStep<TRequest, detail::ResponseRole::Failure, kFailure>();
+    if constexpr (!std::is_void_v<Failure>)
+      addBatch<detail::ResponseRole::Failure>(std::move(fn));
+    return next<kSuccess, kProgress, true>();
+  }
+
+  /**
+   * Ignores R's failure response, on purpose: this requester gets none.
+   * @return the builder with the failure counted as handled
+   */
+  EventRequesterBuilder<TRequest, kSuccess, kProgress, true> ignoreFailure() &&
+  {
+    detail::checkRoleStep<TRequest, detail::ResponseRole::Failure, kFailure>();
+    return next<kSuccess, kProgress, true>();
+  }
+
+  /**
+   * The requester, once R's success is handled and its failure handled or
+   * ignored (a compile error names what isn't).
    * @return the requester
    */
   operator EventRequester<TRequest>() &&
   {
-    detail::AllResponsesHandled<TRequest, THandled...>::check(
-        static_cast<typename detail::EventTraits<TRequest>::Responses*>(
-            nullptr));
+    if constexpr (!kSuccess)
+      static_cast<void>(sizeof(detail::SuccessNotHandled<TRequest>));
+    if constexpr (!std::is_void_v<Failure> && !kFailure)
+      static_cast<void>(sizeof(detail::FailureNotHandled<TRequest>));
+    give<detail::ResponseRole::Progress>();
+    give<detail::ResponseRole::Success>();
+    give<detail::ResponseRole::Failure>();
     return std::move(m_requester);
   }
 
 private:
-  template <typename, typename...>
+  template <typename, bool, bool, bool>
   friend class EventRequesterBuilder;
   friend class Events;
   friend class EventVerbs;
 
-  explicit EventRequesterBuilder(EventRequester<TRequest>&& requester)
-      : m_requester(std::move(requester))
+  // A handler's body, run by the owner over its consumer's span.
+  using Run = std::function<void(detail::EventQueueBase&, uint32_t)>;
+  // The handlers given so far, by role.
+  using Runs = std::array<Run, 3>;
+
+  explicit EventRequesterBuilder(EventRequester<TRequest>&& requester,
+                                 Runs&& runs = {})
+      : m_requester(std::move(requester)), m_runs(std::move(runs))
   {
   }
 
+  template <bool kNextSuccess, bool kNextProgress, bool kNextFailure>
+  EventRequesterBuilder<TRequest, kNextSuccess, kNextProgress, kNextFailure>
+  next()
+  {
+    return EventRequesterBuilder<TRequest,
+                                 kNextSuccess,
+                                 kNextProgress,
+                                 kNextFailure>(
+        std::move(m_requester), std::move(m_runs));
+  }
+
+  // Gives the owner the role's handler, if there is one.
+  template <detail::ResponseRole kRole>
+  void give()
+  {
+    using Response = detail::RoleType<TRequest, kRole>;
+    if constexpr (!std::is_void_v<Response>)
+      if (Run& run = m_runs[static_cast<std::size_t>(kRole)])
+        m_requester.template addHandler<Response>(std::move(run));
+  }
+
+  // A handler for each response of the role, unpacked.
+  template <detail::ResponseRole kRole, typename TFunction>
+  void addOne(TFunction fn)
+  {
+    using TResponse = detail::RoleType<TRequest, kRole>;
+    static_assert(std::invocable<TFunction&, const Entity&, const TResponse&>,
+                  "onResponse(), onProgress() and onFailure() take "
+                  "fn(const Entity&, const Response&), the role's response");
+    using Queue = detail::EventQueue<detail::ResponseTo<TRequest, TResponse>>;
+    m_runs[static_cast<std::size_t>(kRole)] =
+        [fn = std::move(fn), requester = m_requester.m_id](
+            detail::EventQueueBase& base, uint32_t slot) mutable
+    {
+      auto& queue = static_cast<Queue&>(base);
+      for (auto [key, response] :
+           detail::responseRange<TRequest, TResponse>(queue, slot, requester))
+        fn(key, response);
+    };
+  }
+
+  // A handler for each update's responses of the role at once.
+  template <detail::ResponseRole kRole, typename TFunction>
+  void addBatch(TFunction fn)
+  {
+    using TResponse = detail::RoleType<TRequest, kRole>;
+    static_assert(
+        std::invocable<TFunction&, ResponseRange<TRequest, TResponse>>,
+        "onResponses(), onProgresses() and onFailures() take "
+        "fn(sfs::ResponseRange<R, Response>), the role's response");
+    using Queue = detail::EventQueue<detail::ResponseTo<TRequest, TResponse>>;
+    m_runs[static_cast<std::size_t>(kRole)] =
+        [fn = std::move(fn), requester = m_requester.m_id](
+            detail::EventQueueBase& base, uint32_t slot) mutable
+    {
+      auto& queue = static_cast<Queue&>(base);
+      ResponseRange<TRequest, TResponse> responses =
+          detail::responseRange<TRequest, TResponse>(queue, slot, requester);
+      if (!responses.empty())
+        fn(responses);
+    };
+  }
+
   EventRequester<TRequest> m_requester;
+  Runs m_runs;
 };
 
 template <typename TEvent>

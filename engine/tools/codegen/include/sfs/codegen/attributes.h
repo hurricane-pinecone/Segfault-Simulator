@@ -50,7 +50,7 @@ enum class AttributeArgs : uint8_t
   MinMax,    // (min, max): two expressions
   BoolField, // (field) or (!field): a bool field of the same type
   String,    // ("text"): one non-empty string literal
-  Types,     // (A, B): one or more type names
+  Roles,     // (S, progress = P, failure = F): a request's response types
 };
 
 /**

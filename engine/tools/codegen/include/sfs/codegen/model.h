@@ -95,7 +95,10 @@ enum class EventKind
   News,
   /** News about one entity, `[[sfs::event_entity_news]]`, keyed by it. */
   EntityNews,
-  /** A request, `[[sfs::event_request(A, B)]]`, listing its responses. */
+  /**
+   * A request, `[[sfs::event_request(S, progress = P, failure = F)]]`,
+   * naming its responses by role.
+   */
   Request,
   /** A response, `[[sfs::event_response]]`, sent through a responder. */
   Response,
@@ -156,8 +159,12 @@ struct EventModel
   EventKind kind = EventKind::News;
   /** "struct" or "class", as declared. */
   std::string classKey = "struct";
-  /** A request's response types, as written. */
-  std::vector<std::string> responses;
+  /** A request's success response type, as written; empty for others. */
+  std::string success;
+  /** A request's progress response type, as written; empty when it has none. */
+  std::string progress;
+  /** A request's failure response type, as written; empty when it has none. */
+  std::string failure;
   /** Its direct base types, as written. */
   std::vector<EventBase> bases;
   /** The file it's in. */

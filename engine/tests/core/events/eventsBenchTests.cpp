@@ -47,7 +47,8 @@
 // - handles: 10,000 events through a read loop, an onEvent handler and an
 //   onEvents one, readLatest of 10,000 keyed events, a read of 10,000
 //   requests from a requester responding to each, a requester's onResponse
-//   over 10,000 responses and a worker's response, in ns per event.
+//   over 10,000 responses, a worker's response, and 10,000 open requests
+//   answered later by entity, in ns per event.
 // - family: 10,000 sends of news whose event base one consumer reads, against
 //   the same sends with no consumer of the base, in ns per send.
 // - requests: the memory 1,000 requesters asking about 20 entities each hold,
@@ -62,6 +63,9 @@ using namespace sfs;
 
 namespace
 {
+
+// A response handler that does nothing, for requesters that only ask.
+constexpr auto ignored = [](const Entity&, const auto&) {};
 
 volatile uint64_t g_sink = 0;
 
@@ -96,7 +100,6 @@ template <int N>
 struct sfs::detail::EventTraits<Idle<N>>
 {
   static constexpr EventKind kind = EventKind::News;
-  using Responses = TypeList<>;
   using Ancestors = TypeList<>;
 };
 
@@ -536,7 +539,7 @@ double benchRequest()
   EventRequester<AskRequest> asker;
   registry.addSystem<Bencher>(
       [&](Bencher& self)
-      { asker = self.requester<AskRequest>().ignore<ToldResponse>(); });
+      { asker = self.requester<AskRequest>().onResponse(ignored); });
   Events& events = registry.events();
   double best = std::numeric_limits<double>::max();
   for (int round = 0; round < kRounds; ++round)
@@ -564,7 +567,7 @@ protected:
   {
     askers.reserve(static_cast<std::size_t>(m_count));
     for (int i = 0; i < m_count; ++i)
-      askers.push_back(requester<AskRequest>().ignore<ToldResponse>());
+      askers.push_back(requester<AskRequest>().onResponse(ignored));
   }
 
 private:
@@ -624,7 +627,7 @@ protected:
   {
     askers.reserve(static_cast<std::size_t>(m_count));
     for (int i = 0; i < m_count; ++i)
-      askers.push_back(requester<AskRequest>().onResponse<ToldResponse>(
+      askers.push_back(requester<AskRequest>().onResponse(
           [this](const Entity&, const ToldResponse& told)
           { heard += told.id; }));
   }
@@ -845,7 +848,7 @@ double benchResponders()
       [&](Bencher& self)
       {
         asks = self.consumer<AskRequest>();
-        asker = self.requester<AskRequest>().ignore<ToldResponse>();
+        asker = self.requester<AskRequest>().onResponse(ignored);
       },
       [&](Registry& registry)
       {
@@ -864,6 +867,44 @@ double benchResponders()
       });
 }
 
+// A server answering kEvents open requests later by entity, one per key:
+// the best round's ns per response.
+double benchRespondByEntity()
+{
+  Registry registry;
+  const std::vector<Entity> keys = makeEntities(registry, kEvents);
+  EventConsumer<AskRequest> asks;
+  EventRequester<AskRequest> asker;
+  Bencher& system = registry.addSystem<Bencher>(
+      [&](Bencher& self)
+      {
+        asks = self.consumer<AskRequest>();
+        asker = self.requester<AskRequest>().onResponse(ignored);
+      });
+  double best = std::numeric_limits<double>::max();
+  uint64_t sum = 0;
+  for (int round = 0; round < kRounds; ++round)
+  {
+    for (int i = 0; i < kEvents; ++i)
+      asker.request(keys[static_cast<std::size_t>(i)],
+                    AskRequest{static_cast<uint64_t>(i)});
+    asks.skip();
+    const Clock::time_point start = Clock::now();
+    for (int i = 0; i < kEvents; ++i)
+      sum += asks.respond(keys[static_cast<std::size_t>(i)],
+                          ToldResponse{static_cast<uint64_t>(i)})
+                 ? 1u
+                 : 0u;
+    best = std::min(best, nsSince(start) / kEvents);
+    // The asker hears its responses, so nothing backs up.
+    registry.updateSystem(system, 0.0);
+    registry.events().update();
+    registry.events().update();
+  }
+  g_sink = g_sink + sum;
+  return best;
+}
+
 // A requester's onResponse handler over kEvents responses, one per key.
 double benchResponses()
 {
@@ -877,7 +918,7 @@ double benchResponses()
   Bencher& client = registry.addSystem<Bencher>(
       [&](Bencher& self)
       {
-        asker = self.requester<AskRequest>().onResponse<ToldResponse>(
+        asker = self.requester<AskRequest>().onResponse(
             [&](const Entity&, const ToldResponse& told) { sum += told.id; });
       });
   server.body = [&](Bencher&)
@@ -912,9 +953,9 @@ double benchWorkerResponse()
   EventRequester<WorkAskRequest> asker;
   Bencher& server = registry.addSystem<Bencher>(
       [&](Bencher& self) { asks = self.consumer<WorkAskRequest>(); });
-  registry.addSystem<Bencher>(
+  Bencher& client = registry.addSystem<Bencher>(
       [&](Bencher& self)
-      { asker = self.requester<WorkAskRequest>().ignore<WorkToldResponse>(); });
+      { asker = self.requester<WorkAskRequest>().onResponse(ignored); });
   std::vector<Responder<WorkAskRequest>> responders;
   responders.reserve(kEvents);
   server.body = [&](Bencher&)
@@ -942,6 +983,7 @@ double benchWorkerResponse()
     best = std::min(best, took / kEvents);
     registry.events().takeIn();
     responders.clear();
+    registry.updateSystem(client, 0.0);
     registry.events().update();
     registry.events().update();
   }
@@ -990,12 +1032,11 @@ long long benchTraffic()
             [&](const HandledEvent& event) { sum += event.id; });
         damage = self.consumer<DamageEvent>().onEvent(
             [&](const DamageEvent& event) { sum += event.id; });
-        asker = self.requester<AskRequest>().onResponse<ToldResponse>(
+        asker = self.requester<AskRequest>().onResponse(
             [&](const Entity&, const ToldResponse& told) { sum += told.id; });
-        workAsker =
-            self.requester<WorkAskRequest>().onResponses<WorkToldResponse>(
-                [&](ResponseRange<WorkAskRequest, WorkToldResponse> told)
-                { sum += told.size(); });
+        workAsker = self.requester<WorkAskRequest>().onResponses(
+            [&](ResponseRange<WorkAskRequest, WorkToldResponse> told)
+            { sum += told.size(); });
       });
   bencher.body = [&](Bencher&)
   {
@@ -1190,12 +1231,16 @@ int main()
     gate("onEvents <= a read loop + 0.5 ns an event", batch, loop + 0.5);
     gate("readLatest <= 4 ns an event", readLatest, 4.0);
     // A row's responder borrows the request type's channel (no reference
-    // count); each response is four appends, a ticket check, the ticket's
-    // responded field and its requester's route: about 16 ns, with
-    // headroom.
+    // count); each response is four appends, a ticket check, closing the
+    // ticket and its requester's route: about 19 ns, with headroom.
     gate(
-        "read with responders, responding <= 21 ns an event", responders, 21.0);
+        "read with responders, responding <= 24 ns an event", responders, 24.0);
     gate("onResponse <= 4 ns a response", responses, 4.0);
+    const double byEntity = benchRespondByEntity();
+    print("respond-by-entity", kEvents, byEntity);
+    // The key's stale check and its open tickets (one here), then a
+    // response as a Responder's on this thread: about 17 ns, with headroom.
+    gate("respond by entity <= 21 ns a response", byEntity, 21.0);
     // Two uncontended locks (the channel's slot list, the inbox) and an
     // append.
     gate("a worker's response <= 60 ns", worker, 60.0);

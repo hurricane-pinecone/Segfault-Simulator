@@ -21,6 +21,9 @@ using namespace sfs;
 namespace
 {
 
+// A response handler that does nothing, for requesters that only ask.
+constexpr auto ignored = [](const Entity&, const auto&) {};
+
 struct [[sfs::event_news]] PingEvent
 {
   int value = 0;
@@ -129,6 +132,10 @@ struct [[sfs::event_news]] LateHandlerEvent
 {
   int value = 0;
 };
+struct [[sfs::event_news]] ReusedSlotEvent
+{
+  int value = 0;
+};
 struct [[sfs::event_response]] AskedResponse
 {
   int value = 0;
@@ -226,6 +233,13 @@ protected:
 
 private:
   std::function<void(Probe&)> m_setUp;
+};
+
+// A probe of another type, so a registry can hold two.
+class OtherProbe : public Probe
+{
+public:
+  using Probe::Probe;
 };
 
 // A system that keeps its consumer of E as a member.
@@ -386,7 +400,7 @@ int main()
         [&](Probe& p)
         {
           late = p.consumer<MadeLateEvent>();
-          asker = p.requester<AskedRequest>().ignore<AskedResponse>();
+          asker = p.requester<AskedRequest>().onResponse(ignored);
         });
     CHECK(!late.valid());
     CHECK(!asker.valid());
@@ -557,6 +571,49 @@ int main()
     CHECK(lateRan == 0);
     CHECK(log.count(Logger::Level::ERROR, "while its owner's handlers ran") ==
           1);
+  }
+
+  TEST("consumers going should stop their handlers, few or many, and a slot "
+       "given to another owner's consumer run only its new handler")
+  {
+    Registry registry;
+    std::vector<EventConsumer<ReusedSlotEvent>> held;
+    int stayed = 0;
+    int went = 0;
+    int other = 0;
+    Probe& first = registry.addSystem<Probe>(
+        [&](Probe& p)
+        {
+          held.push_back(p.consumer<ReusedSlotEvent>().onEvent(
+              [&](const ReusedSlotEvent&) { ++stayed; }));
+          for (int i = 0; i < 4; ++i)
+            held.push_back(p.consumer<ReusedSlotEvent>().onEvent(
+                [&](const ReusedSlotEvent&) { ++went; }));
+        });
+    // One of five going leaves its entry to be cleared later; the slot it
+    // freed goes to the other probe's consumer.
+    held.erase(held.begin() + 1);
+    EventConsumer<ReusedSlotEvent> reused;
+    OtherProbe& second = registry.addSystem<OtherProbe>(
+        [&](Probe& p)
+        {
+          reused = p.consumer<ReusedSlotEvent>().onEvent(
+              [&](const ReusedSlotEvent&) { ++other; });
+        });
+    registry.events().send(ReusedSlotEvent{1});
+    run(registry, first);
+    run(registry, second);
+    CHECK(stayed == 1);
+    CHECK(went == 3);
+    CHECK(other == 1);
+    held.erase(held.begin() + 1, held.end());
+    registry.events().send(ReusedSlotEvent{2});
+    run(registry, first);
+    run(registry, second);
+    CHECK(stayed == 2);
+    CHECK(went == 3);
+    CHECK(other == 2);
+    CHECK(statsOf(registry, "::ReusedSlotEvent").consumers == 2u);
   }
 
   TEST("a read in lateUpdate() should start its own span, which the next "

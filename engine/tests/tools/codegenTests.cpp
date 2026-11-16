@@ -725,8 +725,9 @@ sfs::ui::View look(sfs::ui::View view);
       struct [[sfs::event_entity_news]] AlertedEvent { float level = 0; };
       class [[sfs::event_response]] PathFoundResponse {};
       namespace nav { struct [[sfs::event_response]] PathFailedResponse {}; }
-      struct [[sfs::event_request(PathFoundResponse, nav::PathFailedResponse,
-                                  OtherResponse)]] PathRequest {};
+      struct [[sfs::event_request(PathFoundResponse,
+                                  failure = nav::PathFailedResponse,
+                                  progress = OtherResponse)]] PathRequest {};
       }
       namespace { struct [[sfs::event_news]] LocalEvent {}; }
     )",
@@ -753,27 +754,26 @@ sfs::ui::View look(sfs::ui::View view);
     CHECK(has("namespace { struct LocalEvent; }\n"));
     CHECK(has("template <>\nstruct EventTraits<::game::HitEvent>\n{\n"
               "  static constexpr EventKind kind = EventKind::News;\n"
-              "  using Responses = TypeList<>;\n"
               "  using Ancestors = TypeList<>;\n};\n"));
     CHECK(has("struct EventTraits<::game::DamageEvent>\n{\n"
               "  static constexpr EventKind kind = EventKind::News;\n"
-              "  using Responses = TypeList<>;\n"
               "  using Ancestors = TypeList<::game::HitEvent>;\n};\n"));
     CHECK(has("struct EventTraits<::game::FireDamageEvent>\n{\n"
               "  static constexpr EventKind kind = EventKind::News;\n"
-              "  using Responses = TypeList<>;\n"
               "  using Ancestors = TypeList<::game::DamageEvent, "
               "::game::HitEvent>;\n};\n"));
     CHECK(has("struct EventTraits<::game::AlertedEvent>\n{\n"
               "  static constexpr EventKind kind = EventKind::EntityNews;\n"));
     CHECK(has("struct EventTraits<::game::PathFoundResponse>\n{\n"
               "  static constexpr EventKind kind = EventKind::Response;\n"));
-    // A response codegen doesn't see (the engine's, or one the compiler
-    // will report) is named in the request's namespaces.
+    // The roles in the order success, progress, failure. A response codegen
+    // doesn't see (the engine's, or one the compiler will report) is named
+    // in the request's namespaces.
     CHECK(has("struct EventTraits<::game::PathRequest>\n{\n"
               "  static constexpr EventKind kind = EventKind::Request;\n"
-              "  using Responses = TypeList<::game::PathFoundResponse, "
-              "::game::nav::PathFailedResponse, ::game::OtherResponse>;\n"
+              "  using Success = ::game::PathFoundResponse;\n"
+              "  using Progress = ::game::OtherResponse;\n"
+              "  using Failure = ::game::nav::PathFailedResponse;\n"
               "  using Ancestors = TypeList<>;\n};\n"));
     CHECK(has("struct EventTraits<::LocalEvent>\n{\n"));
     CHECK(has("} // namespace sfs::detail\n"));
@@ -829,7 +829,6 @@ sfs::ui::View look(sfs::ui::View view);
     CHECK(problems.empty());
     CHECK(traits.find("struct EventTraits<::SteamEvent>\n{\n"
                       "  static constexpr EventKind kind = EventKind::News;\n"
-                      "  using Responses = TypeList<>;\n"
                       "  using Ancestors = TypeList<::FireEvent, ::IceEvent, "
                       "::HitEvent>;\n") != std::string::npos);
   }
@@ -887,6 +886,112 @@ sfs::ui::View look(sfs::ui::View view);
     CHECK(hasRule(result, RuleId::FieldType, "Thing"));
   }
 
+  TEST("a request's roles should be traits, absent ones void")
+  {
+    const ParseResult parsed = parseHeader(
+        "struct [[sfs::event_response]] PathFound {};\n"
+        "struct [[sfs::event_response]] PathFailed {};\n"
+        "struct [[sfs::event_request(PathFound)]] Simple {};\n"
+        "struct [[sfs::event_request(PathFound, failure = PathFailed)]] "
+        "WithFailure {};\n",
+        "Paths.h");
+    CHECK(parsed.diagnostics.empty());
+    CHECK(parsed.events.size() == 4u &&
+          parsed.events[3].success == "PathFound" &&
+          parsed.events[3].progress.empty() &&
+          parsed.events[3].failure == "PathFailed");
+    std::vector<Diagnostic> problems;
+    const std::string traits =
+        generateEventTraits(parsed.events, parsed.plainTypes, problems);
+    CHECK(problems.empty());
+    CHECK(traits.find("struct EventTraits<::Simple>\n{\n"
+                      "  static constexpr EventKind kind = "
+                      "EventKind::Request;\n"
+                      "  using Success = ::PathFound;\n"
+                      "  using Progress = void;\n"
+                      "  using Failure = void;\n"
+                      "  using Ancestors = TypeList<>;\n};\n") !=
+          std::string::npos);
+    CHECK(traits.find("  using Success = ::PathFound;\n"
+                      "  using Progress = void;\n"
+                      "  using Failure = ::PathFailed;\n") !=
+          std::string::npos);
+  }
+
+  TEST("a request's malformed roles should be event-declaration errors")
+  {
+    const auto problem = [](std::string_view roles)
+    {
+      const ParseResult parsed =
+          parseHeader("struct [[sfs::event_response]] Found {};\n"
+                      "struct [[sfs::event_response]] Failed {};\n"
+                      "struct [[sfs::event_request" +
+                          std::string(roles) + "]] Ask {};\n",
+                      "Ask.h");
+      std::vector<Diagnostic> found = parsed.diagnostics;
+      generateEventTraits(parsed.events, parsed.plainTypes, found);
+      std::string messages;
+      for (const Diagnostic& d : found)
+      {
+        CHECK(d.rule == RuleId::EventDeclaration);
+        messages += d.message + "\n";
+      }
+      return messages;
+    };
+    const std::string form = " Write [[sfs::event_request(Success, progress "
+                             "= Progress, failure = Failure)]].\n";
+    CHECK(problem("()") ==
+          "A request names its success response first." + form);
+    CHECK(problem("(failure = Failed)") ==
+          "A request names its success response first, before failure = "
+          "Failed." +
+              form);
+    CHECK(problem("(Found, Failed)") ==
+          "A request has one success response, named first; Failed needs a "
+          "role (progress = or failure =)." +
+              form);
+    CHECK(problem("(Found, progres = Failed)") ==
+          "A request has no role progres; its roles are progress and "
+          "failure. Use progress if that's what you meant." +
+              form);
+    CHECK(problem("(Found, failure = Failed, failure = Found)") ==
+          "The request names its failure response twice. Name each role "
+          "once." +
+              form);
+    CHECK(problem("(Found, failure = 3)") ==
+          "A request's arguments are its success response type, then roles "
+          "written role = Type, but failure = 3 is neither." +
+              form);
+    CHECK(problem("(success = Found)") ==
+          "A request's success response is written bare, first: (Found, "
+          "...), not success = Found." +
+              form);
+    CHECK(problem("(Found, fail = Failed)") ==
+          "A request has no role fail; its roles are progress and failure. "
+          "Use failure if that's what you meant." +
+              form);
+    for (const std::string_view broken :
+         {"(Found, failure = )", "(Found, failure: Failed)", "(Found,)"})
+      CHECK(problem(broken) ==
+            "A request's arguments are its success response type, then roles "
+            "written role = Type, but " +
+                std::string(broken) + " isn't that." + form);
+    CHECK(problem("(Found, failure = Found)") ==
+          "Ask names Found as its success and its failure response, but a "
+          "type plays one role in a request. Give each role a type of its "
+          "own.\n");
+    // Either order, and one type in roles of two requests, are fine.
+    CHECK(problem("(Found, failure = Failed, progress = Other)").empty());
+    const ParseResult two =
+        parseHeader("struct [[sfs::event_response]] Found {};\n"
+                    "struct [[sfs::event_request(Found)]] AskA {};\n"
+                    "struct [[sfs::event_request(Found)]] AskB {};\n",
+                    "Asks.h");
+    std::vector<Diagnostic> none;
+    generateEventTraits(two.events, two.plainTypes, none);
+    CHECK(two.diagnostics.empty() && none.empty());
+  }
+
   TEST("a request in a nested namespace should find a response in an outer "
        "one")
   {
@@ -899,8 +1004,7 @@ sfs::ui::View look(sfs::ui::View view);
     const std::string traits =
         generateEventTraits(parsed.events, parsed.plainTypes, problems);
     CHECK(problems.empty());
-    CHECK(traits.find("using Responses = TypeList<::game::Upper>;") !=
-          std::string::npos);
+    CHECK(traits.find("using Success = ::game::Upper;") != std::string::npos);
   }
 
   TEST("a request's responses should be looked up through namespace "
@@ -934,22 +1038,19 @@ struct [[sfs::event_request(sfs::EngineResponse)]] AskEngine { int g = 0; };
     CHECK(problems.empty());
     for (const Diagnostic& d : problems)
       std::fprintf(stderr, "%s\n", d.message.c_str());
-    const auto responsesOf = [&](std::string_view request)
+    const auto successOf = [&](std::string_view request)
     {
       const std::size_t at =
           traits.find("EventTraits<::" + std::string(request) + ">");
-      const std::size_t from = traits.find("Responses = ", at);
+      const std::size_t from = traits.find("Success = ", at);
       return at == std::string::npos
                  ? std::string()
                  : traits.substr(from, traits.find(';', from) - from);
     };
-    CHECK(responsesOf("AskAlias") == "Responses = TypeList<::a::b::Mid>");
-    CHECK(responsesOf("q::AskUsingDecl") ==
-          "Responses = TypeList<::a::b::Mid>");
-    CHECK(responsesOf("r::AskUsingDir") ==
-          "Responses = TypeList<::a::b::Other>");
-    CHECK(responsesOf("AskEngine") ==
-          "Responses = TypeList<::sfs::EngineResponse>");
+    CHECK(successOf("AskAlias") == "Success = ::a::b::Mid");
+    CHECK(successOf("q::AskUsingDecl") == "Success = ::a::b::Mid");
+    CHECK(successOf("r::AskUsingDir") == "Success = ::a::b::Other");
+    CHECK(successOf("AskEngine") == "Success = ::sfs::EngineResponse");
 
     // The traits compile against the engine's header, forced in before the
     // declarations as a build does, and name the real types.
@@ -960,13 +1061,12 @@ struct [[sfs::event_request(sfs::EngineResponse)]] AskEngine { int g = 0; };
     std::ofstream(dir / "Asks.cpp")
         << header.substr(0, header.find("using namespace sfs;")) +
                "#include <type_traits>\n"
-               "template <typename R, typename... A>\n"
-               "constexpr bool lists = std::is_same_v<\n"
-               "    typename sfs::detail::EventTraits<R>::Responses,\n"
-               "    sfs::detail::TypeList<A...>>;\n"
-               "static_assert(lists<AskAlias, a::b::Mid>);\n"
-               "static_assert(lists<q::AskUsingDecl, a::b::Mid>);\n"
-               "static_assert(lists<r::AskUsingDir, a::b::Other>);\n";
+               "template <typename R, typename A>\n"
+               "constexpr bool succeeds = std::is_same_v<\n"
+               "    typename sfs::detail::EventTraits<R>::Success, A>;\n"
+               "static_assert(succeeds<AskAlias, a::b::Mid>);\n"
+               "static_assert(succeeds<q::AskUsingDecl, a::b::Mid>);\n"
+               "static_assert(succeeds<r::AskUsingDir, a::b::Other>);\n";
     // Without the engine-type request, which needs the engine's types.
     std::ofstream(dir / "traits.h")
         << traits.substr(0,
@@ -1036,7 +1136,7 @@ struct [[sfs::event_request(sfs::EngineResponse)]] AskEngine { int g = 0; };
     std::vector<Diagnostic> problems;
     const std::string traits = generateEventTraits(events, {}, problems);
     CHECK(problems.empty());
-    CHECK(traits.find("using Responses = TypeList<::game::DoneResponse>;") !=
+    CHECK(traits.find("using Success = ::game::DoneResponse;") !=
           std::string::npos);
     CHECK(traits.find("using Ancestors = TypeList<::game::PingEvent>;") !=
           std::string::npos);
@@ -1116,14 +1216,14 @@ struct [[sfs::event_request(sfs::EngineResponse)]] AskEngine { int g = 0; };
         errors({"struct [[sfs::event_news]] { int a; } unnamed;"}), scope));
     CHECK(says(errors({"struct Plain {};\nstruct "
                        "[[sfs::event_request(Plain)]] AskRequest {};"}),
-               "AskRequest lists Plain, which isn't marked "
-               "[[sfs::event_response]]. A request lists only response types: "
-               "mark it."));
+               "AskRequest names Plain as its success response, but Plain "
+               "isn't marked [[sfs::event_response]]. A request's roles name "
+               "only response types: mark it."));
     CHECK(says(errors({"struct [[sfs::event_news]] HitEvent {};",
                        "struct [[sfs::event_request(HitEvent)]] AskRequest "
                        "{};"}),
-               "AskRequest lists HitEvent, which isn't marked "
-               "[[sfs::event_response]]."));
+               "AskRequest names HitEvent as its success response, but "
+               "HitEvent isn't marked [[sfs::event_response]]."));
     CHECK(says(errors({"struct [[sfs::event_news]] HitEvent {};\n"
                        "struct [[sfs::event_entity_news]] AimedEvent : "
                        "HitEvent {};"}),

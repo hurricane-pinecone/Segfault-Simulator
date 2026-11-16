@@ -54,7 +54,8 @@ struct Project
         "#pragma once\n"
         "struct [[sfs::event_response]] PathFoundResponse { int outcome = 0; "
         "};\n"
-        "struct [[sfs::event_request(PathFoundResponse, PathFailedResponse)]] "
+        "struct [[sfs::event_request(PathFoundResponse, failure = "
+        "PathFailedResponse)]] "
         "PathRequest { int goal = 0; };\n");
     index.start(root);
     index.indexAll(lspTest::parser());
@@ -379,8 +380,8 @@ int main()
         "  void create() override\n  {\n"
         "    m_moved = consumer<Moved>();\n"
         "    m_paths = requester<PathRequest>()\n"
-        "                  .onResponse<PathFoundResponse>(found)\n"
-        "                  .ignore<PathFailedResponse>();\n"
+        "                  .onResponse(found)\n"
+        "                  .ignoreFailure();\n"
         "    this->kept = consumer<Moved>();\n"
         "    kept = this->consumer<Moved>();\n"
         "    m_hits.push_back(consumer<Hit>());\n"
@@ -451,7 +452,7 @@ int main()
         "  sfs::EventRequester<PathRequest> m_paths;\n"
         "  void onCreate(sfs::Scene& scene) override\n  {\n"
         "    m_moved = scene.events().consumer<Moved>();\n"
-        "    m_paths = scene.events().requester<PathRequest>().ignore<A>();\n"
+        "    m_paths = scene.events().requester<PathRequest>().onResponse(f);\n"
         "    auto once = scene.events().consumer<Moved>();\n  }\n"
         "  void onUpdate(double) override\n  {\n"
         "    m_moved = scene().events().consumer<Moved>();\n"
@@ -560,6 +561,30 @@ int main()
                                  project.root / "scripts/systems/Both.cpp",
                                  &project.index),
               RuleId::ResponseSentTwice) == 2u);
+    // A responder's fail() and a request consumer's sends by entity count
+    // too.
+    CHECK(
+        lspTest::count(*lspTest::analysed(
+                           "struct [[sfs::event_response]] Lost {};\n"
+                           "class A : public sfs::System { void update(double) "
+                           "override { r.fail(Lost{}); } };\n"
+                           "class B : public sfs::System { void update(double) "
+                           "override { m_asks.fail(entity, Lost{}); "
+                           "m_asks.respond(entity, Lost{}); } };\n",
+                           project.root / "scripts/systems/Roles.cpp",
+                           &project.index),
+                       RuleId::ResponseSentTwice) == 3u);
+    // A send naming its type, by entity or through a responder.
+    CHECK(lspTest::count(
+              *lspTest::analysed(
+                  "struct [[sfs::event_response]] Lone {};\n"
+                  "class A : public sfs::System { void update(double) "
+                  "override { r.respond<Lone>({}); } };\n"
+                  "class B : public sfs::System { void update(double) "
+                  "override { m_asks.respond<Lone>(entity, {}); } };\n",
+                  project.root / "scripts/systems/Named.cpp",
+                  &project.index),
+              RuleId::ResponseSentTwice) == 2u);
     // Two types of one name in different namespaces aren't one.
     CHECK(lspTest::count(
               *lspTest::analysed(
@@ -602,8 +627,8 @@ int main()
         "    m_moved = registry->events().consumer<Moved>();\n"
         "    m_moved = consumer<Moved>().onEvent(\n"
         "        [this](const Moved& m)\n"
-        "        { m_paths = requester<PathRequest>().ignore<Found>(); });\n"
-        "    m_paths = requester<PathRequest>().onResponse<Found>(\n"
+        "        { m_paths = requester<PathRequest>().onResponse(f); });\n"
+        "    m_paths = requester<PathRequest>().onResponse(\n"
         "        [this](const sfs::Entity& e, const Found& f)\n"
         "        { auto more = consumer<Hit>(); });\n"
         "    auto later = [this] { m_moved = consumer<Moved>(); };\n"
@@ -639,6 +664,36 @@ int main()
     CHECK(handlers == 2u);
     CHECK(destructor);
     CHECK(trigger);
+  }
+
+  TEST("event-handle-outside-create should see a handle made in any role's "
+       "handler")
+  {
+    const auto doc = lspTest::analysed(
+        "class Seeker : public sfs::System\n{\n"
+        "  sfs::EventConsumer<Moved> m_moved;\n"
+        "  sfs::EventRequester<PathRequest> m_paths;\n"
+        "  void create() override\n  {\n"
+        "    m_paths = requester<PathRequest>()\n"
+        "        .onResponse(found)\n"
+        "        .onProgress([this](const sfs::Entity& e, const Leg& l)\n"
+        "                    { m_moved = consumer<Moved>(); })\n"
+        "        .onFailure([this](const sfs::Entity& e, const Lost& l)\n"
+        "                   { m_moved = consumer<Moved>(); });\n"
+        "    m_paths = requester<PathRequest>()\n"
+        "        .onResponses(found)\n"
+        "        .onProgresses([this](auto legs)\n"
+        "                      { m_moved = consumer<Moved>(); })\n"
+        "        .onFailures([this](auto lost)\n"
+        "                    { m_moved = consumer<Moved>(); });\n"
+        "  }\n};\n");
+    std::size_t handlers = 0;
+    for (const auto& d : doc->diagnostics)
+      handlers +=
+          d.rule == RuleId::EventHandleOutsideCreate &&
+          d.message.find("is made in an event handler, outside "
+                         "create(), so it's refused") != std::string::npos;
+    CHECK(handlers == 4u);
   }
 
   TEST("event-handle-outside-create should take each way of keeping a handle, "
@@ -1072,7 +1127,8 @@ int main()
     const auto plain = lspTest::analysed(
         "struct Plain {};\n"
         "// sfs-ignore-next-line(event-declaration)\n"
-        "struct [[sfs::event_request(Plain, Elsewhere)]] AskRequest {};\n",
+        "struct [[sfs::event_request(Plain, failure = Elsewhere)]] "
+        "AskRequest {};\n",
         "/t/AskRequest.h");
     CHECK(lspTest::count(*plain, RuleId::EventDeclaration) == 1u);
   }
@@ -2463,7 +2519,7 @@ int main()
         "struct [[sfs::event_response]] Done {};\n"
         "class S : public sfs::System\n{\n"
         "  void create() override\n  {\n"
-        "    m_asks = requester<Ask>().onResponse<Done>(f).ignore<No>();\n"
+        "    m_asks = requester<Ask>().onResponse(f).ignoreFailure();\n"
         "    auto c = (consumer<Moved>());\n  }\n"
         "  void update(double) override\n  {\n"
         "    for (const Moved& m : m_moved.read())\n"

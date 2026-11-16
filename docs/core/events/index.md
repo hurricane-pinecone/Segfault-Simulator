@@ -40,18 +40,18 @@ struct [[sfs::event_entity_news]] AlertedEvent
 | --- | --- | --- |
 | `[[sfs::event_news]]` | News: something happened | `send(event)` |
 | `[[sfs::event_entity_news]]` | News about one entity | `send(entity, event)` |
-| `[[sfs::event_request(A, B)]]` | A request about one entity that gets one of the listed responses back ([Requests and responses](#requests-and-responses)) | a requester's `request(entity, request)` |
-| `[[sfs::event_response]]` | One of a request's responses | a responder's `respond()` or `progress()` |
+| `[[sfs::event_request(Success, progress = P, failure = F)]]` | A request about one entity that gets its success response back, or its failure, after any progress ([Requests and responses](#requests-and-responses)) | a requester's `request(entity, request)` |
+| `[[sfs::event_response]]` | A response playing a role in a request | a responder's `respond()`, `progress()` or `fail()`, or a request consumer's by entity |
 
 The build reads these attributes (the code generator that also reflects your
 components) and tells the compiler what each type is, so mistakes are compile
 errors that say how to fix them: sending a type that isn't marked ("isn't an
 event: mark it `[[sfs::event_news]]`"), sending news about an entity with
-`send(event)`, sending a response yourself, or forgetting to handle one of a
-request's responses. Declare event types at namespace scope, one attribute
-each, in a header or a `.cpp` of your scripts: the build reads both. Every
-file of your module sees what each event type is, so changing an event
-declaration rebuilds the module.
+`send(event)`, sending a response yourself, sending a response in the wrong
+role, or forgetting to handle a request's success or failure. Declare event
+types at namespace scope, one attribute each, in a header or a `.cpp` of
+your scripts: the build reads both. Every file of your module sees what each
+event type is, so changing an event declaration rebuilds the module.
 
 An event holds values only: ids, entities, numbers, small vectors or strings
 moved in. Never a pointer into a component or a system: an event may be read
@@ -209,10 +209,17 @@ next to nothing.
 ## Requests and responses
 
 A request asks for something about an entity and gets a response back. It
-lists its responses:
+declares its responses by role: the success response it ends with, and,
+optionally, a progress response sent along the way and a failure response
+it can end with instead:
 
 ```cpp
 struct [[sfs::event_response]] PathFoundResponse
+{
+  std::vector<glm::vec3> points;
+};
+
+struct [[sfs::event_response]] PathLegResponse
 {
   std::vector<glm::vec3> points;
 };
@@ -222,15 +229,35 @@ struct [[sfs::event_response]] PathFailedResponse
   int reason = 0;
 };
 
-struct [[sfs::event_request(PathFoundResponse, PathFailedResponse)]]
-PathRequest
+struct [[sfs::event_request(PathFoundResponse,
+                            progress = PathLegResponse,
+                            failure = PathFailedResponse)]] PathRequest
 {
   glm::vec3 goal;
 };
 ```
 
-The asker makes a *requester* in `create()`. It handles each response type in
-one chain, or ignores it on purpose:
+A request that can only succeed declares just its success:
+
+```cpp
+struct [[sfs::event_response]] DoorOpenedResponse
+{
+};
+
+struct [[sfs::event_request(DoorOpenedResponse)]] OpenDoorRequest
+{
+};
+```
+
+The first type is the success; `progress =` and `failure =` are optional,
+in either order. Each is an `[[sfs::event_response]]` type, and one type
+plays one role in a request. It may play roles in other requests too (a
+shared "refused" failure), but one system sends a response type, so those
+requests are served by the same system; give another server's responses a
+type of their own.
+
+The asker makes a *requester* in `create()` and gives it a handler for each
+role in one chain:
 
 ```cpp
 class EnemyAISystem : public sfs::System
@@ -239,14 +266,15 @@ protected:
   void create() override
   {
     m_paths = requester<PathRequest>()
-                  .onResponse<PathFoundResponse>(
-                      [this](const sfs::Entity& enemy,
-                             const PathFoundResponse& found)
-                      { follow(enemy, found.points); })
-                  .onResponse<PathFailedResponse>(
-                      [this](const sfs::Entity& enemy,
-                             const PathFailedResponse&)
-                      { wander(enemy); });
+                  .onProgress([this](const sfs::Entity& enemy,
+                                     const PathLegResponse& leg)
+                              { startOn(enemy, leg.points); })
+                  .onResponse([this](const sfs::Entity& enemy,
+                                     const PathFoundResponse& found)
+                              { follow(enemy, found.points); })
+                  .onFailure([this](const sfs::Entity& enemy,
+                                    const PathFailedResponse&)
+                             { wander(enemy); });
   }
 
   void update(double) override
@@ -261,11 +289,13 @@ private:
 };
 ```
 
-Every response type needs a handler (`onResponse<A>()`, or `onResponses<A>()`
-for the update's responses at once) or an explicit `.ignore<A>()`, exactly
-once. The compiler checks it: leaving one out is an error that names the
-request and the response you missed. The handlers run just before the
-system's `update()`.
+The compiler checks the chain: the success must be handled, and so must a
+declared failure, unless you skip it on purpose with `.ignoreFailure()`.
+Leaving one out is an error that names the request. Progress is optional: a
+requester without `.onProgress()` simply gets none. `onResponses()`,
+`onProgresses()` and `onFailures()` take the update's responses of a role
+at once (an `sfs::ResponseRange<R, Response>`). The handlers run just before
+the system's `update()`.
 
 A request belongs to the requester that made it. Each requester has its own
 current request per entity, and gets only the responses to it: if the AI and
@@ -275,13 +305,15 @@ a newer request from one doesn't replace the other's.
 | Requester | |
 | --- | --- |
 | `request(entity, r)` | Asks about the entity. A newer request from this requester for the same entity replaces its older one: the older one's responses are dropped. |
-| `waiting(entity)` | Whether this requester's current request about the entity has no final response yet. |
+| `waiting(entity)` | Whether this requester's current request about the entity has no final response (success or failure) yet. |
 | `cancel(entity)` | Drops this requester's current request about the entity: its responses are dropped and `waiting()` turns false. |
 
-Responses of one type arrive in the order they were sent. Responses of
-different types arrive type by type, in the order the handlers were given,
-so don't rely on a `PathFailedResponse` handler running after a
-`PathFoundResponse` one sent earlier.
+Responses of one role arrive in the order they were sent, and a request's
+progress always arrives before its final response, whatever order the chain
+gives the handlers: when a leg and the whole path arrive in one update, the
+enemy starts on the leg and then follows the path.
+
+### Serving a request
 
 Whoever serves the request consumes it like any event. Each row carries a
 `sfs::Responder`:
@@ -294,24 +326,28 @@ void PathfindingSystem::update(double)
     if (std::optional<Path> path = findPath(enemy, request.goal))
       responder.respond(PathFoundResponse{path->points});
     else
-      responder.respond(PathFailedResponse{1});
+      responder.fail(PathFailedResponse{1});
   }
 }
 ```
 
 | Responder | |
 | --- | --- |
-| `respond(response)` | The final response: the asker's `waiting()` turns false. |
-| `progress(response)` | A response with more to come (a long path's first leg). |
-| `superseded()` | Whether a newer request from the same requester, a cancel, the entity's destruction or the requester's has replaced this one: stop working on it. |
+| `respond(success)` | The success response: final, so the request closes and the asker's `waiting()` turns false. |
+| `progress(p)` | A progress response, with more to come (a long path's first leg), if the request declares one. |
+| `fail(failure)` | The failure response: final, like `respond()`, if the request declares one. |
+| `superseded()` | Whether a newer request from the same requester, a cancel, the entity's destruction or the requester's has replaced this one: stop working on it. A request already answered by entity before the server read it isn't superseded, but responding to it is refused. |
 | `key()` | The entity the request is about. |
 
-A responder takes only the request's listed response types (anything else is
-a compile error). Copy it into a job and respond from a worker thread: the
-response reaches the asker at the next frame step. Requests from different
-requesters about the same entity each get their own row and responder; use
-`readLatest()` to skip requests already replaced by newer ones from the same
-requester.
+Each takes only its role's type: anything else is a compile error. The
+first final response taken in wins, and a later one is refused. Copy a
+responder into a job and respond from a worker thread: the response reaches
+the asker at the next frame step. Until then the request stays open (its
+`respond()` returned true, but `waiting()` and `open()` are still true), so
+a final sent on the scene's thread in the meantime wins and the worker's is
+dropped. Requests from different requesters about the same
+entity each get their own row and responder; use `readLatest()` to skip
+requests already replaced by newer ones from the same requester.
 
 A request handler gets the same three things:
 
@@ -325,12 +361,52 @@ m_requests = consumer<PathRequest>().onEvent(
 Take the responder as `const sfs::Responder<R>&` when you respond at once.
 Taking it by value, or keeping a copy for a job, costs a reference count.
 
+### Tell me once you're finished
+
+Some requests are answered much later: "tell me once the door is open",
+"tell me when the crafting's done". The server doesn't need to keep anything
+for them. It notes what to do on its own components when the request comes
+in, and answers later by the entity, through its consumer:
+
+```cpp
+void DoorSystem::create()
+{
+  m_opens = consumer<OpenDoorRequest>().onEvent(
+      [this](const sfs::Entity& door, const OpenDoorRequest&,
+             const sfs::Responder<OpenDoorRequest>&)
+      { door.getComponent<Door>()->opening = true; });
+}
+
+void DoorSystem::update(double dt)
+{
+  for (auto [door, state] : registry->query<Door>())
+    if (state.opening && (state.angle += state.speed * dt) >= state.openAngle)
+    {
+      state.opening = false;
+      m_opens.respond(door, DoorOpenedResponse{});
+    }
+}
+```
+
+| Consumer of a request type | |
+| --- | --- |
+| `respond(entity, success)` | Sends the success response to every requester whose request about the entity is still open, each hearing only its own, and closes them. |
+| `progress(entity, p)` | Sends a progress response to every open request about the entity. |
+| `fail(entity, failure)` | Sends the failure response to every open request about the entity, and closes them. |
+| `open(entity)` | Whether any requester's request about the entity is still open. |
+
+A request that was replaced, cancelled, or whose entity or requester has
+gone isn't reached, and with nothing open these return false. They run on
+the scene's thread only: a job responds through a `Responder`. A request
+answered by entity and by a `Responder` both is fine: the first final
+response taken in wins. Each request gets its own copy of the response, so
+a response type answered by entity must be copyable.
+
 Responses are events too: another system may `consumer<PathFoundResponse>()`
 to watch every response sent, whoever asked, with rows `[entity, response]`.
 Each response watched is copied to its watchers, so a type that can't be
 copied can't be watched. A response can't be sent with `send()`, only
-through a responder, and one response type may be listed by several
-requests.
+through a responder or a request's consumer.
 
 ## Objects and UI
 
@@ -468,9 +544,10 @@ In development builds:
 | `read()`, `readLatest()` | `EventConsumer` | What arrived since the last update; the newest per entity. |
 | `onEvent(fn)`, `onEvents(fn)`, `onLatest(fn)`, `onLatestEvents(fn)` | `EventConsumer` | Handlers, run before the owner's update. |
 | `unread()`, `skip()` | `EventConsumer` | How many it hasn't read; pass them all. |
-| `onResponse<A>(fn)`, `onResponses<A>(fn)`, `ignore<A>()` | requester builder | Each response handled or ignored once. |
+| `onResponse(fn)`, `onProgress(fn)`, `onFailure(fn)`, `onResponses(fn)`, `onProgresses(fn)`, `onFailures(fn)`, `ignoreFailure()` | requester builder | Handlers by role: the success required, a declared failure handled or ignored, progress optional. |
 | `request()`, `waiting()`, `cancel()` | `EventRequester` | See above. |
-| `respond()`, `progress()`, `superseded()`, `key()` | `Responder` | See above. |
+| `respond()`, `progress()`, `fail()`, `superseded()`, `key()` | `Responder` | See above. |
+| `respond(entity, s)`, `progress(entity, p)`, `fail(entity, f)`, `open(entity)` | `EventConsumer` of a request type | Answers every open request about an entity later, by entity. |
 | `cancel<E>(entity)` | `Events` | Makes an entity's current entity news stale. |
 | `setMaxKept(n)` | `Events` | The most events a type keeps. |
 

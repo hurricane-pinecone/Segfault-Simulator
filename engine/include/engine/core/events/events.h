@@ -27,7 +27,10 @@ template <typename TEvent>
 class EventConsumer;
 template <typename TRequest>
 class EventRequester;
-template <typename TRequest, typename... THandled>
+template <typename TRequest,
+          bool kSuccess = false,
+          bool kProgress = false,
+          bool kFailure = false>
 class EventRequesterBuilder;
 namespace detail
 {
@@ -75,8 +78,9 @@ int eventTypeId(std::string_view typeKey);
  *
  * Each type is marked with what it is (eventTraits.h): `[[sfs::event_news]]`
  * news, `[[sfs::event_entity_news]]` news about one entity,
- * `[[sfs::event_request(A, B)]]` a request with the responses it gets, or
- * `[[sfs::event_response]]` one of those responses. News that derives from
+ * `[[sfs::event_request(Success, progress = P, failure = F)]]` a request
+ * with its responses by role, or `[[sfs::event_response]]` one of those
+ * responses. News that derives from
  * other news is sent to the base's consumers too, as a base. Each consumer
  * reads with read() and readLatest(), or has handlers the engine calls in
  * its owner's slot. A system makes its consumers and requesters in create()
@@ -280,7 +284,7 @@ private:
   friend class EventConsumer;
   template <typename TRequest>
   friend class EventRequester;
-  template <typename TRequest, typename... THandled>
+  template <typename TRequest, bool, bool, bool>
   friend class EventRequesterBuilder;
   friend struct detail::EventHost;
 
@@ -428,15 +432,18 @@ private:
   detail::EventQueueBase& add(std::size_t id,
                               std::unique_ptr<detail::EventQueueBase> queue);
 
-  // A call made off the owning thread: logged once per type.
+  // A call made off the owning thread: logged once per type. `answer` is a
+  // request consumer's answer by entity, which a job makes through a
+  // Responder instead.
   template <typename T>
-  static void refuseOffThread(const char* call)
+  static void refuseOffThread(const char* call, bool answer = false)
   {
     static std::atomic<bool> logged{false};
     if (!logged.exchange(true, std::memory_order_relaxed))
-      offThread(call, detail::componentTypeKey<T>());
+      offThread(call, detail::componentTypeKey<T>(), answer);
   }
-  static void offThread(const char* call, std::string_view typeKey);
+  static void
+  offThread(const char* call, std::string_view typeKey, bool answer);
 
   // By event type id: its queue, or null before its first use.
   std::vector<detail::EventQueueBase*> m_byId;

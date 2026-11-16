@@ -57,7 +57,7 @@ void Events::takeIn()
 {
   if (!onOwnerThread()) [[unlikely]]
   {
-    offThread("takeIn", "");
+    offThread("takeIn", "", false);
     return;
   }
   adoptResponses();
@@ -131,14 +131,20 @@ Events::add(std::size_t id, std::unique_ptr<detail::EventQueueBase> queue)
   return made;
 }
 
-void Events::offThread(const char* call, std::string_view typeKey)
+void Events::offThread(const char* call, std::string_view typeKey, bool answer)
 {
   const std::string type =
       typeKey.empty() ? "" : "<" + detail::readableTypeName(typeKey) + ">";
-  LOG_ERROR(std::string("Events::") + call + type +
-            "() was called off the thread that owns the events, so it was "
-            "ignored. Workers send through an EventBroadcast "
-            "(Events::broadcast()), taken on the owning thread.");
+  if (answer)
+    LOG_ERROR(std::string("EventConsumer") + type + "::" + call +
+              "(entity, ...) was called off the thread that owns the events, "
+              "so it was ignored. A job answers a request through its row's "
+              "Responder, copied into the job on the owning thread.");
+  else
+    LOG_ERROR(std::string("Events::") + call + type +
+              "() was called off the thread that owns the events, so it was "
+              "ignored. Workers send through an EventBroadcast "
+              "(Events::broadcast()), taken on the owning thread.");
 }
 
 } // namespace sfs

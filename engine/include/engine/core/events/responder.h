@@ -19,33 +19,17 @@ namespace sfs
 template <typename TEvent, typename TPick, bool kResponders>
 class EventRange;
 
-namespace detail
-{
-
-/**
- * Fails to compile, naming the request and a response type that isn't in its
- * response list, when a Responder<R> is given one.
- */
-template <typename TRequest, typename TResponse>
-struct ResponderResponseNotListed
-{
-  static_assert(sizeof(TResponse) == 0,
-                "A Responder<R> sends only the response types R lists; this "
-                "one (ResponderResponseNotListed<Request, Response>) isn't "
-                "listed");
-};
-
-} // namespace detail
-
 /**
  * How a consumer responds to one request of a request type R: what each row
  * and handler of an EventConsumer<R> carries beside the request. It's the
  * request's key, generation and ticket (its requester's request about the
  * key) and the request type's channel: copy it into a job and respond from
- * any thread. It sends the response types R lists
- * (`[[sfs::event_request(A, B)]]`), checked as it compiles; the requester
- * that asked gets them in its response handlers and asks whether the final
- * one is still to come with waiting().
+ * any thread. It sends R's responses by their role
+ * (`[[sfs::event_request(Success, progress = P, failure = F)]]`): respond()
+ * the success, progress() a progress, fail() the failure, each checked as it
+ * compiles. The requester that asked gets them in its handlers
+ * (onResponse(), onProgress(), onFailure()) and asks whether a final one is
+ * still to come with waiting().
  *
  * Once a newer request from the same requester about the key, a cancel, or
  * the key entity's or the requester's going supersedes this one,
@@ -135,6 +119,9 @@ public:
    * Whether a newer request from the same requester about the key, a
    * cancel, or the key entity's or the requester's going has superseded
    * this request, or its events are gone (three relaxed loads). Any thread.
+   * A request already closed by a final response (answered by entity before
+   * this responder's row was read, say) isn't superseded, but its responses
+   * are refused.
    * @return whether responses to it are now dropped
    */
   bool superseded() const
@@ -146,28 +133,53 @@ public:
   }
 
   /**
-   * Sends a partial response, with more to come (a streamed path's next leg).
-   * From the owning thread it's readable at once; from a worker, at the next
-   * step.
-   * @param response one of the response types R lists
-   * @return false if the request was superseded or the events are gone
-   */
-  template <typename TResponse>
-  bool progress(TResponse&& response) const
-  {
-    return respondWith(std::forward<TResponse>(response), false);
-  }
-
-  /**
-   * Sends the request's final response: the requester's waiting() turns false
-   * once it's taken in.
-   * @param value one of the response types R lists
-   * @return false if the request was superseded or the events are gone
+   * Sends the request's success response, its final answer: the request
+   * closes once it's taken in, and a later final is refused. From the
+   * owning thread it's taken in at once; from a worker, at the next step,
+   * so until then the request stays open and a final sent on the owning
+   * thread first wins (the worker's is dropped).
+   * @param value the request's success response
+   * @return false if the request was superseded or closed, or the events
+   *         are gone; true from a worker may still lose to an earlier final
+   *         taken in
    */
   template <typename TResponse>
   bool respond(TResponse&& value) const
   {
-    return respondWith(std::forward<TResponse>(value), true);
+    return sendRole<detail::ResponseRole::Success>(
+        std::forward<TResponse>(value));
+  }
+
+  /**
+   * Sends a progress response, with more to come (a long path's next leg),
+   * if the request declares one (`progress = P`). Any number, until a final.
+   * From a worker it's taken in at the next step, and dropped if a final was
+   * taken in first.
+   * @param value the request's progress response
+   * @return false if the request was superseded or closed, or the events
+   *         are gone
+   */
+  template <typename TResponse>
+  bool progress(TResponse&& value) const
+  {
+    return sendRole<detail::ResponseRole::Progress>(
+        std::forward<TResponse>(value));
+  }
+
+  /**
+   * Sends the request's failure response, its final answer, if it declares
+   * one (`failure = F`): the request closes once it's taken in, as
+   * respond()'s does, and the first final taken in wins.
+   * @param value the request's failure response
+   * @return false if the request was superseded or closed, or the events
+   *         are gone; true from a worker may still lose to an earlier final
+   *         taken in
+   */
+  template <typename TResponse>
+  bool fail(TResponse&& value) const
+  {
+    return sendRole<detail::ResponseRole::Failure>(
+        std::forward<TResponse>(value));
   }
 
 private:
@@ -204,22 +216,19 @@ private:
     return out;
   }
 
-  template <typename TResponse>
-  bool respondWith(TResponse&& value, bool last) const
+  // A response in a role the request declares (checked as it compiles):
+  // the success and the failure are final.
+  template <detail::ResponseRole kRole, typename TResponse>
+  bool sendRole(TResponse&& value) const
   {
     using Value = std::remove_cvref_t<TResponse>;
-    if constexpr (!detail::kListed<
-                      Value,
-                      typename detail::EventTraits<TRequest>::Responses>)
-    {
-      [[maybe_unused]] detail::ResponderResponseNotListed<TRequest, Value>
-          notListed;
-      return false;
-    }
-    else
+    static_assert(detail::checkRoleSent<TRequest, kRole, Value>());
+    if constexpr (std::is_same_v<detail::RoleType<TRequest, kRole>, Value>)
       return deliver(
           detail::ResponseTo<TRequest, Value>{std::forward<TResponse>(value)},
-          last);
+          kRole != detail::ResponseRole::Progress);
+    else
+      return false;
   }
 
   // Sends a response as its queue holds it: on the owning thread straight to

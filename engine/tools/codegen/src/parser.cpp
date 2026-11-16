@@ -212,7 +212,10 @@ struct AttributeValue
 {
   std::string first;
   std::string second;
-  std::vector<std::string> types; // Types: each, as written
+  // Roles: a request's response types, as written; empty when not named.
+  std::string success;
+  std::string progress;
+  std::string failure;
 };
 
 // A field's [[sfs::...]] attribute, read but waiting for the field's kind.
@@ -416,7 +419,10 @@ private:
     bool component = false; // [[sfs::component]]
     int events = 0;         // event attributes ([[sfs::event_news]], ...)
     EventKind event = EventKind::News; // the first one's kind
-    std::vector<std::string> responses; // [[sfs::event_request(A, B)]]'s
+    // [[sfs::event_request(S, progress = P, failure = F)]]'s roles.
+    std::string success;
+    std::string progress;
+    std::string failure;
   };
 
   // Which of [[sfs::component]] and the event attributes a class specifier
@@ -467,7 +473,9 @@ private:
         if (marks.events == 1)
         {
           marks.event = event;
-          marks.responses = std::move(value.types);
+          marks.success = std::move(value.success);
+          marks.progress = std::move(value.progress);
+          marks.failure = std::move(value.failure);
         }
       }
     }
@@ -519,6 +527,94 @@ private:
                (onType ? "a type, not a field" : "a field, not a type") +
                ", so it's ignored here. Move it to " +
                (onType ? "the type." : "a field."));
+  }
+
+  // Whether a node names a type: `A`, `ns::A`.
+  static bool isTypeName(TSNode node)
+  {
+    const std::string kind = type(node);
+    return kind == "identifier" || kind == "qualified_identifier" ||
+           kind == "type_identifier";
+  }
+
+  // A request's roles, `(Success, progress = P, failure = F)`, into `value`;
+  // false, with an event-declaration error, when they're malformed.
+  bool readRoles(const AttributeInfo& info,
+                 TSNode attribute,
+                 TSNode arguments,
+                 AttributeValue& value)
+  {
+    const std::string form = "Write [[sfs::" + std::string(info.name) +
+                             std::string(info.arguments) + "]].";
+    const auto fail = [&](TSNode at, std::string message)
+    {
+      report(RuleId::EventDeclaration, at, message + " " + form);
+      return false;
+    };
+    const uint32_t count =
+        ts_node_is_null(arguments) ? 0 : ts_node_named_child_count(arguments);
+    if (count == 0)
+      return fail(attribute, "A request names its success response first.");
+    // A stray comma, colon or missing type leaves the list broken: say so
+    // rather than describe the pieces the parser recovered.
+    if (ts_node_has_error(arguments))
+      return fail(arguments,
+                  "A request's arguments are its success response type, then "
+                  "roles written role = Type, but " + text(arguments) +
+                      " isn't that.");
+    for (uint32_t i = 0; i < count; ++i)
+    {
+      const TSNode argument = ts_node_named_child(arguments, i);
+      if (isTypeName(argument))
+      {
+        if (i > 0)
+          return fail(argument,
+                      "A request has one success response, named first; " +
+                          text(argument) +
+                          " needs a role (progress = or failure =).");
+        value.success = normaliseType(text(argument));
+        continue;
+      }
+      const TSNode left = field(argument, "left");
+      const TSNode right = field(argument, "right");
+      if (type(argument) != "assignment_expression" ||
+          type(left) != "identifier" || !isTypeName(right) ||
+          text(field(argument, "operator")) != "=")
+        return fail(argument,
+                    "A request's arguments are its success response type, "
+                    "then roles written role = Type, but " +
+                        text(argument) + " is neither.");
+      const std::string role = text(left);
+      if (role == "success")
+        return fail(argument,
+                    "A request's success response is written bare, first: (" +
+                        text(right) + ", ...), not " + text(argument) + ".");
+      if (i == 0)
+        return fail(argument,
+                    "A request names its success response first, before " +
+                        text(argument) + ".");
+      std::string* slot = role == "progress"  ? &value.progress
+                          : role == "failure" ? &value.failure
+                                              : nullptr;
+      if (!slot)
+      {
+        std::string message = "A request has no role " + role +
+                              "; its roles are progress and failure.";
+        // "fail" is the server's word for the failure role.
+        for (const std::string_view known : {"progress", "failure"})
+          if (editDistance(role, known) <= 2 ||
+              (role.size() >= 4 && known.starts_with(role)))
+            message += " Use " + std::string(known) +
+                       " if that's what you meant.";
+        return fail(left, message);
+      }
+      if (!slot->empty())
+        return fail(argument,
+                    "The request names its " + role +
+                        " response twice. Name each role once.");
+      *slot = normaliseType(text(right));
+    }
+    return true;
   }
 
   static TSNode argumentList(TSNode attribute)
@@ -581,35 +677,8 @@ private:
                             : text(argument);
       return true;
     }
-    case AttributeArgs::Types:
-    {
-      for (uint32_t i = 0; i < count; ++i)
-      {
-        const TSNode listed = ts_node_named_child(arguments, i);
-        const std::string kind = type(listed);
-        if (kind != "identifier" && kind != "qualified_identifier" &&
-            kind != "type_identifier")
-        {
-          report(RuleId::AttributeArguments,
-                 listed,
-                 "The attribute " + written +
-                     " lists type names, but this isn't one. Write " +
-                     std::string(info.arguments) + ".");
-          return false;
-        }
-        value.types.push_back(normaliseType(text(listed)));
-      }
-      if (value.types.empty())
-      {
-        report(RuleId::AttributeArguments,
-               attribute,
-               "The attribute " + written +
-                   " needs at least one response type. Write " +
-                   std::string(info.arguments) + ".");
-        return false;
-      }
-      return true;
-    }
+    case AttributeArgs::Roles:
+      return readRoles(info, attribute, arguments, value);
     case AttributeArgs::String:
     {
       const std::string literal =
@@ -816,7 +885,9 @@ private:
     event.scopes = m_scopes;
     event.kind = marks.event;
     event.classKey = type(node) == "class_specifier" ? "class" : "struct";
-    event.responses = marks.responses;
+    event.success = marks.success;
+    event.progress = marks.progress;
+    event.failure = marks.failure;
     event.bases = basesOf(node);
     event.header = m_path;
     event.nameRange = rangeOf(name);

@@ -51,8 +51,10 @@ struct RequestTicket
  * only its own. Both lists are doubly linked and counted: a requester's
  * ticket about an entity is found through the shorter, so a requester asking
  * about one entity, or an entity asked about by one requester, costs the
- * same however many others there are. Nothing allocates once the blocks and
- * pages are made.
+ * same however many others there are. An entity's open tickets come before
+ * its closed ones (a ticket goes to the back as its final response is taken
+ * in, to the front as it's asked again), so answering by entity walks only
+ * the open ones. Nothing allocates once the blocks and pages are made.
  */
 class RequestTickets
 {
@@ -75,6 +77,18 @@ public:
     const RequestTicket* found = find(ticket);
     return found &&
            found->word.load(std::memory_order_relaxed) == liveWord(generation);
+  }
+
+  /**
+   * Whether the request of `generation` had its final response: it's
+   * closed, and takes no more. Owning thread only.
+   * @param ticket the ticket, current (current())
+   * @param generation the request's generation
+   * @return whether it's closed
+   */
+  inline bool closed(uint32_t ticket, uint32_t generation) const
+  {
+    return find(ticket)->responded == generation;
   }
 
   /**
@@ -146,6 +160,39 @@ public:
   void entityRemoved(uint32_t entity);
 
   /**
+   * Calls `fn(ticket, generation)` for each current request about an entity
+   * that has no final response yet, every requester's: what a server
+   * answering by entity reaches. Walks only the entity's open tickets, which
+   * come first; `fn` may close the one it's given (responded()). Owning
+   * thread only.
+   * @param entity the entity id
+   * @param fn what to call
+   */
+  template <typename TFunction>
+  void forEachOpen(uint32_t entity, TFunction&& fn)
+  {
+    const Head* head = m_entityHeads.find(entity);
+    for (uint32_t next = head ? head->first : 0; next != 0;)
+    {
+      const uint32_t ticket = next - 1;
+      const RequestTicket& held = *find(ticket);
+      const uint32_t word = held.word.load(std::memory_order_relaxed);
+      if (!isOpen(held, word))
+        return;
+      next = held.entityNext;
+      fn(ticket, word >> 1);
+    }
+  }
+
+  /**
+   * Whether any requester's current request about an entity has no final
+   * response yet. Owning thread only.
+   * @param entity the entity id
+   * @return whether one is open
+   */
+  bool open(uint32_t entity) const;
+
+  /**
    * The memory it holds, in bytes: its blocks, pages and lists.
    * @return the bytes
    */
@@ -168,12 +215,21 @@ private:
     return m_blocks[ticket >> kBlockBits][ticket & (kBlockSize - 1)];
   }
 
-  // A list's first ticket (+1) and its length.
+  // A list's first and last tickets (+1) and its length (an entity's last
+  // is kept; a requester's isn't needed).
   struct Head
   {
     uint32_t first = 0;
+    uint32_t last = 0;
     uint32_t count = 0;
   };
+
+  // Whether a linked ticket, its word read, is open: current with no final
+  // response taken in.
+  static inline bool isOpen(const RequestTicket& held, uint32_t word)
+  {
+    return (word & 1u) && held.responded != (word >> 1);
+  }
 
   // A requester's ticket about an entity, +1; 0 for none.
   uint32_t lookup(uint32_t requester, uint32_t entity) const;
@@ -182,6 +238,9 @@ private:
   // Takes a ticket out of its requester's list, or its entity's.
   void unlinkRequester(uint32_t ticket);
   void unlinkEntity(uint32_t ticket);
+  // Puts an unlinked ticket first, or last, in its entity's list.
+  void linkEntityFirst(uint32_t ticket, Head& head);
+  void linkEntityLast(uint32_t ticket, Head& head);
   // Puts an unlinked ticket on the free list, its word cleared.
   void free(uint32_t ticket);
 

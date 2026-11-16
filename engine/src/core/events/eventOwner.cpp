@@ -20,28 +20,56 @@ EventOwner::~EventOwner()
     }
 }
 
-void EventOwner::add(const std::shared_ptr<EventQueueLink>& link, uint32_t slot)
+namespace
 {
-  consumers.push_back({link, slot});
+
+// The generation of the slot a link and slot name, or 0 once its queue is
+// gone.
+uint32_t generationOf(const EventQueueLink* link, uint32_t slot)
+{
+  const EventQueueBase* queue = link ? link->queue : nullptr;
+  return queue ? queue->consumer(slot).generation : 0u;
 }
 
-void EventOwner::forget(const EventQueueLink* link, uint32_t slot)
+// Whether the consumer a link, slot and generation name is still the slot's.
+bool current(const EventQueueLink* link, uint32_t slot, uint32_t generation)
 {
-  std::erase_if(consumers,
-                [&](const ConsumerRef& ref)
-                { return ref.link.get() == link && ref.slot == slot; });
-  if (dispatching)
-  {
-    // The handler running may be one of these: they're dropped after.
-    for (EventHandler& handler : handlers)
-      if (handler.link.get() == link && handler.slot == slot)
-        handler.link.reset();
-    forgotDuringDispatch = true;
+  const EventQueueBase* queue = link ? link->queue : nullptr;
+  if (!queue)
+    return false;
+  const ConsumerSlot& self = queue->consumer(slot);
+  return self.live && self.generation == generation;
+}
+
+// Clears the owner's consumers that went, and their handlers, once they're
+// half of its consumers: each consumer going costs the same, however many.
+void clearGone(EventOwner& owner)
+{
+  if (owner.forgotten == 0u || 2u * owner.forgotten < owner.consumers.size())
     return;
-  }
-  std::erase_if(handlers,
-                [&](const EventHandler& handler)
-                { return handler.link.get() == link && handler.slot == slot; });
+  owner.forgotten = 0;
+  std::erase_if(owner.consumers,
+                [](const ConsumerRef& ref)
+                { return !current(ref.link.get(), ref.slot, ref.generation); });
+  std::erase_if(owner.handlers,
+                [](const EventHandler& handler) {
+                  return !current(
+                      handler.link.get(), handler.slot, handler.generation);
+                });
+}
+
+} // namespace
+
+void EventOwner::add(const std::shared_ptr<EventQueueLink>& link, uint32_t slot)
+{
+  consumers.push_back({link, slot, generationOf(link.get(), slot)});
+}
+
+void EventOwner::forget()
+{
+  ++forgotten;
+  if (!dispatching)
+    clearGone(*this);
 }
 
 void EventOwner::addHandler(EventHandler handler)
@@ -57,6 +85,7 @@ void EventOwner::addHandler(EventHandler handler)
     }
     return;
   }
+  handler.generation = generationOf(handler.link.get(), handler.slot);
   handlers.push_back(std::move(handler));
 }
 
@@ -85,6 +114,8 @@ void EventOwner::dispatch()
     if (!queue)
       continue;
     const ConsumerSlot& self = queue->consumer(handler.slot);
+    if (!self.live || self.generation != handler.generation)
+      continue;
     // Nothing new, nor in this update's span already fixed: not run.
     const bool spanFixed = self.spanStamp == stamp && updating;
     if (!queue->hasNew(handler.slot) &&
@@ -93,20 +124,15 @@ void EventOwner::dispatch()
     handler.run(*queue, handler.slot);
   }
   dispatching = false;
-  if (forgotDuringDispatch) [[unlikely]]
-  {
-    forgotDuringDispatch = false;
-    std::erase_if(
-        handlers, [](const EventHandler& handler) { return !handler.link; });
-  }
+  clearGone(*this);
 }
 
 bool EventOwner::hasUnconsumed() const
 {
   for (const ConsumerRef& ref : consumers)
   {
-    const EventQueueBase* queue = ref.link ? ref.link->queue : nullptr;
-    if (queue && queue->hasNew(ref.slot))
+    if (current(ref.link.get(), ref.slot, ref.generation) &&
+        ref.link->queue->hasNew(ref.slot))
       return true;
   }
   return false;

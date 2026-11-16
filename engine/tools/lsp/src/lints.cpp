@@ -85,12 +85,17 @@ constexpr std::array<std::string_view, 6> kContainerAdds = {"push_back",
 
 // An event consumer's and requester's handler setters: what they're given
 // runs later, before the owner's update.
-constexpr std::array<std::string_view, 6> kHandlerSetters = {"onEvent",
-                                                             "onEvents",
-                                                             "onLatest",
-                                                             "onLatestEvents",
-                                                             "onResponse",
-                                                             "onResponses"};
+constexpr std::array<std::string_view, 10> kHandlerSetters = {
+    "onEvent",
+    "onEvents",
+    "onLatest",
+    "onLatestEvents",
+    "onResponse",
+    "onResponses",
+    "onProgress",
+    "onProgresses",
+    "onFailure",
+    "onFailures"};
 
 // Game object methods that run once the object is in a scene.
 constexpr std::array<std::string_view, 11> kObjectLateMethods = {
@@ -601,7 +606,7 @@ struct Linter::Walk : lint::LintFile
       return;
     }
 
-    if (name == "respond" || name == "progress")
+    if (name == "respond" || name == "progress" || name == "fail")
     {
       noteResponseSend(call, source, *path, responseSends);
       return;
@@ -877,7 +882,7 @@ struct Linter::Walk : lint::LintFile
       }
       if (k == Kind::FieldExpression)
       {
-        // A builder chain: requester<R>().onResponse<A>(f).ignore<B>().
+        // A builder chain: requester<R>().onResponse(f).ignoreFailure().
         const TSNode outer = lint::parent(holder);
         if (!same(field(holder, "argument"), at) ||
             kind(outer) != Kind::CallExpression ||

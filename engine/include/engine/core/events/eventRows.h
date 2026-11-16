@@ -313,12 +313,12 @@ using LatestEventRange =
 
 /**
  * The responses of type A to requests of type R that one requester's
- * handlers get (onResponse<A>(), onResponses<A>()): rows `[key, response]`,
- * only those to its own current requests, oldest first. Each response is
- * routed to its requester as it's kept, so a requester goes through its own
- * alone, however many others there are. Like an EventRange, it keeps its
- * queue's events where they are while it lives: use it in the handler that
- * gets it.
+ * handlers get (onResponses(), onProgresses(), onFailures()): rows
+ * `[key, response]`, only those to its own current requests, oldest first.
+ * Each response is routed to its requester as it's kept, so a requester goes
+ * through its own alone, however many others there are. Like an EventRange, it
+ * keeps its queue's events where they are while it lives: use it in the handler
+ * that gets it.
  */
 template <typename TRequest, typename TResponse>
 class ResponseRange

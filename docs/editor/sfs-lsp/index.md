@@ -46,7 +46,7 @@ ignored; everything else is a warning.
 | `attribute-field-type` | sfs-codegen | warning | An attribute should only be on the field types it applies to. Remove it, or change the field's type. |
 | `show-if-target` | sfs-codegen | warning | `[[sfs::showIf]]` should name a reflected `bool` field of its type. Name one of the type's bool fields. |
 | `event-and-component` | sfs-codegen | warning | A type should not be marked both as an event (`[[sfs::event_news]]` and the like) and `[[sfs::component]]`, since an event is what one system tells another and a component is state; it's taken as an event. Remove one of the two marks. |
-| `event-declaration` | sfs-codegen | error | An event type must be declared so the compiler can check it: one event attribute, on a named struct at namespace scope outside inline namespaces; a request listing only `[[sfs::event_response]]` types; news deriving only from news of its own kind, each base once, and requests and responses deriving from nothing; and no name declared twice differently. An attribute on an enum can't be read, so it isn't checked. |
+| `event-declaration` | sfs-codegen | error | An event type must be declared so the compiler can check it: one event attribute, on a named struct at namespace scope outside inline namespaces; a request naming its success response first, then any `progress =` and `failure =` ones, each an `[[sfs::event_response]]` type in one role; news deriving only from news of its own kind, each base once, and requests and responses deriving from nothing; and no name declared twice differently. An attribute on an enum can't be read, so it isn't checked. |
 | `single-any` | sfs-lsp | warning | An `sfs::Any` group of one component is just that component. Write the component instead. |
 | `any-always-met` | sfs-lsp | warning | An `sfs::Any` group that shares a component with the required ones is always met. Remove the group. |
 | `duplicate-term` | sfs-lsp | warning | A term list should not name a component twice in one role. Remove the repeat. |
@@ -156,7 +156,7 @@ redundant; `is-alive` and `component-pointer` strike out the old form.
 These check how you declare and use [events](../../core/events/index.md).
 None has a fix. Mistakes the compiler already catches aren't linted: sending,
 reading or asking for a type that has no event attribute is a compile error,
-and so is responding with a type the request doesn't list.
+and so is responding with a type the request doesn't name in that role.
 
 - `event-declaration` (an error): an event type the engine can't be told the
   kind of. Give each event one attribute, on a named struct at namespace
@@ -166,21 +166,27 @@ and so is responding with a type the request doesn't list.
   // Wrong: two kinds at once. Keep the one that says what it is.
   struct [[sfs::event_news, sfs::event_response]] EnemyDiedEvent {};
 
-  // Wrong: PathRequest lists a type that isn't a response.
+  // Wrong: PathRequest names a type that isn't a response.
   struct PathPoint { glm::vec3 position; };
   struct [[sfs::event_request(PathPoint)]] PathRequest { glm::vec3 goal; };
+
+  // Wrong: the success response comes first, then the named roles.
+  struct [[sfs::event_request(failure = PathFailedResponse,
+                              PathFoundResponse)]] RouteRequest {};
   ```
 
-  It also catches an event nested in a class or a function, a template or
-  unnamed event, an event in an inline namespace, news deriving from news of
-  another kind, from one base twice or from itself, a request or response
-  that derives from an event (or that an event derives from), and one name
-  declared twice in two different ways. An event attribute on a field is
-  caught on components and script types (the types the editor reads fields
-  of). An attribute on an enum isn't checked, so make sure every event is a
-  struct.
-  Your editor shows the problems within one header as you type; the build
-  checks all of a module's headers together.
+  A request names its success response first, then, if it has them, its
+  `progress =` and `failure =` responses, in either order, each a different
+  type. It also catches a role misspelt or given twice, an event nested in a
+  class or a function, a template or unnamed event, an event in an inline
+  namespace, news deriving from news of another kind, from one base twice or
+  from itself, a request or response that derives from an event (or that an
+  event derives from), and one name declared twice in two different ways. An
+  event attribute on a field is caught on components and script types (the
+  types the editor reads fields of). An attribute on an enum isn't checked,
+  so make sure every event is a struct. Your editor shows the problems within
+  one header as you type; the build checks all of a module's headers
+  together.
 - `event-handle-outside-create`: a consumer or requester made where it can't
   work. A system makes its handles once, in `create()` (or a helper that
   `create()` calls), with its own `consumer<E>()` and `requester<R>()`, and
@@ -237,6 +243,13 @@ and so is responding with a type the request doesn't list.
   // In NavigationSystem and in FlightSystem: two senders of one type.
   responder.respond(PathFoundResponse{path});
   ```
+
+  Every way of responding counts: a responder's `respond()`, `progress()`
+  and `fail()`, and a request consumer's by entity
+  (`m_paths.fail(entity, PathFailedResponse{})`), with the type named
+  (`respond<PathFoundResponse>(entity, {})`) too. A failure type shared by
+  two requests is fine when one system serves both; two servers each give
+  theirs a type of its own, so a watcher of the type knows who answered.
 
   Give each system's responses a type of its own (`PathFoundResponse` and
   `FlightPathFoundResponse`). Responses a job or a free function sends count

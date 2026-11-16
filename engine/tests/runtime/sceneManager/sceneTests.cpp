@@ -184,7 +184,7 @@ public:
 protected:
   void create() override
   {
-    m_asks = requester<AskRequest>().onResponse<ToldResponse>(
+    m_asks = requester<AskRequest>().onResponse(
         [this](const Entity&, const ToldResponse& told)
         { m_told.push_back(told.value); });
   }

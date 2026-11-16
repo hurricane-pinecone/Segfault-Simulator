@@ -161,7 +161,9 @@ constexpr std::array<RuleInfo, static_cast<std::size_t>(Count)> kRules = {{
      false,
      "An event type must be declared so the compiler can check it: one "
      "event attribute, on a named struct at namespace scope outside inline "
-     "namespaces; a request listing only `[[sfs::event_response]]` types; "
+     "namespaces; a request naming its success response first, then any "
+     "`progress =` and `failure =` ones, each an `[[sfs::event_response]]` "
+     "type in one role; "
      "news deriving only from news of its own kind, each base once, and "
      "requests and responses deriving from nothing; and no name declared "
      "twice differently. An attribute on an enum can't be read, so it isn't "

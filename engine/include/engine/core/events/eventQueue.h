@@ -184,6 +184,11 @@ struct ConsumerSlot
   /** The owner's update stamp the span is for. */
   uint32_t spanStamp = 0;
   /**
+   * Goes up each time the slot is given to a consumer, so an owner's
+   * reference to a consumer gone since is told apart from the slot's next.
+   */
+  uint32_t generation = 0;
+  /**
    * Its owner (a system, an object); null for a consumer made with none,
    * whose every read is a span of its own.
    */
@@ -686,7 +691,9 @@ public:
     requires ResponseQueueType<T>
   {
     RequestTickets& requests = *m_channel->tickets;
-    if (!requests.current(ticket, generation))
+    // Superseded, or closed by its final response: the first final wins.
+    if (!requests.current(ticket, generation) ||
+        requests.closed(ticket, generation))
     {
       ++m_dropped;
       if (m_log) [[unlikely]]
@@ -1197,7 +1204,7 @@ private:
         const uint32_t stamp = spare.stamps[i] & ~kLastResponse;
         const Entity& key = spare.keys[i];
         const uint32_t ticket = spare.tickets[i];
-        if (!requests.current(ticket, stamp))
+        if (!requests.current(ticket, stamp) || requests.closed(ticket, stamp))
         {
           ++m_dropped;
           if (m_log)

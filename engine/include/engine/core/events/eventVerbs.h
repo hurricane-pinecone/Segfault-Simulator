@@ -144,10 +144,11 @@ protected:
 
   /**
    * A requester of TRequest owned by this system, made in create() and kept
-   * as a member: its builder, which handles (onResponse<A>(), onResponses<A>())
-   * or ignores (ignore<A>()) each of the request's responses and is assigned
-   * to an EventRequester<R>. Its response handlers run before update(). Made
-   * elsewhere it is logged and a requester of nothing is built.
+   * as a member: its builder, which handles the request's responses by role
+   * (onResponse(), onProgress(), onFailure() and their batch forms, or
+   * ignoreFailure()) and is assigned to an EventRequester<R>. Its response
+   * handlers run before update(). Made elsewhere it is logged and a
+   * requester of nothing is built.
    * @return the requester's builder
    */
   template <typename TRequest>

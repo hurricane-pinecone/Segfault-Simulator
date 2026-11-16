@@ -55,13 +55,16 @@ std::string_view memberTypeOf(TSNode at,
   return {};
 }
 
-// The type a respond() or progress() call's one argument has, or empty.
+// The type the response a respond(), progress() or fail() call sends has:
+// its one argument's (a responder's), or its second (a request consumer's,
+// by entity); empty when it can't be read.
 std::string_view responseTypeOf(TSNode call, std::string_view source)
 {
   const TSNode arguments = codegen::childField(call, "arguments");
-  if (lint::namedCount(arguments) != 1)
+  const uint32_t count = lint::namedCount(arguments);
+  if (count != 1 && count != 2)
     return {};
-  TSNode value = lint::namedChild(arguments, 0);
+  TSNode value = lint::namedChild(arguments, count - 1);
   if (isType(value, "call_expression"))
   {
     const std::string_view callee =
@@ -89,10 +92,14 @@ void responseTypesOf(const std::vector<codegen::EventModel>& events,
     if (event.kind == codegen::EventKind::Response)
       types.push_back({path, event.qualifiedName, true});
     else if (event.kind == codegen::EventKind::Request)
-      for (const std::string& listed : event.responses)
-        for (std::string& name :
-             codegen::lookupCandidates(listed, event.scopes))
-          types.push_back({path, std::move(name), false});
+      for (const std::string* listed :
+           {&event.success, &event.progress, &event.failure})
+        if (!listed->empty())
+          for (std::string& name :
+               codegen::lookUpName(
+                   *listed, event.scopes, event.offset, event.usings)
+                   .candidates)
+            types.push_back({path, std::move(name), false});
   }
 }
 
@@ -104,10 +111,17 @@ void noteResponseSend(TSNode call,
   TSNode templateArguments;
   const std::string_view name =
       lint::calleeName(call, source, templateArguments);
-  if ((name != "respond" && name != "progress") ||
+  if ((name != "respond" && name != "progress" && name != "fail") ||
       !isType(codegen::childField(call, "function"), "field_expression"))
     return;
-  const std::string_view spelled = responseTypeOf(call, source);
+  // respond<T>(...) names its type; otherwise it's the argument's.
+  std::string_view spelled;
+  if (!ts_node_is_null(templateArguments) &&
+      ts_node_named_child_count(templateArguments) > 0)
+    spelled =
+        codegen::nodeText(source, ts_node_named_child(templateArguments, 0));
+  if (spelled.empty())
+    spelled = responseTypeOf(call, source);
   if (spelled.empty())
     return;
   ResponseSend send{path,

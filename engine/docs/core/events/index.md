@@ -9,7 +9,8 @@ The code is in `engine/include/engine/core/events/` and
 ## Declarations and the traits header
 
 Event types are declared by attributes (`[[sfs::event_news]]`,
-`[[sfs::event_entity_news]]`, `[[sfs::event_request(A, B)]]`,
+`[[sfs::event_entity_news]]`, `[[sfs::event_request(Success, progress = P,
+failure = F)]]`,
 `[[sfs::event_response]]`). Compilers ignore them (`-Wno-attributes=sfs::`);
 sfs-codegen reads them (`parser.cpp`: `typeMarks()`, `parseEvent()`, the base
 clause through `basesOf()`) and writes a header of
@@ -25,7 +26,6 @@ template <>
 struct EventTraits<::FireDamageEvent>
 {
   static constexpr EventKind kind = EventKind::News;
-  using Responses = TypeList<>;
   using Ancestors = TypeList<::DamageEvent>;
 };
 }
@@ -34,9 +34,14 @@ struct EventTraits<::FireDamageEvent>
 - The primary template (`eventTraits.h`) says "not an event". The header
   forward-declares each type in its namespaces (an unnamed namespace too, so
   a test's anonymous types work) and names types from the global scope.
-- `Responses` is a request's list, resolved to the qualified names of the
-  scanned types; a name not among them is written as given, qualified by the
-  request's namespaces, for the compiler to resolve (an engine type).
+- A request's roles, from `[[sfs::event_request(Success, progress = P,
+  failure = F)]]`: `Success`, `Progress` and `Failure` (void when not
+  declared), which every check reads; other kinds have none, and
+  `detail::RoleType` is void for them. Each is resolved to the qualified
+  name of a scanned type; a name not among them is written as given,
+  qualified by the request's namespaces, for the compiler to resolve (an
+  engine type). Codegen rejects a missing success, an unknown or repeated
+  role, and one type in two roles.
 - `Ancestors` is every event-marked base, transitively, nearest first,
   resolved within the scanned files.
 - Codegen's `event-declaration` errors: two event attributes on a type, one
@@ -169,7 +174,10 @@ Rows of requests and responses carry their ticket beside the key and stamp.
 - An entity's tickets are a doubly linked, counted list from its id (a page
   of heads per 1,024 ids asked about), so the flush walks only the
   destroyed entity's: a page lookup and its tickets, whatever the number of
-  requesters.
+  requesters. Its open tickets come first: one goes to the back as its
+  final response is taken in (`responded()`), and to the front as it's
+  asked again, so `open()` looks at the first and an answer by entity stops
+  at the first closed one.
 - A requester's tickets are a doubly linked, counted list from its number,
   so its going frees only its own: their words change, so their rows stop
   being current and their responders report `superseded()`. Unlinking from
@@ -221,10 +229,36 @@ Rows of requests and responses carry their ticket beside the key and stamp.
   response inbox under its lock, with the last response's bit in the stamp
   and the ticket. It's superseded once the channel's owner is 0 (the events
   are gone) or its ticket no longer holds its generation.
-- The requester builder (`EventRequesterBuilder<R, Handled...>`) carries the
-  handled types in its type. Each step checks the type is listed and not
-  handled yet; the conversion to `EventRequester<R>` checks every listed type
-  is handled (`ResponseHasNoHandler<R, A>`).
+- The requester builder (`EventRequesterBuilder<R, kSuccess, kProgress,
+  kFailure>`) carries the roles handled so far in its type. Each step
+  (`onResponse`/`onProgress`/`onFailure`, their batch forms,
+  `ignoreFailure()`) checks the role is declared and not handled yet
+  (`NoProgressToHandle<R>`, `NoFailureToHandle<R>`, `RoleHandledTwice<R>`)
+  and keeps its handler by role; the conversion to `EventRequester<R>`
+  checks the success is handled and a declared failure handled or ignored
+  (`SuccessNotHandled<R>`, `FailureNotHandled<R>`), then gives the owner the
+  handlers in role order (progress, success, failure), so a request's
+  progress runs before its final in an update. A
+  role not handled opens no route, so its responses aren't noted for that
+  requester.
+- Server sends are checked per role (`checkRoleSent()`): `respond()` the
+  success, `progress()` the progress, `fail()` the failure
+  (`NotTheSuccessResponse<R, T>` and the like). A success or failure is
+  final: it marks the ticket responded (closed), and the response queue
+  refuses anything more for a closed request, so the first final wins.
+- Answering by entity: a request type's consumer's `respond(entity, s)`,
+  `progress(entity, p)`, `fail(entity, f)` and `open(entity)` walk the
+  entity's open tickets (`RequestTickets::forEachOpen()`) and respond to
+  each as a Responder would on the owning thread, with a copy of the
+  response each (a move-only response type is a compile error). Nothing but
+  the ticket is kept: the request's payload went with its row. Owning
+  thread only: off it they log once per type, pointing a job at its
+  Responder, and do nothing.
+- A worker's final is taken in at the next step, so until then the request
+  is open: `waiting()` and `open()` are true, and a final sent on the owning
+  thread first wins (the worker's is dropped as it's taken in). A request
+  answered by entity before its row is read isn't superseded, but its
+  responder's sends are refused.
 
 ## Owners and handlers
 
@@ -246,12 +280,19 @@ handlers (`std::function<void(EventQueueBase&, uint32_t)>`, made once in
 - A handle is `{link, slot, owner}`: the queue's link (a `shared_ptr` the
   queue clears as it goes, so a handle outliving its events reads nothing)
   and its slot. Moving it is a copy of the three; destroying it frees the
-  slot and forgets its handlers, through the owner the slot names. An owner
-  going clears its slots' owner, so a handle moved into longer-lived storage
-  goes safely.
-- `dispatch()` runs handlers by index; a consumer destroyed by a handler only
-  clears its handlers' links until the loop ends, and a handler given during
-  dispatch is refused (it would move the running one).
+  slot and tells the owner the slot names (`forget()`). An owner going
+  clears its slots' owner, so a handle moved into longer-lived storage goes
+  safely.
+- Each slot has a generation, raised as it's given out, which the owner
+  keeps with each consumer and handler. One whose slot was freed or given to
+  another consumer since is skipped, and the owner clears them out once
+  they're half its consumers (after `dispatch()`, if it's running), so a
+  system letting go of thousands of requesters costs each the same. A gone
+  consumer's handler, and what its lambda holds, is destroyed at that clear
+  rather than at once: finding it sooner would cost a walk of the owner's
+  handlers per consumer. It never runs.
+- `dispatch()` runs handlers by index, and a handler given during dispatch
+  is refused (it would move the running one).
 - An object's handles get their owner through `Events::m_settingUp`, which
   `Scene::create()` sets around `onCreate`.
 
@@ -273,7 +314,7 @@ the next take-in. The tests run under ThreadSanitizer.
 | A queue | the buffer (and key and stamp arrays for a keyed type), the three numbers, the consumer slots, the inbox pointer, counters, the ancestor pointers | its buffer grows to the most it keeps; a slot per consumer (reused) |
 | `EventConsumer<E>` | the queue's link, its owner, its slot: 32 bytes | never |
 | `EventRequester<R>` | the events, its owner, its owner's type, the request type's channel and its number there, its response consumers | a consumer per response type handled, in `create()` |
-| A request type's tickets | 32 bytes per outstanding request in blocks of 256, a fixed 32 KB directory, a page of entity heads (8 bytes an id) per 1,024 ids asked about, 8 bytes per requester (its list's head), 4 per freed number, and a route (about 56 bytes and its ids) per response type it handles | a block per 256 tickets at once, a page per 1,024 ids |
+| A request type's tickets | 32 bytes per outstanding request in blocks of 256, a fixed 32 KB directory, a page of entity heads (12 bytes an id) per 1,024 ids asked about, 12 bytes per requester (its list's head), 4 per freed number, and a route (about 56 bytes and its ids) per response type it handles | a block per 256 tickets at once, a page per 1,024 ids |
 | `Responder<R>` | the request type's channel (aliasing `shared_ptr`), the key, the generation, the ticket | never |
 | A keyed channel | a word per entity id in pages of 1,024 under an 8 KB directory; a request type's response inboxes | a page per 1,024 ids sent to |
 | An owner | its stamp and flags, its consumers, its handlers | in `create()` |
@@ -299,11 +340,12 @@ gates only when `SFS_BENCH_GATES` is set in an optimised build.
 | memory, 1,000 requesters asking about 20 entities each | ≤ 64 bytes per outstanding request |
 | the flush of 10,000 destroyed entities with 1,000 requesters | ≤ 1.3x the flush with none + 20 ns an entity |
 | a request, `waiting()` and a cancel with 10,000 requesters on one entity | ≤ 2x with 10 + 5 ns |
-| a requester going, of 10,000 | ≤ 2x of 1,000 + 20 ns |
+| a requester going, of 10,000, each with a handler | ≤ 2x of 1,000 + 20 ns (its owner clears consumers that went in batches) |
 | a requester handling a response, 4,000 requesters | ≤ 2x with 100 + 20 ns |
 | `onEvent` / `onEvents` handler | ≤ a read loop + 1.5 ns / + 0.5 ns an event |
 | `readLatest` | ≤ 4 ns an event |
-| reading a requester's requests and responding to each | ≤ 21 ns an event (about 16 measured, above the design's 6 ns for reading with responders: each response is four appends, a ticket check, the responded field and the route) |
+| reading a requester's requests and responding to each | ≤ 24 ns an event (about 19 measured, above the design's 6 ns for reading with responders: each response is four appends, a ticket check, the responded field and the route) |
+| answering 10,000 open requests later by entity, one each | ≤ 21 ns a response (about 17 measured, the asker hearing its responses each round: the key's stale check and its open tickets, then a response as a Responder's) |
 | a requester's `onResponse` | ≤ 4 ns a response |
 | a worker's response | ≤ 60 ns |
 | a send with one consumed event base | ≤ 2.5x the same send with no consumer of the base (two appends and a check) |

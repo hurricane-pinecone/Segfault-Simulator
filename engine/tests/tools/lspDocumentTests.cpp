@@ -11,8 +11,9 @@ using namespace sfs::lsp;
 namespace
 {
 
-// The text of a large engine source, for the random edit test.
-std::string engineSource()
+// A frozen copy of a large engine source, so the random edit test's input
+// never changes with the engine.
+std::string frozenSource()
 {
   std::ifstream in(SFS_LSP_TEST_SOURCE, std::ios::binary);
   std::ostringstream contents;
@@ -111,7 +112,7 @@ int main()
   TEST("random edits should leave the incrementally reparsed tree equal to a "
        "fresh parse")
   {
-    const std::string source = engineSource();
+    const std::string source = frozenSource();
     CHECK(!source.empty());
     auto doc = lspTest::document(source);
     std::mt19937 random(7);

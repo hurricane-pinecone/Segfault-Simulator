@@ -162,14 +162,16 @@ constexpr std::array<AttributeInfo, 16> kAttributes = {{
     {EventRequest,
      "event_request",
      T,
-     AttributeArgs::Types,
+     AttributeArgs::Roles,
      {},
-     "(Response, ...)",
-     "(${1:Response})",
+     "(Success, progress = Progress, failure = Failure)",
+     "(${1:Success})",
      "Mark the type as a request about one entity, asked with a requester "
-     "and answered through a `Responder` with one of the response types "
-     "listed.",
-     "struct [[sfs::event_request(PathFoundResponse, PathFailedResponse)]]\n"
+     "and answered (through a `Responder`, or later by entity) with its "
+     "success response, and with progress and failure responses where it "
+     "names them (each type `[[sfs::event_response]]`, in one role).",
+     "struct [[sfs::event_request(PathFoundResponse,\n"
+     "                            failure = PathFailedResponse)]]\n"
      "PathRequest { glm::vec3 goal; };"},
     {EventResponse,
      "event_response",
@@ -178,9 +180,10 @@ constexpr std::array<AttributeInfo, 16> kAttributes = {{
      {},
      "",
      "",
-     "Mark the type as a response, which a request lists and a `Responder` "
-     "sends (`respond()`, `progress()`); others may watch it with a "
-     "consumer, keyed by the request's entity.",
+     "Mark the type as a response, which plays a role in a request "
+     "(success, progress or failure) and is sent with `respond()`, "
+     "`progress()` or `fail()`; others may watch it with a consumer, keyed "
+     "by the request's entity.",
      "struct [[sfs::event_response]] PathFoundResponse\n"
      "{\n  std::vector<glm::vec3> points;\n};"},
 }};

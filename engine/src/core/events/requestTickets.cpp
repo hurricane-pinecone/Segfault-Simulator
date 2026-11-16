@@ -51,7 +51,16 @@ bool RequestTickets::ask(uint32_t requester,
   {
     ticket = found - 1;
     RequestTicket& held = at(ticket);
-    superseded += held.word.load(std::memory_order_relaxed) & 1u;
+    const uint32_t word = held.word.load(std::memory_order_relaxed);
+    superseded += word & 1u;
+    // Open again: back among the entity's open tickets (unless it's first).
+    if (!isOpen(held, word) && held.entityPrev != 0)
+      if (Head* head = m_entityHeads.find(entity))
+      {
+        unlinkEntity(ticket);
+        ++head->count;
+        linkEntityFirst(ticket, *head);
+      }
     held.responded = 0;
     held.word.store(liveWord(generation), std::memory_order_relaxed);
     return true;
@@ -70,11 +79,7 @@ bool RequestTickets::ask(uint32_t requester,
   made.requester = requester;
   made.entity = entity;
   made.responded = 0;
-  made.entityPrev = 0;
-  made.entityNext = entityHead->first;
-  if (entityHead->first != 0)
-    at(entityHead->first - 1).entityPrev = ticket + 1;
-  entityHead->first = ticket + 1;
+  linkEntityFirst(ticket, *entityHead);
   ++entityHead->count;
   Head& requesterHead = m_requesterHeads[requester - 1];
   made.requesterPrev = 0;
@@ -111,8 +116,19 @@ bool RequestTickets::waiting(uint32_t requester, uint32_t entity) const
 
 void RequestTickets::responded(uint32_t ticket, uint32_t generation)
 {
-  if (current(ticket, generation))
-    at(ticket).responded = generation;
+  if (!current(ticket, generation) || closed(ticket, generation))
+    return;
+  RequestTicket& held = at(ticket);
+  held.responded = generation;
+  // Closed: behind the entity's open tickets (unless it's last).
+  if (held.entityNext == 0)
+    return;
+  if (Head* head = m_entityHeads.find(held.entity))
+  {
+    unlinkEntity(ticket);
+    ++head->count;
+    linkEntityLast(ticket, *head);
+  }
 }
 
 void RequestTickets::entityRemoved(uint32_t entity)
@@ -131,6 +147,15 @@ void RequestTickets::entityRemoved(uint32_t entity)
     unlinkRequester(ticket);
     free(ticket);
   }
+}
+
+bool RequestTickets::open(uint32_t entity) const
+{
+  const Head* head = m_entityHeads.find(entity);
+  if (!head || head->first == 0)
+    return false;
+  const RequestTicket& first = *find(head->first - 1);
+  return isOpen(first, first.word.load(std::memory_order_relaxed));
 }
 
 std::size_t RequestTickets::bytes() const
@@ -213,9 +238,35 @@ void RequestTickets::unlinkEntity(uint32_t ticket)
     head->first = held.entityNext;
   if (held.entityNext != 0)
     at(held.entityNext - 1).entityPrev = held.entityPrev;
+  else if (head)
+    head->last = held.entityPrev;
   if (head)
     --head->count;
   held.entityPrev = held.entityNext = 0;
+}
+
+void RequestTickets::linkEntityFirst(uint32_t ticket, Head& head)
+{
+  RequestTicket& held = at(ticket);
+  held.entityPrev = 0;
+  held.entityNext = head.first;
+  if (head.first != 0)
+    at(head.first - 1).entityPrev = ticket + 1;
+  else
+    head.last = ticket + 1;
+  head.first = ticket + 1;
+}
+
+void RequestTickets::linkEntityLast(uint32_t ticket, Head& head)
+{
+  RequestTicket& held = at(ticket);
+  held.entityNext = 0;
+  held.entityPrev = head.last;
+  if (head.last != 0)
+    at(head.last - 1).entityNext = ticket + 1;
+  else
+    head.first = ticket + 1;
+  head.last = ticket + 1;
 }
 
 void RequestTickets::free(uint32_t ticket)

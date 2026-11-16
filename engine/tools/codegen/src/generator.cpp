@@ -1,6 +1,7 @@
 #include "sfs/codegen/generator.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <functional>
 #include <map>
@@ -615,7 +616,8 @@ std::string generateEventTraits(const std::vector<EventModel>& events,
       continue;
     }
     const EventModel& first = *unique[at->second];
-    if (first.kind != event.kind || first.responses != event.responses ||
+    if (first.kind != event.kind || first.success != event.success ||
+        first.progress != event.progress || first.failure != event.failure ||
         first.bases != event.bases)
       diagnostics.push_back(
           {RuleId::EventDeclaration,
@@ -699,18 +701,44 @@ std::string generateEventTraits(const std::vector<EventModel>& events,
   out << "\nnamespace sfs::detail\n{\n";
   for (const EventModel* event : unique)
   {
-    std::vector<std::string> responses;
-    for (const std::string& written : event->responses)
+    // A request's responses by role, in the order success, progress,
+    // failure: each a response type, and each type in one role.
+    struct Role
     {
+      const char* name;  // as the attribute writes it
+      const char* trait; // the traits' alias
+      const std::string* written;
+      std::string spelled;
+    };
+    std::array<Role, 3> roles = {
+        {{"success", "Success", &event->success, {}},
+         {"progress", "Progress", &event->progress, {}},
+         {"failure", "Failure", &event->failure, {}}}};
+    for (Role& role : roles)
+    {
+      if (role.written->empty())
+        continue;
+      const std::string& written = *role.written;
       const NameLookup lookup = lookUp(written, *event);
       const EventModel* response = find(lookup);
       if ((response && response->kind != EventKind::Response) ||
           (!response && isPlain(lookup)))
         report(*event,
-               event->name + " lists " + written +
-                   ", which isn't marked [[sfs::event_response]]. A request "
-                   "lists only response types: mark it.");
-      responses.push_back(spelled(written, *event));
+               event->name + " names " + written + " as its " + role.name +
+                   " response, but " + written +
+                   " isn't marked [[sfs::event_response]]. A request's "
+                   "roles name only response types: mark it.");
+      role.spelled = spelled(written, *event);
+      for (const Role& other : roles)
+        if (&other != &role && other.spelled == role.spelled)
+        {
+          report(*event,
+                 event->name + " names " + written + " as its " +
+                     other.name + " and its " + role.name +
+                     " response, but a type plays one role in a request. "
+                     "Give each role a type of its own.");
+          break;
+        }
     }
 
     // Its event ancestors, nearest first, each once.
@@ -826,10 +854,12 @@ std::string generateEventTraits(const std::vector<EventModel>& events,
 
     out << "template <>\nstruct EventTraits<::" << event->qualifiedName
         << ">\n{\n  static constexpr EventKind kind = EventKind::"
-        << kindName(event->kind) << ";\n  using Responses = TypeList<";
-    for (std::size_t i = 0; i < responses.size(); ++i)
-      out << (i ? ", " : "") << responses[i];
-    out << ">;\n  using Ancestors = TypeList<";
+        << kindName(event->kind) << ";\n";
+    if (event->kind == EventKind::Request)
+      for (const Role& role : roles)
+        out << "  using " << role.trait << " = "
+            << (role.spelled.empty() ? "void" : role.spelled) << ";\n";
+    out << "  using Ancestors = TypeList<";
     for (std::size_t i = 0; i < ancestors.size(); ++i)
       out << (i ? ", " : "") << "::" << ancestors[i]->qualifiedName;
     out << ">;\n};\n";

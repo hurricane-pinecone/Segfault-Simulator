@@ -60,13 +60,14 @@ Code that runs once the class is set up, where a handle is reported:
   and trigger callbacks (2D too);
 - both: an `observe` callback, a lambda given to a handler setter
   (`onEvent`, `onEvents`, `onLatest`, `onLatestEvents`, `onResponse`,
-  `onResponses`), the constructor (its initialiser list included), the
+  `onResponses`, `onProgress`, `onProgresses`, `onFailure`, `onFailures`),
+  the constructor (its initialiser list included), the
   destructor, and a default member initialiser.
 
 Any other method counts as set-up (`create()`, `onCreate()` or a helper they
 call), and there the handle must be kept. The value is followed up from the
 call through parentheses, a `?:` branch, braces (`= {...}`), a builder chain
-(`requester<R>().onResponse<A>(f).ignore<B>()`), `std::move()` and a handle
+(`requester<R>().onResponse(f).ignoreFailure()`), `std::move()` and a handle
 type's constructor (`sfs::EventConsumer<E>(...)`). It's kept when it's then:
 - assigned to a data member: `m_x`, `this->x`, a member the file's class
   declares (`lint::memberDeclaration()`), a part of one (`m_x.y`, `m_x[i]`,
@@ -113,16 +114,20 @@ someone else's type and warned about.
 
 ### response-sent-twice
 
-A send is `x.respond(arg)` or `x.progress(arg)` with one argument whose type
-can be read: `R{...}`, `R(...)`, `std::move(v)` or `v` for a local or
-parameter `v` declared with a type (for `auto`, the type its value makes) or
+A send is a responder's `x.respond(arg)`, `x.progress(arg)` or
+`x.fail(arg)`, or a request consumer's by entity, `x.respond(e, arg)` and the
+like (the last argument), whose type can be read: the template argument
+of `x.respond<R>(...)`, else the argument's `R{...}`, `R(...)`,
+`std::move(v)` or `v` for a local or parameter `v` declared with a type (for
+`auto`, the type its value makes) or
 a data member declared in the class body around the call. Spellings are
 normalised as codegen normalises types (`codegen::normaliseType()`).
 
 Response types come from codegen's event models (`responseTypesOf()`): a
 struct marked `[[sfs::event_response]]` declares its qualified name; each
-type an `[[sfs::event_request(...)]]` lists gives every name its spelling may
-mean from the request's namespaces, as listed only.
+type an `[[sfs::event_request(...)]]` names in a role (success, `progress =`,
+`failure =`) gives every name its spelling may mean from the request
+(`lookUpName()`), as listed only.
 
 A send's spelling is resolved from where it's written (`resolveResponse()`),
 through `codegen::lookUpName()`, which codegen also uses for a request's

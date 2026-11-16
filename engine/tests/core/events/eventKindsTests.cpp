@@ -26,6 +26,9 @@ using namespace sfs;
 namespace
 {
 
+// A response handler that does nothing, for requesters that only ask.
+constexpr auto ignored = [](const Entity&, const auto&) {};
+
 struct [[sfs::event_entity_news]] MovedEvent
 {
   int value = 0;
@@ -41,7 +44,8 @@ struct [[sfs::event_response]] RouteDoneResponse
   int outcome = 0;
 };
 
-struct [[sfs::event_request(RouteLegResponse, RouteDoneResponse)]] RouteRequest
+struct [[sfs::event_request(RouteDoneResponse,
+                            progress = RouteLegResponse)]] RouteRequest
 {
   int ask = 0;
 };
@@ -67,7 +71,12 @@ struct [[sfs::event_response]] BusyResponse
 {
   int ask = 0;
 };
-struct [[sfs::event_request(BusyResponse)]] BusyRequest
+struct [[sfs::event_response]] BusyStepResponse
+{
+  int ask = 0;
+};
+struct [[sfs::event_request(BusyResponse,
+                            progress = BusyStepResponse)]] BusyRequest
 {
   int ask = 0;
 };
@@ -127,6 +136,14 @@ struct [[sfs::event_response]] LookFoundResponse
 {
   int value = 0;
 };
+struct [[sfs::event_response]] FarDoneResponse
+{
+  int value = 0;
+};
+struct [[sfs::event_request(FarDoneResponse)]] FarRequest
+{
+  int value = 0;
+};
 struct [[sfs::event_request(LookFoundResponse)]] LookRequest
 {
   int value = 0;
@@ -141,9 +158,30 @@ struct [[sfs::event_response]] ArrivedResponse
 {
   int at = 0;
 };
-struct [[sfs::event_request(StepResponse, ArrivedResponse)]] TravelRequest
+struct [[sfs::event_request(ArrivedResponse,
+                            progress = StepResponse)]] TravelRequest
 {
   int to = 0;
+};
+
+// A request with all three roles.
+struct [[sfs::event_response]] PathFoundResponse
+{
+  int length = 0;
+};
+struct [[sfs::event_response]] PathLegResponse
+{
+  int leg = 0;
+};
+struct [[sfs::event_response]] PathFailedResponse
+{
+  int reason = 0;
+};
+struct [[sfs::event_request(PathFoundResponse,
+                            failure = PathFailedResponse,
+                            progress = PathLegResponse)]] PathRequest
+{
+  int goal = 0;
 };
 
 // Entity news sent about an invalid entity.
@@ -443,13 +481,12 @@ int main()
     Probe& asker = registry.addSystem<Probe>(
         [&](Probe& self)
         {
-          routes = self.requester<RouteRequest>()
-                       .onResponse<RouteLegResponse>(
-                           [&](const Entity&, const RouteLegResponse& leg)
-                           { legs.push_back(leg.leg); })
-                       .onResponse<RouteDoneResponse>(
-                           [&](const Entity&, const RouteDoneResponse& done)
-                           { outcomes.push_back(done.outcome); });
+          routes =
+              self.requester<RouteRequest>()
+                  .onProgress([&](const Entity&, const RouteLegResponse& leg)
+                              { legs.push_back(leg.leg); })
+                  .onResponse([&](const Entity&, const RouteDoneResponse& done)
+                              { outcomes.push_back(done.outcome); });
         });
     std::vector<Responder<RouteRequest>> responders;
     Probe& planner = registry.addSystem<Probe>(
@@ -494,11 +531,9 @@ int main()
     Probe& asker = registry.addSystem<Probe>(
         [&](Probe& self)
         {
-          routes = self.requester<RouteRequest>()
-                       .onResponse<RouteDoneResponse>(
-                           [&](const Entity&, const RouteDoneResponse& done)
-                           { outcomes.push_back(done.outcome); })
-                       .ignore<RouteLegResponse>();
+          routes = self.requester<RouteRequest>().onResponse(
+              [&](const Entity&, const RouteDoneResponse& done)
+              { outcomes.push_back(done.outcome); });
         });
     Probe& planner = registry.addSystem<Probe>(
         [&](Probe& self) { asked = self.consumer<RouteRequest>(); });
@@ -528,7 +563,7 @@ int main()
     CHECK((outcomes == std::vector<int>{2}));
     // A response kept, then a newer request before the asker's slot: not
     // given.
-    responders[1].progress(RouteDoneResponse{3});
+    responders[1].progress(RouteLegResponse{3});
     routes.request(vehicle, RouteRequest{3});
     outcomes.clear();
     run(registry, asker);
@@ -547,11 +582,8 @@ int main()
     Probe& asker = registry.addSystem<Probe>(
         [&](Probe& self)
         {
-          routes = self.requester<RouteRequest>()
-                       .onResponse<RouteDoneResponse>(
-                           [&](const Entity&, const RouteDoneResponse&)
-                           { ++responses; })
-                       .ignore<RouteLegResponse>();
+          routes = self.requester<RouteRequest>().onResponse(
+              [&](const Entity&, const RouteDoneResponse&) { ++responses; });
         });
     Probe& planner = registry.addSystem<Probe>(
         [&](Probe& self) { asked = self.consumer<RouteRequest>(); });
@@ -587,17 +619,16 @@ int main()
     Probe& asker = registry.addSystem<Probe>(
         [&](Probe& self)
         {
-          routes =
-              self.requester<RouteRequest>()
-                  .onResponse<RouteLegResponse>(
-                      [&](const Entity&, const RouteLegResponse&) { ++legs; })
-                  .onResponses<RouteDoneResponse>(
-                      [&](ResponseRange<RouteRequest, RouteDoneResponse>
-                              responses)
-                      {
-                        for (auto [entity, done] : responses)
-                          outcomes.emplace_back(entity, done.outcome);
-                      });
+          routes = self.requester<RouteRequest>()
+                       .onProgress([&](const Entity&, const RouteLegResponse&)
+                                   { ++legs; })
+                       .onResponses(
+                           [&](ResponseRange<RouteRequest, RouteDoneResponse>
+                                   responses)
+                           {
+                             for (auto [entity, done] : responses)
+                               outcomes.emplace_back(entity, done.outcome);
+                           });
         });
     Probe& planner = registry.addSystem<Probe>(
         [&](Probe& self) { asked = self.consumer<RouteRequest>(); });
@@ -651,7 +682,7 @@ int main()
         {
           plans = self.consumer<PlanRequest>();
           // Ignored: nothing makes the response type's queue yet.
-          asker = self.requester<PlanRequest>().ignore<PlannedResponse>();
+          asker = self.requester<PlanRequest>().onResponse(ignored);
         });
     const Entity vehicle = registry.createEntity();
     asker.request(vehicle, PlanRequest{1});
@@ -692,9 +723,7 @@ int main()
           [&](Probe& self)
           {
             asked = self.consumer<RouteRequest>();
-            asker = self.requester<RouteRequest>()
-                        .ignore<RouteLegResponse>()
-                        .ignore<RouteDoneResponse>();
+            asker = self.requester<RouteRequest>().onResponse(ignored);
           });
       const Entity vehicle = registry.createEntity();
       asker.request(vehicle, RouteRequest{1});
@@ -728,9 +757,7 @@ int main()
           [&](Probe& self)
           {
             asked = self.consumer<RouteRequest>();
-            asker = self.requester<RouteRequest>()
-                        .ignore<RouteLegResponse>()
-                        .ignore<RouteDoneResponse>();
+            asker = self.requester<RouteRequest>().onResponse(ignored);
           });
       const Entity vehicle = registry.createEntity();
       asker.request(vehicle, RouteRequest{1});
@@ -861,8 +888,8 @@ int main()
     Probe& asker = registry.addSystem<Probe>(
         [&](Probe& self)
         {
-          busy = self.requester<BusyRequest>().onResponse<BusyResponse>(
-              [&](const Entity& entity, const BusyResponse&)
+          busy = self.requester<BusyRequest>().onResponse(ignored).onProgress(
+              [&](const Entity& entity, const BusyStepResponse&)
               { stale += entity == keys[0] ? 1 : 0; });
         });
     for (int i = 0; i < 4; ++i)
@@ -887,7 +914,7 @@ int main()
             while (!go.load())
               std::this_thread::yield();
             for (int i = 0; i < 2000 && !responders[t].superseded(); ++i)
-              responders[t].progress(BusyResponse{t});
+              responders[t].progress(BusyStepResponse{t});
           });
     go.store(true);
     for (int round = 0; round < 50; ++round)
@@ -919,7 +946,7 @@ int main()
         [&](Probe& self)
         {
           asked = self.consumer<StaleRequest>();
-          stale = self.requester<StaleRequest>().ignore<StaleDoneResponse>();
+          stale = self.requester<StaleRequest>().onResponse(ignored);
         });
     LogCapture log;
     const Entity old = registry.createEntity();
@@ -971,14 +998,10 @@ int main()
     Probe& asker = registry.addSystem<Probe>(
         [&](Probe& self)
         {
-          router = self.requester<RouteRequest>()
-                       .onResponse<RouteDoneResponse>(
-                           [&](const Entity&, const RouteDoneResponse&)
-                           { ++routed; })
-                       .ignore<RouteLegResponse>();
-          detourer =
-              self.requester<DetourRequest>().onResponse<RouteDoneResponse>(
-                  [&](const Entity&, const RouteDoneResponse&) { ++detoured; });
+          router = self.requester<RouteRequest>().onResponse(
+              [&](const Entity&, const RouteDoneResponse&) { ++routed; });
+          detourer = self.requester<DetourRequest>().onResponse(
+              [&](const Entity&, const RouteDoneResponse&) { ++detoured; });
         });
     std::vector<int> seen;
     std::vector<Entity> keys;
@@ -1164,10 +1187,10 @@ int main()
     Probe& askers = registry.addSystem<Probe>(
         [&](Probe& self)
         {
-          first = self.requester<LookRequest>().onResponse<LookFoundResponse>(
+          first = self.requester<LookRequest>().onResponse(
               [&](const Entity&, const LookFoundResponse& found)
               { firstGot.push_back(found.value); });
-          second = self.requester<LookRequest>().onResponse<LookFoundResponse>(
+          second = self.requester<LookRequest>().onResponse(
               [&](const Entity&, const LookFoundResponse& found)
               { secondGot.push_back(found.value); });
           watched = self.consumer<LookFoundResponse>().onEvent(
@@ -1211,8 +1234,8 @@ int main()
         [&](Probe& self)
         {
           looks = self.consumer<LookRequest>();
-          first = self.requester<LookRequest>().ignore<LookFoundResponse>();
-          second = self.requester<LookRequest>().ignore<LookFoundResponse>();
+          first = self.requester<LookRequest>().onResponse(ignored);
+          second = self.requester<LookRequest>().onResponse(ignored);
         });
     const Entity a = registry.createEntity();
     first.request(a, LookRequest{1});
@@ -1242,8 +1265,8 @@ int main()
         [&](Probe& self)
         {
           looks = self.consumer<LookRequest>();
-          doomed = self.requester<LookRequest>().ignore<LookFoundResponse>();
-          kept = self.requester<LookRequest>().ignore<LookFoundResponse>();
+          doomed = self.requester<LookRequest>().onResponse(ignored);
+          kept = self.requester<LookRequest>().onResponse(ignored);
         });
     registry.flushEntities();
     const Entity a = registry.createEntity();
@@ -1281,29 +1304,46 @@ int main()
     CHECK(!kept.waiting(a));
   }
 
-  TEST("a requester should get each response type's responses in send order "
-       "per type, the types in the order their handlers were given")
+  TEST("a request's progress should reach its requester before its final in "
+       "one update, whatever order the chain gave the handlers")
   {
     Registry registry;
     EventConsumer<TravelRequest> travels;
-    EventRequester<TravelRequest> traveller;
+    EventRequester<TravelRequest> successFirst;
+    EventRequester<TravelRequest> batched;
     std::vector<std::string> seen;
+    std::vector<std::string> seenBatched;
     Probe& server = registry.addSystem<Probe>(
         [&](Probe& self) { travels = self.consumer<TravelRequest>(); });
     Probe& asker = registry.addSystem<Probe>(
         [&](Probe& self)
         {
-          traveller =
+          successFirst =
               self.requester<TravelRequest>()
-                  .onResponse<ArrivedResponse>(
-                      [&](const Entity&, const ArrivedResponse&)
-                      { seen.emplace_back("arrived"); })
-                  .onResponse<StepResponse>(
+                  .onResponse([&](const Entity&, const ArrivedResponse&)
+                              { seen.emplace_back("arrived"); })
+                  .onProgress(
                       [&](const Entity&, const StepResponse& step)
                       { seen.push_back("step" + std::to_string(step.step)); });
+          batched =
+              self.requester<TravelRequest>()
+                  .onResponses(
+                      [&](ResponseRange<TravelRequest, ArrivedResponse> got)
+                      {
+                        for (auto [entity, arrived] : got)
+                          seenBatched.emplace_back("arrived");
+                      })
+                  .onProgresses(
+                      [&](ResponseRange<TravelRequest, StepResponse> got)
+                      {
+                        for (auto [entity, step] : got)
+                          seenBatched.push_back("step" +
+                                                std::to_string(step.step));
+                      });
         });
     const Entity a = registry.createEntity();
-    traveller.request(a, TravelRequest{1});
+    successFirst.request(a, TravelRequest{1});
+    batched.request(a, TravelRequest{2});
     run(registry,
         server,
         [&](Probe&)
@@ -1315,8 +1355,12 @@ int main()
             responder.respond(ArrivedResponse{1});
           }
         });
+    // And by entity, a leg after the final is refused.
+    CHECK(!travels.progress(a, StepResponse{3}));
     run(registry, asker);
-    CHECK((seen == std::vector<std::string>{"arrived", "step1", "step2"}));
+    const std::vector<std::string> inOrder{"step1", "step2", "arrived"};
+    CHECK(seen == inOrder);
+    CHECK(seenBatched == inOrder);
   }
 
   TEST("cancel of entity news with a base should leave the base's copy "
@@ -1388,7 +1432,7 @@ int main()
                 supersededAfter = responder.superseded();
                 respondedAfter = responder.respond(LookFoundResponse{2});
               });
-          asker = self.requester<LookRequest>().ignore<LookFoundResponse>();
+          asker = self.requester<LookRequest>().onResponse(ignored);
         });
     asker->request(registry.createEntity(), LookRequest{1});
     run(registry, server);
@@ -1406,10 +1450,8 @@ int main()
     {
       Registry registry;
       registry.addSystem<Probe>(
-          [&](Probe& self) {
-            outlived =
-                self.requester<LookRequest>().ignore<LookFoundResponse>();
-          });
+          [&](Probe& self)
+          { outlived = self.requester<LookRequest>().onResponse(ignored); });
       outlived.request(registry.createEntity(), LookRequest{1});
     }
     outlived.request(a, LookRequest{2});
@@ -1426,7 +1468,7 @@ int main()
     EventRequester<LookRequest> asker;
     registry.addSystem<Probe>(
         [&](Probe& self)
-        { asker = self.requester<LookRequest>().ignore<LookFoundResponse>(); });
+        { asker = self.requester<LookRequest>().onResponse(ignored); });
     LogCapture log;
     asker.request(Entity{}, LookRequest{1});
     CHECK(log.count(Logger::Level::ERROR, "an invalid entity handle") == 1);
@@ -1453,7 +1495,7 @@ int main()
         [&](Probe& self)
         {
           looks = self.consumer<LookRequest>();
-          first = self.requester<LookRequest>().ignore<LookFoundResponse>();
+          first = self.requester<LookRequest>().onResponse(ignored);
         });
     const Entity a = registry.createEntity();
     first->request(a, LookRequest{1});
@@ -1471,7 +1513,7 @@ int main()
     Probe& late = registry.addSystem<Probe>(
         [&](Probe& self)
         {
-          second = self.requester<LookRequest>().onResponse<LookFoundResponse>(
+          second = self.requester<LookRequest>().onResponse(
               [&](const Entity&, const LookFoundResponse& found)
               { secondGot.push_back(found.value); });
         });
@@ -1507,13 +1549,13 @@ int main()
     Probe& askers = registry.addSystem<Probe>(
         [&](Probe& self)
         {
-          doomed = self.requester<LookRequest>().onResponse<LookFoundResponse>(
+          doomed = self.requester<LookRequest>().onResponse(
               [&](const Entity&, const LookFoundResponse&)
               {
                 ++doomedGot;
                 doomed.reset();
               });
-          kept = self.requester<LookRequest>().onResponse<LookFoundResponse>(
+          kept = self.requester<LookRequest>().onResponse(
               [&](const Entity&, const LookFoundResponse&) { ++keptGot; });
         });
     for (int i = 0; i < 3; ++i)
@@ -1550,15 +1592,14 @@ int main()
         [&](Probe& self)
         {
           holder = self.requester<TravelRequest>()
-                       .onResponses<StepResponse>(
+                       .onProgresses(
                            [&](ResponseRange<TravelRequest, StepResponse> steps)
                            { keptRange.emplace(steps); })
-                       .ignore<ArrivedResponse>();
-          other =
-              self.requester<TravelRequest>()
-                  .onResponse<StepResponse>(
-                      [&](const Entity&, const StepResponse&) { ++otherSteps; })
-                  .ignore<ArrivedResponse>();
+                       .onResponse(ignored);
+          other = self.requester<TravelRequest>()
+                      .onProgress([&](const Entity&, const StepResponse&)
+                                  { ++otherSteps; })
+                      .onResponse(ignored);
         });
     const Entity a = registry.createEntity();
     holder.request(a, TravelRequest{1});
@@ -1600,10 +1641,8 @@ int main()
     Probe& asker = registry.addSystem<Probe>(
         [&](Probe& self)
         {
-          idle = self.requester<TravelRequest>()
-                     .onResponse<StepResponse>(
-                         [](const Entity&, const StepResponse&) {})
-                     .ignore<ArrivedResponse>();
+          idle = self.requester<TravelRequest>().onProgress(ignored).onResponse(
+              ignored);
         });
     asker.setEnabled(false);
     idle.request(registry.createEntity(), TravelRequest{1});
@@ -1625,6 +1664,312 @@ int main()
     CHECK(log.count(Logger::Level::WARN, "responses it hasn't read") == 0);
   }
 
+  TEST("a server should answer a request held open for many frames by its "
+       "entity, closing it")
+  {
+    Registry registry;
+    EventConsumer<TravelRequest> travels;
+    EventRequester<TravelRequest> traveller;
+    std::vector<int> steps;
+    std::vector<int> arrived;
+    Probe& server = registry.addSystem<Probe>(
+        [&](Probe& self) { travels = self.consumer<TravelRequest>(); });
+    Probe& asker = registry.addSystem<Probe>(
+        [&](Probe& self)
+        {
+          traveller =
+              self.requester<TravelRequest>()
+                  .onProgress([&](const Entity&, const StepResponse& step)
+                              { steps.push_back(step.step); })
+                  .onResponse([&](const Entity&, const ArrivedResponse& at)
+                              { arrived.push_back(at.at); });
+        });
+    const Entity unit = registry.createEntity();
+    traveller.request(unit, TravelRequest{9});
+    // The server reads it once and keeps no Responder.
+    run(registry, server, [&](Probe&) { travels.read(); });
+    CHECK(travels.open(unit));
+    for (int frames = 0; frames < 30; ++frames)
+    {
+      frame(registry);
+      run(registry, asker);
+    }
+    CHECK(traveller.waiting(unit));
+    CHECK(travels.progress(unit, StepResponse{1}));
+    CHECK(travels.respond(unit, ArrivedResponse{9}));
+    CHECK(!travels.open(unit));
+    CHECK(!traveller.waiting(unit));
+    CHECK(!travels.respond(unit, ArrivedResponse{10}));
+    run(registry, asker);
+    CHECK((steps == std::vector<int>{1}));
+    CHECK((arrived == std::vector<int>{9}));
+  }
+
+  TEST("answering by entity should reach every requester's open request "
+       "about it, each hearing its own once")
+  {
+    Registry registry;
+    EventConsumer<LookRequest> looks;
+    EventRequester<LookRequest> first;
+    EventRequester<LookRequest> second;
+    EventRequester<LookRequest> other;
+    int firstGot = 0;
+    int secondGot = 0;
+    int otherGot = 0;
+    Probe& server = registry.addSystem<Probe>(
+        [&](Probe& self) { looks = self.consumer<LookRequest>(); });
+    Probe& askers = registry.addSystem<Probe>(
+        [&](Probe& self)
+        {
+          const auto count = [&](int& got)
+          {
+            return self.requester<LookRequest>().onResponse(
+                [&got](const Entity&, const LookFoundResponse&) { ++got; });
+          };
+          first = count(firstGot);
+          second = count(secondGot);
+          other = count(otherGot);
+        });
+    const Entity a = registry.createEntity();
+    const Entity b = registry.createEntity();
+    first.request(a, LookRequest{1});
+    second.request(a, LookRequest{2});
+    // Replaced: only its newest is open.
+    second.request(a, LookRequest{3});
+    other.request(b, LookRequest{4});
+    CHECK(looks.respond(a, LookFoundResponse{7}));
+    run(registry, server);
+    run(registry, askers);
+    CHECK(firstGot == 1);
+    CHECK(secondGot == 1);
+    CHECK(otherGot == 0);
+    CHECK(looks.open(b));
+  }
+
+  TEST("answering by entity should not reach a cancelled request, or one "
+       "whose entity or requester has gone")
+  {
+    Registry registry;
+    EventConsumer<LookRequest> looks;
+    std::optional<EventRequester<LookRequest>> asker;
+    Probe& server = registry.addSystem<Probe>(
+        [&](Probe& self)
+        {
+          looks = self.consumer<LookRequest>();
+          asker = self.requester<LookRequest>().onResponse(ignored);
+        });
+    registry.flushEntities();
+    const Entity cancelled = registry.createEntity();
+    const Entity doomed = registry.createEntity();
+    const Entity orphaned = registry.createEntity();
+    registry.flushEntities();
+    asker->request(cancelled, LookRequest{1});
+    asker->request(doomed, LookRequest{2});
+    asker->cancel(cancelled);
+    CHECK(!looks.open(cancelled));
+    CHECK(!looks.respond(cancelled, LookFoundResponse{1}));
+    registry.destroyEntity(doomed);
+    frame(registry);
+    CHECK(!looks.open(doomed));
+    CHECK(!looks.respond(doomed, LookFoundResponse{2}));
+    asker->request(orphaned, LookRequest{3});
+    CHECK(looks.open(orphaned));
+    asker.reset();
+    CHECK(!looks.open(orphaned));
+    CHECK(!looks.respond(orphaned, LookFoundResponse{3}));
+    run(registry, server);
+  }
+
+  TEST("an entity's closed requests should leave its open ones answerable, "
+       "and one asked again open")
+  {
+    Registry registry;
+    EventConsumer<LookRequest> looks;
+    std::vector<EventRequester<LookRequest>> askers;
+    std::vector<int> got(5, 0);
+    Probe& server = registry.addSystem<Probe>(
+        [&](Probe& self) { looks = self.consumer<LookRequest>(); });
+    Probe& asking = registry.addSystem<Probe>(
+        [&](Probe& self)
+        {
+          for (int i = 0; i < 5; ++i)
+            askers.push_back(self.requester<LookRequest>().onResponse(
+                [&got, i](const Entity&, const LookFoundResponse&)
+                { ++got[static_cast<std::size_t>(i)]; }));
+        });
+    const Entity a = registry.createEntity();
+    for (int i = 0; i < 5; ++i)
+      askers[static_cast<std::size_t>(i)].request(a, LookRequest{i});
+    std::vector<Responder<LookRequest>> responders;
+    run(registry,
+        server,
+        [&](Probe&)
+        {
+          for (auto [entity, look, responder] : looks.read())
+            responders.push_back(responder);
+        });
+    // Close the first, a middle and the last asked; two stay open.
+    CHECK(responders.size() == 5u);
+    for (const std::size_t closed : {0u, 2u, 4u})
+      CHECK(responders[closed].respond(LookFoundResponse{1}));
+    CHECK(looks.open(a));
+    CHECK(looks.respond(a, LookFoundResponse{2}));
+    CHECK(!looks.open(a));
+    CHECK(!looks.respond(a, LookFoundResponse{3}));
+    run(registry, asking);
+    CHECK((got == std::vector<int>{1, 1, 1, 1, 1}));
+    // One asked again is open, and the only one reached.
+    askers[2].request(a, LookRequest{9});
+    CHECK(looks.open(a));
+    CHECK(looks.respond(a, LookFoundResponse{4}));
+    CHECK(!looks.open(a));
+    run(registry, asking);
+    CHECK((got == std::vector<int>{1, 1, 2, 1, 1}));
+    for (EventRequester<LookRequest>& asker : askers)
+      CHECK(!asker.waiting(a));
+  }
+
+  TEST("answering by entity off the scene's thread should be refused, "
+       "pointing at the Responder")
+  {
+    Registry registry;
+    EventConsumer<FarRequest> fars;
+    EventRequester<FarRequest> asker;
+    registry.addSystem<Probe>(
+        [&](Probe& self)
+        {
+          fars = self.consumer<FarRequest>();
+          asker = self.requester<FarRequest>().onResponse(ignored);
+        });
+    const Entity a = registry.createEntity();
+    asker.request(a, FarRequest{1});
+    LogCapture log;
+    std::thread worker(
+        [&]
+        {
+          CHECK(!fars.open(a));
+          CHECK(!fars.respond(a, FarDoneResponse{1}));
+        });
+    worker.join();
+    Logger::flush();
+    CHECK(log.count(Logger::Level::ERROR,
+                    "A job answers a request through its row's Responder") ==
+          1);
+    CHECK(fars.open(a));
+  }
+
+  TEST("the first final response should win, by entity or by Responder")
+  {
+    Registry registry;
+    EventConsumer<LookRequest> looks;
+    EventRequester<LookRequest> asker;
+    int got = 0;
+    Probe& server = registry.addSystem<Probe>(
+        [&](Probe& self) { looks = self.consumer<LookRequest>(); });
+    Probe& askers = registry.addSystem<Probe>(
+        [&](Probe& self)
+        {
+          asker = self.requester<LookRequest>().onResponse(
+              [&](const Entity&, const LookFoundResponse&) { ++got; });
+        });
+    const Entity a = registry.createEntity();
+    const Entity b = registry.createEntity();
+    asker.request(a, LookRequest{1});
+    asker.request(b, LookRequest{2});
+    std::vector<Responder<LookRequest>> responders;
+    run(registry,
+        server,
+        [&](Probe&)
+        {
+          for (auto [entity, look, responder] : looks.read())
+            responders.push_back(responder);
+        });
+    // A: the Responder first, then by entity.
+    CHECK(responders[0].respond(LookFoundResponse{1}));
+    CHECK(!looks.respond(a, LookFoundResponse{1}));
+    // B: by entity first, then the Responder.
+    CHECK(looks.respond(b, LookFoundResponse{2}));
+    CHECK(!responders[1].respond(LookFoundResponse{2}));
+    run(registry, askers);
+    CHECK(got == 2);
+  }
+
+  TEST("a failure should close the request, reach onFailure, and refuse a "
+       "later success")
+  {
+    Registry registry;
+    EventConsumer<PathRequest> paths;
+    EventRequester<PathRequest> asker;
+    std::vector<std::string> heard;
+    Probe& server = registry.addSystem<Probe>(
+        [&](Probe& self) { paths = self.consumer<PathRequest>(); });
+    Probe& askers = registry.addSystem<Probe>(
+        [&](Probe& self)
+        {
+          asker = self.requester<PathRequest>()
+                      .onFailure([&](const Entity&, const PathFailedResponse&)
+                                 { heard.emplace_back("failed"); })
+                      .onProgress([&](const Entity&, const PathLegResponse&)
+                                  { heard.emplace_back("leg"); })
+                      .onResponse([&](const Entity&, const PathFoundResponse&)
+                                  { heard.emplace_back("found"); });
+        });
+    const Entity a = registry.createEntity();
+    const Entity b = registry.createEntity();
+    asker.request(a, PathRequest{1});
+    asker.request(b, PathRequest{2});
+    run(registry,
+        server,
+        [&](Probe&)
+        {
+          for (auto [entity, path, responder] : paths.read())
+            if (path.goal == 1)
+            {
+              CHECK(responder.progress(PathLegResponse{1}));
+              CHECK(responder.fail(PathFailedResponse{7}));
+              CHECK(!responder.respond(PathFoundResponse{1}));
+            }
+        });
+    CHECK(!asker.waiting(a));
+    // By entity: a failure closes it too.
+    CHECK(paths.fail(b, PathFailedResponse{8}));
+    CHECK(!paths.open(b));
+    CHECK(!paths.respond(b, PathFoundResponse{2}));
+    run(registry, askers);
+    // The leg first, whatever the chain's order: progress precedes finals.
+    CHECK((heard == std::vector<std::string>{"leg", "failed", "failed"}));
+  }
+
+  TEST("a requester not handling progress should get none, and one ignoring "
+       "failure no failure, quietly")
+  {
+    Registry registry;
+    EventConsumer<PathRequest> paths;
+    EventRequester<PathRequest> quiet;
+    int found = 0;
+    Probe& askers = registry.addSystem<Probe>(
+        [&](Probe& self)
+        {
+          paths = self.consumer<PathRequest>();
+          quiet = self.requester<PathRequest>()
+                      .onResponse([&](const Entity&, const PathFoundResponse&)
+                                  { ++found; })
+                      .ignoreFailure();
+        });
+    LogCapture log;
+    const Entity a = registry.createEntity();
+    const Entity b = registry.createEntity();
+    quiet.request(a, PathRequest{1});
+    quiet.request(b, PathRequest{2});
+    CHECK(paths.progress(a, PathLegResponse{1}));
+    CHECK(paths.respond(a, PathFoundResponse{5}));
+    CHECK(paths.fail(b, PathFailedResponse{1}));
+    CHECK(!quiet.waiting(b));
+    run(registry, askers);
+    CHECK(found == 1);
+    CHECK(log.lines.empty());
+  }
+
   TEST("stats should name each type's kind")
   {
     Registry registry;
@@ -1638,9 +1983,7 @@ int main()
           news = self.consumer<NewsEvent>();
           moved = self.consumer<MovedEvent>();
           route = self.consumer<RouteRequest>();
-          asker = self.requester<RouteRequest>()
-                      .ignore<RouteLegResponse>()
-                      .ignore<RouteDoneResponse>();
+          asker = self.requester<RouteRequest>().onResponse(ignored);
         });
     const Entity a = registry.createEntity();
     registry.events().send(NewsEvent{1});

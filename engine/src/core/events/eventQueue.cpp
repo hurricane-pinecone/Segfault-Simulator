@@ -61,7 +61,9 @@ uint32_t EventQueueBase::addConsumer(EventOwner* owner,
   if (slot == m_consumers.size())
     m_consumers.emplace_back();
   ConsumerSlot& consumer = m_consumers[slot];
+  const uint32_t generation = consumer.generation + 1u;
   consumer = ConsumerSlot{};
+  consumer.generation = generation;
   consumer.next = m_oldestId;
   consumer.scanned = m_oldestId;
   consumer.spanBegin = consumer.spanEnd = m_oldestId;

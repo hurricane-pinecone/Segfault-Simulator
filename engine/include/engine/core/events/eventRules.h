@@ -12,23 +12,11 @@
 namespace sfs::detail
 {
 
-/** How many times A is in a list of types. */
-template <typename A, typename... TList>
-inline constexpr std::size_t kCount =
-    (std::size_t{0} + ... + (std::is_same_v<A, TList> ? 1 : 0));
-
 /** How many types a TypeList has. */
 template <typename TList>
 inline constexpr std::size_t kListSize = 0;
 template <typename... TTypes>
 inline constexpr std::size_t kListSize<TypeList<TTypes...>> = sizeof...(TTypes);
-
-/** Whether A is in a TypeList. */
-template <typename A, typename TList>
-inline constexpr bool kListed = false;
-template <typename A, typename... TTypes>
-inline constexpr bool kListed<A, TypeList<TTypes...>> =
-    kCount<A, TTypes...> != 0;
 
 /**
  * Responses of type A to requests of type R, as their queue holds them: an A
@@ -103,14 +91,125 @@ struct IsAResponse
                 "responder.respond()");
 };
 
-/** Fails to compile, naming a request's listed type that isn't a response. */
+/** Fails to compile, naming a request's role type that isn't a response. */
 template <typename TRequest, typename TResponse>
 struct NotAResponse
 {
   static_assert(sizeof(TResponse) == 0,
-                "A request lists only response types (NotAResponse<Request, "
-                "Type>): mark it [[sfs::event_response]]");
+                "A request's roles name only response types "
+                "(NotAResponse<Request, Type>): mark it "
+                "[[sfs::event_response]]");
 };
+
+/** A response's role in its request. */
+enum class ResponseRole : uint8_t
+{
+  /** The success response: final. */
+  Success,
+  /** A progress response: partial, any number of them. */
+  Progress,
+  /** The failure response: final. */
+  Failure,
+};
+
+// A request's response type in a role; void for a type that isn't a
+// request, whose traits have no roles, so the check naming that comes first.
+template <typename TRequest, ResponseRole kRole, bool = kRequest<TRequest>>
+struct RoleTypeOf
+{
+  using Type = void;
+};
+template <typename TRequest, ResponseRole kRole>
+struct RoleTypeOf<TRequest, kRole, true>
+{
+  using Type = std::conditional_t<
+      kRole == ResponseRole::Success,
+      typename EventTraits<TRequest>::Success,
+      std::conditional_t<kRole == ResponseRole::Progress,
+                         typename EventTraits<TRequest>::Progress,
+                         typename EventTraits<TRequest>::Failure>>;
+};
+
+/**
+ * A request's response type in a role (void when the role isn't declared,
+ * or the type isn't a request).
+ */
+template <typename TRequest, ResponseRole kRole>
+using RoleType = typename RoleTypeOf<TRequest, kRole>::Type;
+
+/** Fails to compile, naming a request and a type that isn't its success. */
+template <typename TRequest, typename TType>
+struct NotTheSuccessResponse
+{
+  static_assert(sizeof(TType) == 0,
+                "respond() sends the request's success response (the first "
+                "type of [[sfs::event_request(Success, ...)]]); this type "
+                "(NotTheSuccessResponse<Request, Type>) isn't it");
+};
+
+/** Fails to compile, naming a request with no progress role. */
+template <typename TRequest>
+struct RequestHasNoProgress
+{
+  static_assert(sizeof(TRequest) == 0,
+                "progress() needs the request to declare a progress "
+                "response ([[sfs::event_request(Success, progress = P)]]); "
+                "this one (RequestHasNoProgress<Request>) doesn't");
+};
+
+/** Fails to compile, naming a request and a type that isn't its progress. */
+template <typename TRequest, typename TType>
+struct NotTheProgressResponse
+{
+  static_assert(sizeof(TType) == 0,
+                "progress() sends the request's progress response; this type "
+                "(NotTheProgressResponse<Request, Type>) isn't it");
+};
+
+/** Fails to compile, naming a request with no failure role. */
+template <typename TRequest>
+struct RequestHasNoFailure
+{
+  static_assert(sizeof(TRequest) == 0,
+                "fail() needs the request to declare a failure response "
+                "([[sfs::event_request(Success, failure = F)]]); this one "
+                "(RequestHasNoFailure<Request>) doesn't");
+};
+
+/** Fails to compile, naming a request and a type that isn't its failure. */
+template <typename TRequest, typename TType>
+struct NotTheFailureResponse
+{
+  static_assert(sizeof(TType) == 0,
+                "fail() sends the request's failure response; this type "
+                "(NotTheFailureResponse<Request, Type>) isn't it");
+};
+
+/**
+ * Checks, at compile time, that a server sends `TType` in a role of
+ * `TRequest` it declares: respond() its success, progress() its progress,
+ * fail() its failure. A broken rule fails to compile, naming the types.
+ * @return whether it may (always true once it compiles)
+ */
+template <typename TRequest, ResponseRole kRole, typename TType>
+consteval bool checkRoleSent()
+{
+  using Declared = RoleType<TRequest, kRole>;
+  if constexpr (kRole == ResponseRole::Progress && std::is_void_v<Declared>)
+    static_cast<void>(sizeof(RequestHasNoProgress<TRequest>));
+  else if constexpr (kRole == ResponseRole::Failure && std::is_void_v<Declared>)
+    static_cast<void>(sizeof(RequestHasNoFailure<TRequest>));
+  else if constexpr (!std::is_same_v<Declared, TType>)
+  {
+    if constexpr (kRole == ResponseRole::Success)
+      static_cast<void>(sizeof(NotTheSuccessResponse<TRequest, TType>));
+    else if constexpr (kRole == ResponseRole::Progress)
+      static_cast<void>(sizeof(NotTheProgressResponse<TRequest, TType>));
+    else
+      static_cast<void>(sizeof(NotTheFailureResponse<TRequest, TType>));
+  }
+  return true;
+}
 
 /** Fails to compile, naming an event whose event base is another kind. */
 template <typename TEvent, typename TBase>
@@ -136,16 +235,35 @@ consteval bool checkResponseType()
   return true;
 }
 
-// A request's responses: at least one, each once, each a response.
-template <typename TRequest, typename... TResponses>
-consteval bool checkResponses(TypeList<TResponses...>*)
+// A role's type, when declared, is a response.
+template <typename TRequest, typename TType>
+consteval bool checkRoleType()
 {
-  static_assert(sizeof...(TResponses) != 0,
-                "A request lists at least one response type: "
-                "[[sfs::event_request(Response, ...)]]");
-  static_assert(((kCount<TResponses, TResponses...> == 1) && ...),
-                "A request lists each response type once");
-  return (checkResponseType<TRequest, TResponses>() && ...);
+  if constexpr (std::is_void_v<TType>)
+    return true;
+  else
+    return checkResponseType<TRequest, TType>();
+}
+
+// A request's roles: a success, optional progress and failure, each a
+// response, no type in two roles.
+template <typename TRequest>
+consteval bool checkRoles()
+{
+  using Traits = EventTraits<TRequest>;
+  using Success = typename Traits::Success;
+  using Progress = typename Traits::Progress;
+  using Failure = typename Traits::Failure;
+  static_assert(!std::is_void_v<Success>,
+                "A request declares its success response: "
+                "[[sfs::event_request(Success, progress = P, failure = F)]]");
+  static_assert(
+      !std::is_same_v<Success, Progress> && !std::is_same_v<Success, Failure> &&
+          (std::is_void_v<Progress> || !std::is_same_v<Progress, Failure>),
+      "A request gives each response type one role");
+  return checkRoleType<TRequest, Success>() &&
+         checkRoleType<TRequest, Progress>() &&
+         checkRoleType<TRequest, Failure>();
 }
 
 // An event's ancestors: bases of it, of its own kind, never requests or
@@ -185,8 +303,7 @@ consteval bool checkEvent()
   else
   {
     if constexpr (kRequest<T>)
-      checkResponses<T>(
-          static_cast<typename EventTraits<T>::Responses*>(nullptr));
+      checkRoles<T>();
     return checkAncestors<T>(
         static_cast<typename EventTraits<T>::Ancestors*>(nullptr));
   }

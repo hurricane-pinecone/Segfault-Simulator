@@ -50,8 +50,9 @@ struct QueryAlias
 };
 
 /**
- * A response a project script sends through a responder,
- * `responder.respond(R{...})` or `responder.progress(R{...})`, for
+ * A response a project script sends: through a responder
+ * (`responder.respond(R{...})`, `.progress(...)`, `.fail(...)`) or a
+ * request consumer by entity (`consumer.respond(entity, R{...})`), for
  * response-sent-twice.
  */
 struct ResponseSend
@@ -118,8 +119,9 @@ void responseTypesOf(const std::vector<codegen::EventModel>& events,
                      std::vector<ResponseType>& types);
 
 /**
- * Adds a response a call sends, if it's `x.respond(...)` or
- * `x.progress(...)` with one argument whose type can be read: `R{...}`,
+ * Adds a response a call sends, if it's a responder's `x.respond(r)`,
+ * `x.progress(r)` or `x.fail(r)`, or a request consumer's by entity,
+ * `x.respond(entity, r)` and the like, where r's type can be read: `R{...}`,
  * `R(...)`, or a variable the function around the call declares (not `auto`
  * but for `auto v = R{...}`), or a data member the class around it declares.
  *

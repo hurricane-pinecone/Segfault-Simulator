@@ -7,7 +7,8 @@
 // What the compiler knows about each event type: its kind, a request's
 // responses and an event's event ancestors. sfs-codegen reads the attributes
 // (`[[sfs::event_news]]`, `[[sfs::event_entity_news]]`,
-// `[[sfs::event_request(A, B)]]`, `[[sfs::event_response]]`) and
+// `[[sfs::event_request(Success, progress = P, failure = F)]]`,
+// `[[sfs::event_response]]`) and
 // writes an EventTraits specialization for each marked type into a header
 // every file of the type's target includes first (docs/core/events, and
 // engine/docs/core/events for the header). Every call that sends or receives
@@ -29,9 +30,10 @@ enum class EventKind : uint8_t
    */
   EntityNews,
   /**
-   * `[[sfs::event_request(A, B)]]`: about one entity, asked with a
-   * requester and responded to through a Responder with one of its response
-   * types.
+   * `[[sfs::event_request(Success, progress = P, failure = F)]]`: about one
+   * entity, asked with a requester and answered with its success response,
+   * or its failure, after any number of progress responses (both
+   * optional).
    */
   Request,
   /**
@@ -50,8 +52,12 @@ struct EventTraits
 {
   /** Its kind. */
   static constexpr EventKind kind = EventKind::None;
-  /** A request's response types. */
-  using Responses = TypeList<>;
+  /** A request's success response: its final answer. */
+  using Success = void;
+  /** A request's progress response, partial answers; void when undeclared. */
+  using Progress = void;
+  /** A request's failure response, a final answer; void when undeclared. */
+  using Failure = void;
   /** Its event base types, nearest first, every level. */
   using Ancestors = TypeList<>;
 };

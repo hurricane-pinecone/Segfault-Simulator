@@ -23,7 +23,9 @@ function(add_lsp_test name)
     target_include_directories(${name} PRIVATE "${PROJECT_SOURCE_DIR}/engine/lib/glm")
     target_compile_definitions(${name} PRIVATE
         SFS_LSP_PATH="$<TARGET_FILE:sfs-lsp>"
-        SFS_LSP_TEST_SOURCE="${PROJECT_SOURCE_DIR}/engine/tools/codegen/src/parser.cpp")
+        # A frozen copy of an engine source, so the random-edits test's input
+        # never changes with the engine.
+        SFS_LSP_TEST_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/data/randomEditsSource.cpp.txt")
     add_dependencies(${name} sfs-lsp)
     add_test(NAME ${name} COMMAND ${name})
     set_tests_properties(${name} PROPERTIES LABELS tools)
