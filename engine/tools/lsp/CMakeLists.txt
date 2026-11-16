@@ -19,10 +19,17 @@ add_library(sfs-lsp-lib STATIC
     src/completion.cpp
     src/document.cpp
     src/entityLints.cpp
+    src/format.cpp
+    src/formatBlankLines.cpp
+    src/formatLines.cpp
+    src/formatOrder.cpp
     src/hover.cpp
+    src/houseLints.cpp
+    src/lintConfig.cpp
     src/lintSupport.cpp
     src/lints.cpp
     src/projectIndex.cpp
+    src/runProcess.cpp
     src/server.cpp
     # --fix writes files the way the engine does (engine-core's, with the
     # logger it reports through).

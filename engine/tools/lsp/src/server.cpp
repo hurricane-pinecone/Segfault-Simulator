@@ -1,6 +1,7 @@
 #include "server.h"
 
 #include "analysis.h"
+#include "format.h"
 
 #include <sfs/codegen/parser.h>
 #include <sfs/lsp/protocol.h>
@@ -304,6 +305,17 @@ void Server::handleRequest(const nlohmann::json& id,
     }
     return;
   }
+  if (method == "textDocument/formatting" ||
+      method == "textDocument/rangeFormatting")
+  {
+    const Document* document = find(at(params, {"textDocument"}));
+    send(response(id,
+                  document ? format(*document,
+                                    params,
+                                    method == "textDocument/rangeFormatting")
+                           : nlohmann::json()));
+    return;
+  }
   send(errorResponse(
       id, errors::kMethodNotFound, "sfs-lsp doesn't handle " + method));
 }
@@ -385,6 +397,11 @@ nlohmann::json Server::initialize(const nlohmann::json& params)
             !problem.empty())
           log(problem);
 
+  if (const nlohmann::json& clangFormat =
+          at(params, {"initializationOptions", "clangFormat"});
+      clangFormat.is_string())
+    m_clangFormat = clangFormat.get<std::string>();
+
   m_initialized = true;
   return {
       {"capabilities",
@@ -397,8 +414,71 @@ nlohmann::json Server::initialize(const nlohmann::json& params)
          {{"triggerCharacters", {":", "[", "(", "!", ","}},
           {"resolveProvider", false}}},
         {"hoverProvider", true},
+        {"documentFormattingProvider", true},
+        {"documentRangeFormattingProvider", true},
         {"codeActionProvider", {{"codeActionKinds", {"quickfix"}}}}}},
       {"serverInfo", {{"name", "sfs-lsp"}, {"version", SFS_ENGINE_VERSION}}}};
+}
+
+nlohmann::json Server::format(const Document& document,
+                              const nlohmann::json& params,
+                              bool ranged)
+{
+  const Clock::time_point start = Clock::now();
+  FormatRequest request;
+  request.text = document.text;
+  request.path = document.path;
+  request.clangFormat = m_clangFormat;
+  request.read = &m_reader;
+  if (ranged)
+  {
+    const Position from = positionFrom(at(params, {"range", "start"}));
+    const Position to = positionFrom(at(params, {"range", "end"}));
+    request.firstLine = from.line + 1;
+    // A range ending at a line's start doesn't take that line.
+    request.lastLine =
+        to.line > from.line && to.character == 0 ? to.line : to.line + 1;
+  }
+  const FormatResult result = formatSource(request, m_parser.get());
+  const std::string file = document.path.filename().string();
+  if (result.noClangFormat && !m_toldNoClangFormat)
+  {
+    m_toldNoClangFormat = true;
+    showMessage(2,
+                "sfs-lsp: clang-format wasn't found (set the clangFormat "
+                "init option or SFS_CLANG_FORMAT, or put it on PATH), so "
+                "formatting does only the house passes.");
+  }
+  if (result.refused || result.clangFormatFailed)
+    showMessage(2, "sfs-lsp: " + file + ": " + result.notes.back());
+  for (const std::string& note : result.notes)
+    send(notification(
+        "window/logMessage", {{"type", 3}, {"message", file + ": " + note}}));
+  if (m_logTiming)
+    log("format " + std::to_string(millisecondsSince(start)) + " ms (" + file +
+        ")");
+
+  nlohmann::json edits = nlohmann::json::array();
+  const auto positionAt = [&](uint32_t byte)
+  {
+    const auto [row, column] = pointOf(document, byte);
+    const Position position =
+        positionOf(document, row, column, m_settings.encoding);
+    return nlohmann::json{
+        {"line", position.line}, {"character", position.character}};
+  };
+  for (const LineEdit& edit : lineEdits(document.text, result.text))
+    edits.push_back(
+        {{"range",
+          {{"start", positionAt(edit.from)}, {"end", positionAt(edit.to)}}},
+         {"newText", edit.text}});
+  return edits;
+}
+
+void Server::showMessage(int type, const std::string& message)
+{
+  send(notification(
+      "window/showMessage", {{"type", type}, {"message", message}}));
 }
 
 const Document* Server::openDocument(const std::filesystem::path& path) const

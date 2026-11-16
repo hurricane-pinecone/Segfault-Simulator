@@ -465,6 +465,71 @@ int main()
     std::filesystem::remove_all(root);
   }
 
+  TEST("formatting should answer line edits, and a range only its own")
+  {
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() / "sfsLspFormatTest";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root);
+    std::ofstream(root / ".sfs-format") << "sort-fields: false\n";
+    // A stand-in for clang-format that changes nothing.
+    const std::filesystem::path identity = root / "identity-format";
+    std::ofstream(identity) << "#!/bin/sh\nexec cat\n";
+    std::filesystem::permissions(identity,
+                                 std::filesystem::perms::owner_all,
+                                 std::filesystem::perm_options::add);
+    LspProcess server;
+    server.send(request(
+        1,
+        "initialize",
+        {{"rootUri", nullptr},
+         {"capabilities", json::object()},
+         {"initializationOptions", {{"clangFormat", identity.string()}}}}));
+    const std::optional<json> started = server.response(1);
+    CHECK(started &&
+          (*started)["result"]["capabilities"]["documentFormattingProvider"] ==
+              true);
+    server.send(notification("initialized", json::object()));
+    const std::string uri = pathToUri(root / "Spawner.cpp");
+    server.send(notification("textDocument/didOpen",
+                             {{"textDocument",
+                               {{"uri", uri},
+                                {"languageId", "cpp"},
+                                {"version", 1},
+                                {"text",
+                                 "void spawn()\n{\n  int x = 0;\n  if (x)\n    "
+                                 "x = 1;\n  x = 2;\n}\n"}}}}));
+    const auto insertsAt = [](const json& edit, int line)
+    {
+      return edit["range"]["start"] == position(line, 0) &&
+             edit["range"]["end"] == position(line, 0) &&
+             edit["newText"] == "\n";
+    };
+    server.send(
+        request(30,
+                "textDocument/formatting",
+                {{"textDocument", {{"uri", uri}}},
+                 {"options", {{"tabSize", 2}, {"insertSpaces", true}}}}));
+    const std::optional<json> whole = server.response(30);
+    CHECK(whole && (*whole)["result"].size() == 2u);
+    if (whole && (*whole)["result"].size() == 2u)
+    {
+      CHECK(insertsAt((*whole)["result"][0], 3));
+      CHECK(insertsAt((*whole)["result"][1], 5));
+    }
+    server.send(request(
+        31,
+        "textDocument/rangeFormatting",
+        {{"textDocument", {{"uri", uri}}},
+         {"range", {{"start", position(0, 0)}, {"end", position(4, 0)}}},
+         {"options", {{"tabSize", 2}, {"insertSpaces", true}}}}));
+    const std::optional<json> part = server.response(31);
+    CHECK(part && (*part)["result"].size() == 1u);
+    if (part && (*part)["result"].size() == 1u)
+      CHECK(insertsAt((*part)["result"][0], 3));
+    std::filesystem::remove_all(root);
+  }
+
   TEST("malformed JSON should get ParseError and the server should carry on")
   {
     LspProcess server;

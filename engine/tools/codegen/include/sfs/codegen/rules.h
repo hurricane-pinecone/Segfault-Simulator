@@ -85,6 +85,9 @@ enum class RuleId : uint8_t
   ServiceUpdateMethod,
   EngineInternal,
   BadIgnore,
+  ConstexprName,
+  NestedTernary,
+  ElseAfterReturn,
   Count,
 };
 
@@ -119,6 +122,11 @@ struct RuleInfo
   bool reserved;
   /** One sentence: the docs table, completion and hover. */
   std::string_view summary;
+  /**
+   * A house rule: SFS's and its games' own style, off unless a tree's
+   * `.sfs-lint` includes `house`, and listed in the docs' house table.
+   */
+  bool house = false;
 };
 
 /** Every rule, in the order the docs list them (the RuleId order). */
@@ -149,7 +157,16 @@ std::string_view toolName(RuleSource source);
 /** "error" or "warning". */
 std::string_view severityName(Severity severity);
 
-/** The docs' rule table (docs/editor/sfs-lsp/index.md), as Markdown. */
+/**
+ * The docs' rule table (docs/editor/sfs-lsp/index.md), as Markdown: every rule
+ * but the reserved and house ones.
+ */
 std::string ruleDocsTable();
+
+/**
+ * The docs' house rule table (docs/editor/sfs-lsp/index.md, the
+ * `sfs-house-rules` block), as Markdown: the house rules.
+ */
+std::string houseRuleDocsTable();
 
 } // namespace sfs::codegen

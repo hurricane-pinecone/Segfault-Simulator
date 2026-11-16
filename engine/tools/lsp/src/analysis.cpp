@@ -1,5 +1,7 @@
 #include "analysis.h"
 
+#include "houseLints.h"
+#include "lintConfig.h"
 #include "lints.h"
 #include "projectIndex.h"
 
@@ -90,17 +92,23 @@ void analyse(Document& document,
              document.diagnostics,
              read,
              &result.events);
+  const LintConfig config = lintConfigFor(document.path);
+  if (config.house)
+    runHouseLints(document.text,
+                  document.tree.get(),
+                  document.path,
+                  document.diagnostics);
   if (parsed && document.role == FileRole::CodegenHeader)
     *parsed = std::move(result);
   codegen::applySuppressions(document.suppressions, document.diagnostics);
-  if (disabled.any())
-    std::erase_if(
-        document.diagnostics,
-        [&](const codegen::Diagnostic& diagnostic)
-        {
-          return codegen::canIgnore(diagnostic.rule) &&
-                 disabled.test(static_cast<std::size_t>(diagnostic.rule));
-        });
+  const codegen::RuleSet off = disabled | config.disabled;
+  if (off.any())
+    std::erase_if(document.diagnostics,
+                  [&](const codegen::Diagnostic& diagnostic)
+                  {
+                    return codegen::canIgnore(diagnostic.rule) &&
+                           off.test(static_cast<std::size_t>(diagnostic.rule));
+                  });
   std::stable_sort(
       document.diagnostics.begin(),
       document.diagnostics.end(),

@@ -1,0 +1,45 @@
+#pragma once
+
+#include <sfs/sfs.h>
+
+#include <vector>
+
+// Moves the players.
+class PlayerSystem : public sfs::System
+{
+  // Scratch, reused each frame.
+  std::vector<int> m_scratch;
+
+public:
+  /** The players' top speed. */
+  float topSpeed() const;
+  /** Makes one. */
+  explicit PlayerSystem(float speed);
+  ~PlayerSystem() override;
+
+  /** Adds a player. */
+  void add(int id);
+  /** Adds a player at a place. */
+  void add(int id, float x);
+  [[nodiscard]] bool empty() const { return m_count == 0; }
+
+  /** A player's state. */
+  struct State
+  {
+    int health = 0;
+    float speed = 0.0f;
+    void reset();
+  };
+
+protected:
+  void update(double deltaTime) override;
+  void create() override;
+
+private:
+  template <typename T>
+  T* find(int id);
+  int m_count = 0; // how many there are
+  [[sfs::hide]]
+  float m_speed = 1.0f;
+  void step(State& state);
+};

@@ -16,7 +16,8 @@ add_test(NAME codegenTests COMMAND codegenTests)
 set_tests_properties(codegenTests PROPERTIES LABELS tools)
 
 # sfs-lsp: documents and encodings, completion and hover, lints and code
-# actions, and the server over pipes (POSIX: it spawns the built sfs-lsp).
+# actions, the formatter, and the server over pipes (POSIX: it spawns the
+# built sfs-lsp).
 function(add_lsp_test name)
     add_executable(${name} ${name}.cpp)
     target_link_libraries(${name} PRIVATE sfs-lsp-lib)
@@ -33,6 +34,11 @@ endfunction()
 add_lsp_test(lspDocumentTests)
 add_lsp_test(lspCompletionTests)
 add_lsp_test(lspLintTests)
+add_lsp_test(lspHouseLintTests)
+add_lsp_test(lspFormatTests)
+# Its docs test reads the house rule table from the docs page.
+target_compile_definitions(lspHouseLintTests PRIVATE
+    SFS_DOCS_DIR="${PROJECT_SOURCE_DIR}/docs")
 if(NOT WIN32)
     add_lsp_test(lspProtocolTests)
 endif()

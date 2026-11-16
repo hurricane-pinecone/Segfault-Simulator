@@ -18,9 +18,11 @@ inline constexpr std::size_t kMaxAnalysedSize = 2u * 1024u * 1024u;
 
 /**
  * Works out a document's diagnostics: codegen's for a header codegen reads
- * (from the document's own tree), the lints, then what its sfs-ignore comments
- * and `disabled` hide. Reparses the tree first if it's stale. Fills
- * `document.diagnostics`, `suppressions` and `role`, and clears `dirty`.
+ * (from the document's own tree), the lints (the house lints too where the
+ * nearest `.sfs-lint` includes them), then what its sfs-ignore comments,
+ * `disabled` and the `.sfs-lint`'s `disable` hide. Reparses the tree first if
+ * it's stale. Fills `document.diagnostics`, `suppressions` and `role`, and
+ * clears `dirty`.
  *
  * @param document the document
  * @param parser the server's C++ parser

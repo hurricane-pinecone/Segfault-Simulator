@@ -17,9 +17,9 @@ constexpr Severity E = Severity::Error;
 constexpr RuleSource C = RuleSource::Codegen;
 constexpr RuleSource L = RuleSource::Lint;
 
-// A new rule goes at the end of its tool's rows, with its RuleId enumerator in
-// the same place. Names are never changed once shipped: sfs-ignore comments
-// name them.
+// A new rule goes at the end of its tool's rows (a house rule at the very end,
+// after bad-ignore), with its RuleId enumerator in the same place. Names are
+// never changed once shipped: sfs-ignore comments name them.
 constexpr std::array<RuleInfo, static_cast<std::size_t>(Count)> kRules = {{
     {NoScriptType,
      "no-script-type",
@@ -454,6 +454,39 @@ constexpr std::array<RuleInfo, static_cast<std::size_t>(Count)> kRules = {{
      false,
      "An `sfs-ignore` comment should name known warning rules in the "
      "right form. Fix the comment."},
+    {ConstexprName,
+     "constexpr-name",
+     W,
+     L,
+     false,
+     false,
+     false,
+     "A `constexpr` variable should be named in UPPER_SNAKE_CASE. Rename it "
+     "(`kMaxItems` becomes `MAX_ITEMS`), and make a value someone may want to "
+     "tune authored data instead.",
+     true},
+    {NestedTernary,
+     "nested-ternary",
+     W,
+     L,
+     false,
+     false,
+     false,
+     "A ternary should not be nested inside another, though two kept apart are "
+     "fine. Work the inner one out into its own named variable first, and use "
+     "that in the outer ternary.",
+     true},
+    {ElseAfterReturn,
+     "else-after-return",
+     W,
+     L,
+     false,
+     false,
+     false,
+     "An `else` should not follow a branch that ends in `return`, `continue`, "
+     "`break` or `throw`. Drop the `else` and write its code after the `if`, "
+     "so the main path isn't nested.",
+     true},
 }};
 
 constexpr bool inOrder()
@@ -545,7 +578,7 @@ std::string ruleDocsTable()
                     "| --- | --- | --- | --- |\n";
   for (const RuleInfo& rule : kRules)
   {
-    if (rule.reserved)
+    if (rule.reserved || rule.house)
       continue;
     out += "| `";
     out += rule.name;
@@ -554,6 +587,23 @@ std::string ruleDocsTable()
     out += " | ";
     out += severityName(rule.severity);
     out += " | ";
+    out += rule.summary;
+    out += " |\n";
+  }
+  return out;
+}
+
+std::string houseRuleDocsTable()
+{
+  std::string out = "| Rule | What it says |\n"
+                    "| --- | --- |\n";
+  for (const RuleInfo& rule : kRules)
+  {
+    if (rule.reserved || !rule.house)
+      continue;
+    out += "| `";
+    out += rule.name;
+    out += "` | ";
     out += rule.summary;
     out += " |\n";
   }

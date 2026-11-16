@@ -171,3 +171,222 @@ system once after a change (`ProjectIndex::buildLookup()`) and keeps the
 senders by type, so a file's check costs a lookup per send, and the whole
 project's about as much as reading it. An engine response type no project
 request lists isn't known, so its sends aren't checked.
+
+## House lints
+
+### The .sfs-lint lookup
+
+`analyse()` (`analysis.cpp`) asks `lintConfigFor()` (`lintConfig.cpp`) for
+the file's settings, so the server, `--check` and `--fix` all get them. It
+looks for `.sfs-lint` in the file's folder and each folder above it
+(`findLintConfig()`: a stat per folder, every analysis, so a file added or
+removed counts at once). Each config file's settings are cached by path and
+read again when its modification time or size changes; its warnings go to
+stderr each time it's read, where the server's log and the CLI's errors go. A
+relative path is looked up only through the folders it names (the server and
+the CLI always pass absolute ones), so the tests' made-up paths (`/t/f.cpp`)
+find none. With `include: house`, `runHouseLints()` (`houseLints.cpp`) runs
+after the other lints; the file's `disable` list joins the user's disabled
+rules before they're filtered out. Rules with `RuleInfo::house` come last in
+the rule table, and `houseRuleDocsTable()` writes the docs' house table (a
+test keeps the two alike).
+
+The house lints are one walk of the tree (ERROR subtrees skipped) that
+dispatches on node kinds by symbol. constexpr-name's checks wait until the
+walk is done, since they need every constant of the file.
+
+### constexpr-name
+
+A `declaration` or `field_declaration` with a `constexpr` type qualifier;
+each declarator, through init, pointer, reference and array declarators, to a
+plain name (functions and qualified out-of-line definitions aren't
+variables). It's reported when the name has a lower-case letter.
+
+Its scope is the nearest of: a class body (class), a namespace body or the
+file (namespace; one under a brace-less `extern "C"` is `extern`: no fix),
+anything else (a block, a `case`, a `for`, `if` or `while` header: block).
+The fix is offered for a block's constant, and for a namespace constant in a
+source file without `extern`, when every whole-word occurrence of the old name
+in code (the node tree-sitter gives for those bytes isn't a comment or a
+literal) in its region is one of:
+- the declaration itself;
+- an unqualified identifier that isn't a declarator;
+- a type name the grammar can't tell from a value: a lone template argument
+  (`f<kSize>()`), or a block's `T name(kSize);`, which it reads as a function
+  declaration;
+- a member (`p.kSize`, `.kSize =`), or a name qualified by another scope
+  (for a namespace constant, a qualifier other than one of the namespaces
+  around it; for a block's, any qualifier): not the constant, left alone.
+
+A block's region runs from the declaration to its block's (or statement's)
+end; a namespace constant's is the whole file, and any occurrence above it
+drops the fix. Anything else (another declaration of the name, a macro's
+text, a member declared with the name) drops it too. The new name is taken
+when it's written in code anywhere in the file, or when another flagged
+constant of the file, under another old name, gets the same new one (both
+fixes in one `--fix` pass would clash).
+
+### nested-ternary
+
+From each `conditional_expression`, up through its parents: another
+`conditional_expression` reports the inner one; a `lambda_expression`, a
+declaration, a statement, a function definition or the file stops the climb.
+
+### else-after-return
+
+An `if_statement` that is a statement of a block or a `case`, without
+`constexpr` or `consteval`, with an else, whose branch ends in a jump
+(`endingJump()`: a `return`, `continue`, `break` or `throw` statement, a
+block whose last statement does, comments aside, or an `if`/`else` whose
+branches both do). An `if` that is another's `else if` isn't reported (as
+clang-tidy's readability-else-after-return): fixing the outer one makes it a
+statement of the block, and it's reported then. The warning is on the `else`
+keyword.
+
+The fix replaces everything from the branch's end (or the end of a comment on
+the branch's last line) to the else's end with one blank line and the else's
+code. The if's indent is its line's leading whitespace (the fix needs the if
+to start its line); the moved code's base indent is its first line's, and
+each line starting with it gets the if's instead, so whatever indent step the
+file uses goes; a line indented less loses up to the difference (a
+preprocessor line at column 0 stays). Blank lines stay blank, and line breaks
+are the file's (`\r\n` too). A block's braces go; a one-line block's code
+becomes one line; an empty block leaves nothing. A statement on the else's
+own line (an `else if`) moves as it is, its later lines unchanged, as an
+`else if` chain is already indented as the if.
+
+There's no fix when the if or anything in it has a parse error, a comment is
+in the else clause or between the branch and the else other than on the
+branch's last line, something follows the else block's closing brace on its
+line, the else block has code on its opening brace's line and more lines
+after it, or the else holds a string literal of several lines. The else's
+declarations (the names its top-level statements declare: variables,
+functions, types, aliases) must not be declared before the if in its block,
+by the statement owning the block (anything declared outside its blocks: a
+function's or lambda's parameters, a loop's, if's or catch's variables), or
+written anywhere in the block after the if; in a `case` they can't move at
+all (a jump to a later label would cross them). The names the if's condition
+declares mustn't be written in the else.
+
+## The formatter
+
+`sfs-lsp --format` and the server's `textDocument/formatting` and
+`rangeFormatting` share `formatSource()` (`format.cpp`): clang-format, then
+the house passes under a `.sfs-format`, then clang-format again if the passes
+moved anything (moved lines may need their trailing comments aligned again).
+The passes work on the clang-formatted text's tree, so they see its layout:
+one declaration per line, braces on lines of their own.
+
+### clang-format
+
+`runProcess()` (`runProcess.cpp`) runs it with the text on stdin,
+`--assume-filename=<file>` (so it finds the file's `.clang-format` and
+language) and `--fallback-style=none`, reading stdout and stderr as it writes
+(a poll loop on POSIX, threads on Windows), so neither pipe can fill and
+block it; it's killed after 20 seconds. On POSIX, SIGPIPE is blocked for the
+calling thread meanwhile, so a clang-format that dies early gives EPIPE rather
+than ending the server, and the child starts with the default signal state.
+The file is named `runProcess` because MinGW's C runtime has a `process.h`
+that a `process.h` in the server's include folder would hide.
+
+### Entries
+
+Both ordering passes (`formatOrder.cpp`) cut a body (a class body, the file,
+a namespace body) into entries with `splitEntries()`: each named child with
+the comments above it (back to the previous entry, blank lines between kept
+inside the entry) and a comment on its last line. An entry is whole lines:
+two things on one line, a declaration on a brace's line, or a stray token make
+the body keep its order. Comments after a body's last entry are a node-less
+entry that stays last. A divider comment on its own line (`// ---`, `// ===`)
+is an entry of its own: a barrier in a scope, and in a class body a reason to
+keep the class's order. A label's colon and a class's semicolon belong to the
+entry before them. `Rewrite` (`formatLines.cpp`) holds each reordered body's
+new text by row range; bodies are done innermost first, and an outer body's
+entries are rendered through the inner replacements, which its own then
+replaces.
+
+A body that "doesn't parse" has an ERROR node or a missing token
+(`parsesBadly()`); a missing name doesn't count, since tree-sitter-cpp reads
+a default argument `= {}` as a compound literal missing its type, and those
+are everywhere.
+
+### Class bodies
+
+`classify()` sorts each entry into the head (nested types, aliases, using
+and friend declarations, static_asserts), methods (a declarator that reaches
+a function declarator through pointers and references; a function pointer's
+is in parentheses, so it's a field) and fields (static or not). Constructors
+are methods named after the class with no return type. A type defined with a
+field of it (`struct Walk {...} walk;`) is that field, and declares the type's
+name. Anything else (a macro, which tree-sitter reads as a field with a
+missing semicolon or as an ERROR) makes the class keep its order.
+
+Two checks guard what the compiler would catch late or not at all:
+- without `sort-fields`, the non-static fields must come out in their order;
+- `collectUses()` gathers the names each entry's signature uses (not function
+  bodies, constructor initialisers or a non-static member's initialiser, which
+  see the whole class), and no entry may end up above one it came after whose
+  declared names (types, aliases, enumerators of an unscoped enum, static data
+  members) it uses.
+
+Blank lines: neighbours that were neighbours (same section, next in order)
+keep their separator; new neighbours in a group are separated as most of the
+group's old neighbour pairs were (else the section's). Groups are separated
+by one blank line, labels by one blank line before them.
+
+### Definitions
+
+The headers come from `headersOf()`: the file's stem with a header extension
+beside it, then each quoted include resolved against the file's folder, each
+folder above it and that folder's `include/` (as `engine/src/x.cpp` finds
+`engine/include/...`), at most 16. `collectDeclared()` reads each one's
+classes (their nesting path, and the methods with a virtual specifier), the
+namespaces and the free function declarations, then the source's own.
+
+A qualified definition's scope is matched against the classes by the longest
+path suffix (`sfs::lsp::Server::run` matches `Server`). A scope that's a
+namespace a header declares holds free functions; a scope with a constructor,
+destructor or engine hook defined in the file is taken as a class (overrides
+are then the known hooks); anything else makes the file keep its order.
+
+Barriers split a body into segments: preprocessor lines, divider comments,
+namespaces (ordered on their own), linkage blocks, using-declarations and directives, namespace
+aliases, explicit specialisations and instantiations, and statements at file
+scope. An `#if` or `#ifdef` among a scope's entries makes the whole file keep
+its order: its branches may define the same thing twice.
+
+Pinning: a free function stays in the head when an entry that moves from
+after it to before it uses its name and no declaration of it is known
+(`Known::functions`: the headers', and the file's own forward declarations);
+repeated until nothing changes, since a pinned helper moving up may need
+another. A definition with a deduced return type, or constexpr, used by an
+entry that moves above it makes the file keep its order, and so does a free
+function (a pinned helper, or a head entry's declaration) moving above an
+entry that came before it and uses its name: that entry's calls would see an
+overload they didn't. Names are compared as identifiers, so a member called
+like a helper pins it too: harmless.
+
+### Blank lines round control blocks
+
+`addControlBlankLines()` (`formatBlankLines.cpp`) walks every compound
+statement and case: a control statement's unit is it and the comments
+directly above it (each on its own line); a blank line goes above the unit
+when the thing before it ends on the line just above, and below the statement
+(after a comment on its last line) when the next thing starts on the next
+line. Preprocessor neighbours and badly parsed ones are left alone, and range
+formatting keeps only the rows in its range.
+
+### Safety and edits
+
+`sameLines()` compares the passes' input and output as sorted lists of
+non-blank lines without trailing whitespace, access labels left out. The
+editor gets `lineEdits()`: a Myers diff of the lines (after the common prefix
+and suffix), each hunk a TextEdit at line starts, so positions need no
+encoding but at the end of a file without a final line break. Past 1000 edit
+steps (a whole-file reorder) it's one hunk.
+
+Timings of `sfs-lsp --format --check` on one file (WSL, clang-format 17.0.6,
+an `-Og` build), whole and without clang-format (the house passes, the parses
+and the headers read): a game's 4884-line source 0.56 s (0.21 s), a 2507-line
+one with many headers 0.40 s (0.20 s), the 4390-line `entityLints.cpp` 0.25 s
+(0.13 s), a 587-line header 0.13 s (0.04 s).

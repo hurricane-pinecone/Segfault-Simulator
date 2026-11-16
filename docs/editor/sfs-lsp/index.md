@@ -16,6 +16,11 @@ and merges what both say:
   never match, a system reading another system, a component given its own
   entity, or an old form of the entity API. Several come with a fix, and
   `sfs-lsp --fix` applies fixes across a tree.
+- **[House rules](#house-rules)**: SFS's own code style, where a `.sfs-lint`
+  file turns them on.
+- **[Formatting](#formatting)**: clang-format, then, where a `.sfs-format`
+  file turns them on, SFS's own layout rules (class and definition order,
+  blank lines round control blocks), on save and from the command line.
 - **Ignoring a warning.** Every warning can be hidden where it's reported with
   an `sfs-ignore` comment, and the code actions insert one for you.
 
@@ -351,6 +356,136 @@ rule to one that's there), and **Ignore <rule> in this file**, which adds an
 Inside the comment's parentheses, completion lists the rules, those reported
 where the comment applies first, and hovering a rule shows what it's for.
 
+## House rules
+
+The house rules check SFS's own code style, which games built on SFS may share.
+They're off unless a tree turns them on with a `.sfs-lint` file; the SFS source
+tree has one at its root. They're warnings like any other, so `sfs-ignore`,
+`disabledRules` and `--disable` work on them, and their fixes are offered in
+your editor and applied by `sfs-lsp --fix`.
+
+<!-- sfs-house-rules:begin -->
+| Rule | What it says |
+| --- | --- |
+| `constexpr-name` | A `constexpr` variable should be named in UPPER_SNAKE_CASE. Rename it (`kMaxItems` becomes `MAX_ITEMS`), and make a value someone may want to tune authored data instead. |
+| `nested-ternary` | A ternary should not be nested inside another, though two kept apart are fine. Work the inner one out into its own named variable first, and use that in the outer ternary. |
+| `else-after-return` | An `else` should not follow a branch that ends in `return`, `continue`, `break` or `throw`. Drop the `else` and write its code after the `if`, so the main path isn't nested. |
+<!-- sfs-house-rules:end -->
+
+### .sfs-lint
+
+```
+# The house style, for everything under this folder.
+include: house
+disable: nested-ternary
+```
+
+- sfs-lsp looks for `.sfs-lint` the way clangd looks for `.clangd`: in the
+  file's folder, then in each folder above it. The nearest one wins, alone:
+  files are never merged. A folder of code that isn't yours (a vendored
+  library) can turn the house rules off with a `.sfs-lint` of its own that
+  doesn't include them.
+- Each line is `key: value`, and `#` starts a comment. `include: house` turns
+  the house rules on. `disable: rule, ...` turns warning rules off for the files
+  under it, house rules or any other; errors and `bad-ignore` can't be turned
+  off.
+- A key, rule set or rule it doesn't know is skipped with a warning
+  (`sfs-lsp: <file>:<line>: unknown key 'size'`) in the server's log, or on
+  stderr for `--check` and `--fix`.
+- A change to the file counts at the next check: there's nothing to restart.
+
+### constexpr-name
+
+```cpp
+// Wrong
+constexpr int kMaxEnemies = 8;
+constexpr float spawnDelay = 2.0f;
+
+// Right
+constexpr int MAX_ENEMIES = 8;
+constexpr float SPAWN_DELAY = 2.0f;
+```
+
+Keep `constexpr` to a minimum: a value someone may want to tune is authored
+data (a component's field, or a
+[ScriptableObject](../../core/assets/index.md)), not a constant. One that must
+stay is named in UPPER_SNAKE_CASE. The new name drops a `k` prefix, splits
+words where the case changes, keeps an acronym whole (`kHTTPPort` becomes
+`HTTP_PORT`) and keeps digits with the word before them (`kVec3Size` becomes
+`VEC3_SIZE`).
+
+The fix renames the constant and its uses, for a constant only its own file
+can see: one in a function, or one at namespace scope in a source file (not
+`extern`). A header's constant, or a class's, may be used in other files, so the
+warning names the new name and leaves the renaming to clangd's rename. There's
+no fix either when the new name is already used in the file, or when a use
+can't safely be renamed with it: one its own namespace qualifies
+(`spawning::kMaxEnemies`), one in a macro, or the name declared again where the
+constant is seen. Members of that name (`wave.kMaxEnemies`) and names another
+scope qualifies (`Wave::kMaxEnemies`) aren't the constant, and stay as they
+are, as do comments that mention the old name.
+
+### nested-ternary
+
+```cpp
+// Wrong
+const float speed = running ? (tired ? 4.0f : 8.0f) : 1.0f;
+
+// Right
+const float runSpeed = tired ? 4.0f : 8.0f;
+const float speed = running ? runSpeed : 1.0f;
+```
+
+A ternary inside another one's condition or branches, in parentheses or not,
+and however deep (`a ? heal(b ? 1 : 2) : 3`). Two side by side
+(`(a ? 1 : 2) + (b ? 3 : 4)`) are fine, and so is one in the body of a lambda
+inside another. There's no fix: the inner value needs a name only you can give
+it.
+
+### else-after-return
+
+```cpp
+// Wrong
+if (!target)
+{
+  return;
+}
+else
+{
+  attack(target);
+}
+
+// Right
+if (!target)
+{
+  return;
+}
+
+attack(target);
+```
+
+An `else` after an `if` branch that always ends in `return`, `continue`,
+`break` or `throw`: as its last statement, or in every branch of an
+`if`/`else` it ends with. Handle the case and leave, so the main path isn't
+nested. Not for `if constexpr`, whose `else` decides what's compiled, nor for
+an `if` that isn't directly in a block.
+
+The fix removes the `else` and its braces, and moves its code after the `if`,
+one level less indented, with a blank line above it. An `else if` becomes an
+`if` of its own, whose `else` is reported in turn. There's no fix when moving
+the code could change what it means, or leave a comment stranded:
+
+- a declaration in the `else` clashes with a name of the block around the `if`
+  (one declared before it, a parameter, a loop's variable) or with a name the
+  code after the `if` uses;
+- the `else` uses a variable the `if` declares
+  (`if (auto* hit = find(); !hit)`);
+- a comment is on the `else`'s line, between the branch and the `else`, or
+  after the `else` block's closing brace;
+- the `else` holds a string literal of several lines, which unindenting would
+  change;
+- the `if` is in a `case`, and the `else` declares something.
+
 ## Where it is
 
 `sfs-lsp` is built and installed with the engine, beside `sfs-codegen`:
@@ -503,6 +638,152 @@ fix made too long yourself. Run it again and nothing changes. For the entity
 API's migration the order is
 `setup-in-constructor,is-alive,has-then-get,row-lookup,component-pointer`: each
 rule leaves the new forms, which the later ones skip.
+
+## Formatting
+
+sfs-lsp formats C and C++ files for your editor (format on save, or a format
+command) and from the command line. It runs clang-format with the file's
+`.clang-format`, and then, in a tree whose root has a `.sfs-format` file, the
+house passes: SFS's own layout rules, which clang-format can't express.
+
+### clang-format
+
+Formatting needs clang-format. sfs-lsp runs the one named by the
+`clangFormat` init option, else by the `SFS_CLANG_FORMAT` environment variable,
+else `clang-format` (or `clang-format-17`) on your `PATH`. Different
+clang-format versions lay code out a little differently, so use the version
+your project pins (SFS's CI pins 17.0.6):
+
+```bash
+python3 -m venv ~/.local/share/sfs-clang-format
+~/.local/share/sfs-clang-format/bin/pip install clang-format==17.0.6
+ln -sf ~/.local/share/sfs-clang-format/bin/clang-format ~/.local/bin/clang-format
+```
+
+Without a `.clang-format` above the file, clang-format leaves it as it is.
+Without clang-format at all, your editor gets a warning once and only the house
+passes run; the command line refuses.
+
+### The house passes
+
+A `.sfs-format` file at a tree's root (found from the file upwards, like
+`.clang-format`; the nearest wins) turns them on:
+
+```yaml
+# Format this tree in the house style: see docs/editor/sfs-lsp.
+sort-fields: false
+exclude: engine/lib, build
+```
+
+| Key | Means |
+| --- | --- |
+| `sort-fields` | `true` sorts member variables alphabetically too. Off by default: a struct's field order is its aggregate initialisation order (`Color{r, g, b, a}`), its memory layout, the order its members are made and destroyed in, and the order the inspector shows them. |
+| `exclude` | Folders, relative to the `.sfs-format`, whose files aren't formatted at all (vendored code). |
+
+The passes, after clang-format:
+
+- **Headers: class order.** In every class and struct: the sections public,
+  protected, private (sections of one access merged); in each, the nested
+  types, aliases, `using` and `friend` declarations and `static_assert`s first,
+  in their order (later declarations may need them); then the methods
+  (constructors, the destructor and `operator=` first, then alphabetically,
+  overloads keeping their order); then the member variables, in their order. A
+  declaration moves with the comments above it and the one beside it, and its
+  attributes.
+- **Sources: definition order.** In each scope (the file, each namespace):
+  constants, variables, types and declarations first, in their order; then each
+  class's member definitions (the constructors, the destructor, `operator=`,
+  the overrides with `create()` and `update()` first, then the other methods
+  alphabetically), classes in the order their headers declare them; then the
+  free functions. Overrides are read from the class's header (`override`,
+  `final`). Includes, preprocessor lines, namespaces, `using` directives,
+  explicit specialisations and divider comments (`// --- Name ---`) stay where
+  they are, and nothing moves across them: a file divided into parts is
+  ordered part by part.
+  A helper that something moving above it calls stays with the constants
+  unless it's declared earlier (a forward declaration, or its header), since
+  C++ needs a function declared before it's called.
+- **Every file: blank lines round control blocks.** An `if`, `for`, `while`,
+  `do` or `switch` gets a blank line above it (above its comments) unless it's
+  the first thing in its block or case, and one below it when code follows.
+
+Where a change can't be made safely, that part keeps its order, and the editor's
+log (or the command line) says why: a class or file that doesn't parse, an
+`#if` region among a source's definitions, a macro or a divider comment in a
+class body, a section
+order that would change the fields' order, or a declaration that would move
+above a name it uses. The passes only move whole lines and add blank lines and
+access labels: when their result doesn't have the same lines as their input,
+it's dropped and only clang-format's changes are kept. Formatting twice changes
+nothing.
+
+Long ternaries break with `?` and `:` leading their lines; that's clang-format's
+`BreakBeforeTernaryOperators`, on in the LLVM style. Renaming constants is a
+lint's fix, not formatting: see [constexpr-name](#constexpr-name).
+
+### In your editor
+
+sfs-lsp offers document and range formatting; a range gets clang-format and the
+blank lines, and no reordering. clangd formats too (with its own built-in
+clang-format), so let sfs-lsp do it. In Neovim:
+
+```lua
+-- Format C and C++ with sfs-lsp on save; clangd doesn't format.
+vim.api.nvim_create_autocmd("LspAttach", {
+  callback = function(args)
+    local client = vim.lsp.get_client_by_id(args.data.client_id)
+    if client and client.name == "clangd" then
+      client.server_capabilities.documentFormattingProvider = false
+      client.server_capabilities.documentRangeFormattingProvider = false
+    end
+  end,
+})
+vim.api.nvim_create_autocmd("BufWritePre", {
+  pattern = { "*.h", "*.hpp", "*.cpp" },
+  callback = function(args)
+    vim.lsp.buf.format({ bufnr = args.buf, name = "sfs_lsp" })
+  end,
+})
+```
+
+`:lua vim.lsp.buf.format({ name = "sfs_lsp" })` formats once. LazyVim already
+formats on save through the servers that can: keep the `LspAttach` part, and
+leave out the `BufWritePre` one. To name clang-format in the config instead of
+the environment, add `init_options = { clangFormat = "/path/to/clang-format" }`
+beside `cmd`.
+
+In VS Code with the Generic LSP Client, make it the C++ formatter:
+`"[cpp]": { "editor.defaultFormatter": "llllvvuu.glspc", "editor.formatOnSave": true }`.
+In CLion, LSP4IJ's server settings can let the language server format.
+
+### From the command line
+
+```bash
+sfs-lsp --format [--check] [--clang-format PATH] [--root DIR] PATH...
+```
+
+formats the C++ files under the paths in place, printing `formatted FILE` for
+each it changed, and why a class or file kept its order on stderr. With
+`--check` it writes nothing and lists the files that would change. It exits
+with 1 when `--check` found one, or when a file couldn't be formatted or
+written; with 2 for bad arguments, paths with no C++ files under them, or no
+clang-format; and with 0 otherwise.
+
+A pre-commit hook can refuse unformatted files. This one isn't installed in SFS
+yet:
+
+```bash
+#!/usr/bin/env bash
+# .githooks/pre-commit: refuse a commit whose C++ files aren't formatted.
+files="$(git diff --cached --name-only --diff-filter=ACMR | grep -E '\.(cpp|h|hpp)$' || true)"
+[ -z "$files" ] && exit 0
+if ! sfs-lsp --format --check $files; then
+  echo "pre-commit: format these with sfs-lsp --format, then stage them again." >&2
+  exit 1
+fi
+```
+
+It checks the working copies: stage a file whole before you commit it.
 
 ## The .clangd files
 

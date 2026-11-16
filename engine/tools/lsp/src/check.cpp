@@ -1,4 +1,5 @@
 #include "analysis.h"
+#include "format.h"
 #include "server.h"
 
 #include <sfs/codegen/parser.h>
@@ -46,7 +47,9 @@ void usage()
 {
   std::cerr
       << "usage: sfs-lsp --check [--root DIR] [--disable RULE]... PATH...\n"
-         "       sfs-lsp --fix RULE[,RULE...] [--root DIR] PATH...\n";
+         "       sfs-lsp --fix RULE[,RULE...] [--root DIR] PATH...\n"
+         "       sfs-lsp --format [--check] [--clang-format PATH] [--root DIR] "
+         "PATH...\n";
 }
 
 // What --check and --fix are run on.
@@ -361,6 +364,70 @@ int runFix(const std::vector<std::string>& args)
     }
   }
   return failed ? 1 : 0;
+}
+
+int runFormat(const std::vector<std::string>& args)
+{
+  bool check = false;
+  std::string configured;
+  std::vector<std::string> rest;
+  for (std::size_t i = 0; i < args.size(); ++i)
+  {
+    if (args[i] == "--check")
+      check = true;
+    else if (args[i] == "--clang-format")
+    {
+      if (i + 1 >= args.size())
+      {
+        usage();
+        return 2;
+      }
+      configured = args[++i];
+    }
+    else
+      rest.push_back(args[i]);
+  }
+  Run run;
+  if (!readRun(rest, false, run))
+    return 2;
+  const std::string clangFormat = findClangFormat(configured);
+  if (clangFormat.empty())
+  {
+    std::cerr << "sfs-lsp: clang-format wasn't found: pass --clang-format "
+                 "PATH, set SFS_CLANG_FORMAT, or put it on PATH\n";
+    return 2;
+  }
+
+  const ParserPtr parser = makeCppParser();
+  bool failed = false;
+  bool changed = false;
+  for (const std::filesystem::path& file : run.files)
+  {
+    const std::string text = codegen::readFile(file);
+    FormatRequest request;
+    request.text = text;
+    request.path = file;
+    request.clangFormat = clangFormat;
+    const FormatResult result = formatSource(request, parser.get());
+    if (result.excluded)
+      continue;
+    for (const std::string& note : result.notes)
+      std::cerr << file.string() << ": " << note << '\n';
+    failed |= result.clangFormatFailed || result.refused;
+    if (result.text == text)
+      continue;
+    changed = true;
+    if (check)
+      std::cout << file.string() << '\n';
+    else if (writeFileAtomically(file, result.text))
+      std::cout << "formatted " << file.string() << '\n';
+    else
+    {
+      std::cerr << "sfs-lsp: couldn't write " << file.string() << '\n';
+      failed = true;
+    }
+  }
+  return failed || (check && changed) ? 1 : 0;
 }
 
 } // namespace sfs::lsp

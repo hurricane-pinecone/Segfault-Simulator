@@ -1,0 +1,50 @@
+#include "blankLines.h"
+
+int scoreOf(const Player& player, int bonus)
+{
+  int score = player.points;
+  if (score < 0)
+    return 0;
+  if (bonus > 0)
+  {
+    score += bonus;
+  }
+  else if (bonus < 0)
+    score -= 1;
+  score *= 2;
+  // Each item counts once.
+  for (const Item& item : player.items)
+    score += item.value; // the item's own worth
+  // Done counting.
+  while (score > 1000)
+    score /= 2;
+
+  switch (player.level)
+  {
+  case 1:
+    score += 1;
+    for (int i = 0; i < 3; ++i)
+      score += i;
+    break;
+  case 2:
+    if (bonus)
+      score += 2;
+    break;
+  }
+  const auto add = [&](int extra)
+  {
+    score += extra;
+    if (extra > 3)
+      score -= 1;
+    return score;
+  };
+#if defined(BONUS_ROUND)
+  if (bonus)
+    score += 10;
+#endif
+  do
+  {
+    score -= 1;
+  } while (score > 900);
+  return add(1);
+}

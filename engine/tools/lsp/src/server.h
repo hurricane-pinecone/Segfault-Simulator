@@ -54,6 +54,9 @@ private:
                           const nlohmann::json& params);
   nlohmann::json initialize(const nlohmann::json& params);
   void send(const nlohmann::json& message);
+  nlohmann::json
+  format(const Document& document, const nlohmann::json& params, bool ranged);
+  void showMessage(int type, const std::string& message);
 
   Document* find(const nlohmann::json& textDocument);
   const Document* openDocument(const std::filesystem::path& path) const;
@@ -74,6 +77,8 @@ private:
   bool m_shutdown = false;
   std::optional<int> m_exitCode;
   ClientSettings m_settings;
+  std::string m_clangFormat; // initializationOptions.clangFormat
+  bool m_toldNoClangFormat = false;
   std::filesystem::path m_root;
   std::vector<std::unique_ptr<Document>> m_documents;
   ParserPtr m_parser;
@@ -116,5 +121,18 @@ int runCheck(const std::vector<std::string>& args);
  *   for bad arguments
  */
 int runFix(const std::vector<std::string>& args);
+
+/**
+ * Formats files from the command line (sfs-lsp --format): clang-format, then
+ * the house passes under a .sfs-format, each file written in place. With
+ * --check nothing is written: it lists the files that would change. Notes (a
+ * class that kept its order, and why) go to stderr.
+ *
+ * @param args the arguments after --format: [--check] [--clang-format PATH]
+ *   [--root DIR] PATH...
+ * @return 0; 1 when --check found a file to change, or a file couldn't be
+ *   formatted or written; 2 for bad arguments or no clang-format
+ */
+int runFormat(const std::vector<std::string>& args);
 
 } // namespace sfs::lsp

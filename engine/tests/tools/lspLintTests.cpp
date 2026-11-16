@@ -3066,9 +3066,10 @@ int main()
     std::ifstream in(output);
     std::stringstream printed;
     printed << in.rdbuf();
+    // House rules need a .sfs-lint: lspHouseLintTests checks them.
     for (const sfs::codegen::RuleInfo& rule : sfs::codegen::rules())
     {
-      if (rule.reserved)
+      if (rule.reserved || rule.house)
         continue;
       const bool reported = printed.str().find("[" + std::string(rule.name) +
                                                "]") != std::string::npos;
@@ -3117,7 +3118,8 @@ int main()
     {
       // The summary reads the same way (a code name may start it).
       CHECK(sentence(rule.summary));
-      if (rule.reserved)
+      // House rules need a .sfs-lint: lspHouseLintTests checks them.
+      if (rule.reserved || rule.house)
         continue;
       if (seen[static_cast<std::size_t>(rule.id)] == 0)
         std::printf(

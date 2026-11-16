@@ -1,0 +1,88 @@
+#include "playerSystem.h"
+
+#include <algorithm>
+
+namespace
+{
+// How far a player may step in one frame.
+constexpr float kLongestStep = 2.0f;
+
+float clampStep(float step) { return std::min(step, kLongestStep); }
+} // namespace
+
+// Twice a value, for the speed-up.
+static float twice(float value) { return value * 2.0f; }
+
+const float kStartSpeed = 1.0f;
+
+PlayerSystem::PlayerSystem(float speed) : m_speed(speed) {}
+
+PlayerSystem::~PlayerSystem() {}
+
+void PlayerSystem::create() { m_speed = kStartSpeed; }
+
+void PlayerSystem::update(double deltaTime)
+{
+  for (int& id : m_scratch)
+  {
+    if (id < 0)
+      continue;
+
+    id += 1;
+  }
+
+  m_speed = twice(clampStep(static_cast<float>(deltaTime)));
+}
+
+void PlayerSystem::add(int id, float x)
+{
+  add(id);
+  m_speed = x;
+}
+
+void PlayerSystem::add(int id) { m_scratch.push_back(id); }
+
+template <typename T>
+T* PlayerSystem::find(int id)
+{
+  return nullptr;
+}
+
+void PlayerSystem::step(State& state)
+{
+  state.speed = m_speed;
+
+  switch (state.health)
+  {
+  case 0:
+    state.speed = 0.0f;
+
+    if (m_count > 0)
+      state.speed = 1.0f;
+
+    break;
+  default:
+    break;
+  }
+
+  do
+    --state.health;
+  while (state.health > 10);
+
+  // Keep it in range.
+  while (state.health < 0)
+    ++state.health;
+
+  m_count += 1; // one more step
+}
+
+float PlayerSystem::topSpeed() const { return m_speed; }
+
+void PlayerSystem::State::reset()
+{
+  health = 0;
+  speed = 0.0f;
+}
+
+// Logs a line; nothing here uses it.
+void logLine(const char* line) {}

@@ -16,6 +16,7 @@
 //   sfs-lsp [--log-timing]       serve LSP over stdin and stdout
 //   sfs-lsp --check [--root DIR] [--disable RULE]... PATH...
 //   sfs-lsp --fix RULE[,RULE...] [--root DIR] PATH...
+//   sfs-lsp --format [--check] [--clang-format PATH] [--root DIR] PATH...
 //   sfs-lsp --version
 //
 // Stdout carries only the protocol; logs go to stderr.
@@ -28,6 +29,8 @@ void usage()
       << "usage: sfs-lsp [--log-timing]\n"
          "       sfs-lsp --check [--root DIR] [--disable RULE]... PATH...\n"
          "       sfs-lsp --fix RULE[,RULE...] [--root DIR] PATH...\n"
+         "       sfs-lsp --format [--check] [--clang-format PATH] [--root DIR] "
+         "PATH...\n"
          "       sfs-lsp --version\n";
 }
 
@@ -44,11 +47,13 @@ int main(int argc, char* argv[])
       std::cout << "sfs-lsp " << SFS_ENGINE_VERSION << '\n';
       return 0;
     }
-    if (arg == "--check" || arg == "--fix")
+    if (arg == "--check" || arg == "--fix" || arg == "--format")
     {
       try
       {
         const std::vector<std::string> rest(argv + i + 1, argv + argc);
+        if (arg == "--format")
+          return sfs::lsp::runFormat(rest);
         return arg == "--check" ? sfs::lsp::runCheck(rest)
                                 : sfs::lsp::runFix(rest);
       }
