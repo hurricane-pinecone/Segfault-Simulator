@@ -432,6 +432,28 @@ std::vector<NodeType> makeNodeTypes()
   }
   {
     NodeType type;
+    type.id = "globalParameter";
+    type.label = "Global Parameter";
+    type.category = "Input";
+    type.description =
+        "A global shader parameter's value, by name: one the scene sets for "
+        "every material at once (ShaderGlobals), such as how wet a storm has "
+        "left things. 0 while the scene hasn't got it (and in previews drawn "
+        "on the CPU).";
+    type.outputs = {output("Value", V4), output("X", F)};
+    type.property = Property::Global;
+    type.emit = [](const EmitArgs& a) {
+      return std::vector<std::string>{a.property, a.property + ".x"};
+    };
+    type.evaluate = [](const EvaluateArgs&, Outputs out)
+    {
+      out[0] = glm::vec4(0.0f);
+      out[1] = glm::vec4(0.0f);
+    };
+    types.push_back(std::move(type));
+  }
+  {
+    NodeType type;
     type.id = "time";
     type.reads = PointInputs::Time;
     type.label = "Time";

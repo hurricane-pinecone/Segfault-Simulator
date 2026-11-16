@@ -3,6 +3,29 @@
  "systems": [
   "CameraSystem"
  ],
+ "sceneData": {
+  "DirectionalLighting": {
+   "direction": [
+    0.0,
+    0.0,
+    1.0
+   ],
+   "color": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "intensity": 0.0
+  },
+  "AmbientLighting": {
+   "intensity": 0.62,
+   "skyColor": [
+    0.03,
+    0.02,
+    0.08
+   ]
+  }
+ },
  "render": {
   "style": {
    "kind": "flat",
@@ -14,25 +37,6 @@
    "heightPixels": 8.0,
    "yDown": true,
    "ySort": false
-  },
-  "lighting": {
-   "sunDirection": [
-    0.0,
-    0.0,
-    1.0
-   ],
-   "sunColor": [
-    1.0,
-    1.0,
-    1.0
-   ],
-   "sunStrength": 0.0,
-   "ambient": 0.62,
-   "skyColor": [
-    0.03,
-    0.02,
-    0.08
-   ]
   },
   "shadows": {
    "enabled": false,

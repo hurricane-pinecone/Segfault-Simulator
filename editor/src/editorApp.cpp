@@ -24,6 +24,7 @@
 #include "engine/core/hierarchy/hierarchy.h"
 #include "engine/core/util/debugFeatures.h"
 #include "engine/core/reflection/reflection.h"
+#include "engine/core/sceneData/ambientLighting.h"
 #include "engine/runtime/assetStore/assetStore.h"
 #include "engine/runtime/rendering/meshLibrary.h"
 #include "engine/runtime/rendering/renderSystem.h"
@@ -1701,11 +1702,14 @@ EditorScene* EditorApp::makeScene(bool forPrefab)
   render.meshes().setMissingExpected(m_awaitingModule);
   if (forPrefab)
   {
-    // On a grid against a plain grey, like a modelling tool.
+    // On a grid against a plain grey, like a modelling tool: the tab's own
+    // AmbientLighting's sky (a new scene has one), which restoring its
+    // content keeps.
     render.withModule<GridModule>(render.meshes());
-    sfs::SceneLighting lighting = render.lighting();
-    lighting.skyColor = glm::vec3(0.075f, 0.08f, 0.078f);
-    render.setLighting(lighting);
+    sfs::AmbientLighting* ambient = scene->sceneData<sfs::AmbientLighting>();
+    if (!ambient)
+      ambient = &scene->addSceneData<sfs::AmbientLighting>();
+    ambient->skyColor = glm::vec3(0.075f, 0.08f, 0.078f);
   }
   return scene;
 }

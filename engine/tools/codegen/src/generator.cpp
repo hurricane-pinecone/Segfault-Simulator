@@ -32,6 +32,7 @@ const std::map<std::string, std::string, std::less<>>& canonicalTypes()
       {"StringList", "std::vector<std::string>"},
       {"Entity", "sfs::Entity"},
       {"EntityList", "std::vector<sfs::Entity>"},
+      {"ShaderParameters", "std::vector<sfs::ShaderParameter>"},
   };
   return types;
 }

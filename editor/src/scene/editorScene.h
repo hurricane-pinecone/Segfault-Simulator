@@ -42,8 +42,14 @@ public:
   /** Destroy an entity and everything below it (applied immediately). */
   void destroyBranch(const sfs::Entity& entity);
 
-  /** Remove every entity and the scene data (applied immediately). */
-  void clear();
+  /**
+   * Remove every entity and, unless `keepSceneData`, the scene data (applied
+   * immediately).
+   *
+   * @param keepSceneData keep the scene data (a prefab's tab restoring its
+   *        content, which holds none, keeps its own backdrop)
+   */
+  void clear(bool keepSceneData = false);
 
   /**
    * An entity's place in save order (parents first, siblings in id order):

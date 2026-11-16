@@ -199,7 +199,7 @@ and its materials draw magenta. See
 | Category | Nodes |
 | --- | --- |
 | Output | Material Output |
-| Input | Colour, Number, Texture, Normal Map, Triplanar Texture, Triplanar Normal Map, UV, Vertex Colour, Position, Normal, View Direction, Time, Grass |
+| Input | Colour, Number, Texture, Normal Map, Triplanar Texture, Triplanar Normal Map, UV, Vertex Colour, Position, Normal, View Direction, Time, Grass, Global Parameter (a [global shader parameter](../../../runtime/rendering/light-and-sky/index.md#global-shader-parameters) by name, `Node::global`: `frame.globals[slot]` in WGSL, 0 on the CPU) |
 | Math | Add, Subtract, Multiply, Divide, Power, Minimum, Maximum, Mix, Clamp, Saturate, One Minus, Negate, Absolute, Fraction, Floor, Posterize, Square Root, Sine, Cosine, Step, Smoothstep, Remap |
 | Vector | Split, Combine, Dot Product, Cross Product, Length, Distance, Normalize |
 | UV | Tiling and Offset |

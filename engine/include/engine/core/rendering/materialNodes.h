@@ -76,6 +76,7 @@ enum class Property : uint8_t
   Color,   // Node::value, as a colour with alpha
   Number,  // Node::value.x
   Texture, // Node::texture and Node::dataTexture
+  Global,  // Node::global: a global shader parameter's name (ShaderGlobals)
 };
 
 /** Where a point being shaded is, for the nodes that read it. */

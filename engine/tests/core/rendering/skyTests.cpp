@@ -8,6 +8,7 @@
 #include "glm/glm/trigonometric.hpp"
 
 #include <cmath>
+#include <limits>
 
 using namespace sfs;
 
@@ -427,6 +428,33 @@ int main()
     CHECK(testing::approx(sphere.x, 5.0f));
     CHECK(testing::approx(
         sphere.y, std::sqrt(8.0f * 8.0f + 4.5f * 4.5f + 25.0f), 1e-3f));
+  }
+
+  TEST("clouds should drift with the wind, within their period")
+  {
+    // 10 m/s for 100 s: a kilometre.
+    const glm::vec2 drift = driftClouds({0.0f, 0.0f}, {10.0f, 0.0f}, 100.0f);
+    CHECK(std::abs(drift.x - 1.0f) < 1e-4f);
+    CHECK(drift.y == 0.0f);
+    // Backward past 0, and forward past the period: wrapped.
+    const glm::vec2 back = driftClouds({0.5f, 0.0f}, {-10.0f, 0.0f}, 100.0f);
+    CHECK(std::abs(back.x - (kCloudPeriod - 0.5f)) < 1e-3f);
+    const glm::vec2 past =
+        driftClouds({kCloudPeriod - 0.5f, 1.0f}, {0.0f, 10.0f}, 100.0f);
+    CHECK(std::abs(past.x - (kCloudPeriod - 0.5f)) < 1e-3f);
+    CHECK(std::abs(past.y - 2.0f) < 1e-4f);
+    // Days of it: still within.
+    glm::vec2 far{0.0f};
+    for (int i = 0; i < 1000; ++i)
+      far = driftClouds(far, {37.0f, -23.0f}, 600.0f);
+    CHECK(far.x >= 0.0f);
+    CHECK(far.x < kCloudPeriod);
+    CHECK(far.y >= 0.0f);
+    CHECK(far.y < kCloudPeriod);
+    // Nonsense in: still a place in the pattern.
+    const glm::vec2 nan = driftClouds(
+        {1.0f, 1.0f}, {std::numeric_limits<float>::quiet_NaN(), 0.0f}, 1.0f);
+    CHECK(nan == glm::vec2(1.0f, 1.0f));
   }
 
   return testing::report("skyTests");

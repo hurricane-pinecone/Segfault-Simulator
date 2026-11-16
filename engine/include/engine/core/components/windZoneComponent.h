@@ -6,19 +6,22 @@ namespace sfs
 {
 
 /**
- * A wind that carries particles, as Unity's directional WindZone does. It
- * blows the same everywhere, so where its entity is doesn't matter. Each
- * update the particles add up every enabled zone's wind, and an effect with a
- * windInfluence (ParticleEffectDesc) is carried toward that share of it by
- * its drag. A game's weather writes it.
+ * A local wind, as Unity's spherical WindZone: within `radius` of its entity
+ * (across the plane: its position's x and y), it adds `wind` to the scene's
+ * Wind (scene data), fully at its middle and fading to nothing at its edge: a
+ * fan, a draught through a gap. Particles carried by the wind
+ * (ParticleEffectDesc::windInfluence) feel it where their emitter is. An
+ * entity without a TransformComponent blows nowhere.
  *
  * @param glm::vec2 wind - which way and how fast it blows across the world's
  *        XY, in metres a second
+ * @param float radius - how far from its entity it reaches, world units
  * @param bool enabled - whether it blows
  */
 struct WindZoneComponent
 {
   glm::vec2 wind{0.0f};
+  [[sfs::range(0, 200)]] float radius = 10.0f;
   bool enabled = true;
 };
 

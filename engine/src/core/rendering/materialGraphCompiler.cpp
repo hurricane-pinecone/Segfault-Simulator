@@ -1,6 +1,7 @@
 #include "engine/core/rendering/materialGraphCompiler.h"
 
 #include "engine/core/rendering/mesh.h"
+#include "engine/core/sceneData/shaderGlobals.h"
 
 #include <algorithm>
 #include <unordered_set>
@@ -247,6 +248,14 @@ struct Compiler
         shader->m_missingTextures.push_back(type.missingTexture);
         args.property = "graphTexture" + std::to_string(texture);
         args.sampler = "graphSampler" + std::to_string(texture);
+      }
+      // A global shader parameter: the frame's, at its slot (none: 0).
+      if (type.property == Property::Global)
+      {
+        const int slot = shaderGlobalSlot(node->global);
+        args.property = slot >= 0
+                            ? "frame.globals[" + std::to_string(slot) + "]"
+                            : std::string("vec4f(0.0)");
       }
 
       const std::vector<std::string> expressions = type.emit(args);

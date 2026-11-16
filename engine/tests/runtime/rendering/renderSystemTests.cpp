@@ -8,6 +8,7 @@
 #include <engine/core/components/deformerComponent.h>
 #include <engine/core/components/grassBenderComponent.h>
 #include <engine/core/components/grassComponent.h>
+#include <engine/core/components/lightningComponent.h>
 #include <engine/core/components/meshRendererComponent.h>
 #include <engine/core/components/pointLightComponent.h>
 #include <engine/core/components/rigidBody3DComponent.h>
@@ -17,6 +18,13 @@
 #include <engine/core/rendering/materialGraphCompiler.h>
 #include <engine/core/rendering/meshPrimitives.h>
 #include <engine/core/rendering/terrain.h>
+#include <engine/core/sceneData/ambientLighting.h>
+#include <engine/core/sceneData/celestialBodies.h>
+#include <engine/core/sceneData/clouds.h>
+#include <engine/core/sceneData/directionalLighting.h>
+#include <engine/core/sceneData/rain.h>
+#include <engine/core/sceneData/shaderGlobals.h>
+#include <engine/core/sceneData/wind.h>
 #include <engine/runtime/assetStore/assetStore.h>
 #include <engine/runtime/input/input.h>
 #include <engine/runtime/rendering/framePlan.h>
@@ -79,6 +87,9 @@ struct Harness
 
   Harness()
   {
+    // Lit as a new scene is: a sun and the light all round.
+    scene.addSceneData<DirectionalLighting>();
+    scene.addSceneData<AmbientLighting>();
     system.withModule<MeshModule>();
     system.camera().target = {0.0f, 0.0f, 0.0f};
     system.camera().yaw = 0.0f;
@@ -98,6 +109,21 @@ struct Harness
   {
     scene.update(0.0); // flush so systems see new entities
     scene.render();
+  }
+
+  // The scene's light, sky and rain, each added the first time it's asked
+  // for.
+  DirectionalLighting& light() { return own<DirectionalLighting>(); }
+  AmbientLighting& ambient() { return own<AmbientLighting>(); }
+  CelestialBodies& bodies() { return own<CelestialBodies>(); }
+  Clouds& clouds() { return own<Clouds>(); }
+  Rain& rain() { return own<Rain>(); }
+
+  template <typename T>
+  T& own()
+  {
+    T* data = scene.sceneData<T>();
+    return data ? *data : scene.addSceneData<T>();
   }
 };
 } // namespace
@@ -335,9 +361,7 @@ int main()
     CHECK(h.renderer.batches[0].shadowInstances == 0u);
 
     Harness night;
-    SceneLighting lighting;
-    lighting.sun.direction = {0.3f, 0.2f, -0.5f}; // below the horizon
-    night.system.setLighting(lighting);
+    night.light().direction = {0.3f, 0.2f, -0.5f}; // below the horizon
     const MeshHandle nightBox =
         night.system.meshes().add(meshes::box({1, 1, 1}));
     night.spawn(nightBox, {0, 0, 0});
@@ -934,9 +958,7 @@ int main()
       SkySettings physical;
       physical.model = SkyModel::Physical;
       h.system.setSkySettings(physical);
-      SceneLighting lighting;
-      lighting.sun.direction = toSun;
-      h.system.setLighting(lighting);
+      h.light().direction = toSun;
       // A dim lamp (x = 0) and a strong one (x = 3).
       for (int i = 0; i < 2; ++i)
       {
@@ -1570,14 +1592,23 @@ int main()
     CHECK(testing::approx(h.renderer.frame.time, 0.75f)); // on from there
   }
 
-  TEST("the scene's wind should reach the renderer")
+  TEST("the scene's wind should reach the renderer as it is each frame, and "
+       "a scene without one have still air")
   {
     Harness h;
-    h.system.setWindSettings(
-        {.direction = 90.0f, .strength = 0.7f, .gustiness = 0.2f});
+    h.frame();
+    CHECK(h.renderer.frame.sway == 0.0f);
+    CHECK(h.renderer.frame.wind.speed == 0.0f);
+
+    // Things sway as hard as its speed makes them: twice a breeze's at 8 m/s.
+    Wind& wind = h.scene.addSceneData<Wind>(
+        Wind{.direction = 90.0f, .speed = 8.0f, .gustiness = 0.2f});
     h.frame();
     CHECK(testing::approx(h.renderer.frame.wind.direction, 90.0f));
-    CHECK(testing::approx(h.renderer.frame.wind.strength, 0.7f));
+    CHECK(testing::approx(h.renderer.frame.sway, 0.7f));
+    wind.speed = 1.6f;
+    h.frame();
+    CHECK(testing::approx(h.renderer.frame.sway, 0.14f));
   }
 
   TEST("the scene's haze, and its camera's depth of field focused where the "
@@ -1826,9 +1857,8 @@ int main()
           return std::nullopt;
         });
 
-    SceneLighting lighting;
-    lighting.skyColor = {0.4f, 0.6f, 0.8f};
-    h.system.setLighting(lighting);
+    AmbientLighting& ambient = h.ambient();
+    ambient.skyColor = {0.4f, 0.6f, 0.8f};
     h.system.setHazeSettings({.strength = 0.3f, .distance = 90.0f});
     ColorGrading own;
     own.saturation = 1.5f;
@@ -1855,11 +1885,10 @@ int main()
     CHECK(testing::approx(h.renderer.frame.lighting.skyColor.g, 0.3f));
     // The scene's own settings are untouched: they come back with it off.
     CHECK(h.system.colorGrading() == own);
-    CHECK(testing::approx(h.system.lighting().skyColor.g, 0.6f));
+    CHECK(testing::approx(ambient.skyColor.g, 0.6f));
 
     // A day/night cycle setting the lighting each frame stays re-balanced.
-    lighting.skyColor = {1.0f, 1.0f, 1.0f};
-    h.system.setLighting(lighting);
+    ambient.skyColor = {1.0f, 1.0f, 1.0f};
     h.frame();
     CHECK(testing::approx(h.renderer.frame.lighting.skyColor.r, 0.5f));
 
@@ -1891,20 +1920,30 @@ int main()
     CHECK(testing::approx(h.renderer.frame.grading.exposure, 0.5f));
   }
 
-  TEST("the weather should reach the frame, its clouds drifting on its "
-       "wind while the clock runs")
+  TEST("the rain and the global shader parameters should reach "
+       "the frame, the clouds drifting on the wind while the clock runs")
   {
     Harness h;
-    SceneWeather weather;
-    weather.rain = 1.5f; // clamped
-    weather.wetness = 0.5f;
-    weather.wind = {10.0f, 0.0f};
-    weather.cloudDarkness = 0.25f;
-    h.system.setWeather(weather);
+    h.rain().intensity = 1.5f; // clamped
+    h.clouds().darkness = 0.25f;
+    ShaderGlobals& globals = h.scene.addSceneData<ShaderGlobals>();
+    setShaderGlobal(globals, "wetness", 0.5f);
+    setShaderGlobal(globals, "puddles", 2.0f); // clamped
+    setShaderGlobal(globals, "pulse", glm::vec4(1.0f, 2.0f, 3.0f, 4.0f));
+    setShaderGlobal(globals, "unread", 5.0f);
+    // A shader reads the pulse (as a graph's Global Parameter node would).
+    const int pulse = shaderGlobalSlot("pulse");
+    CHECK(pulse > static_cast<int>(kShaderGlobalPuddles));
+    h.scene.addSceneData<Wind>(Wind{.direction = 0.0f, .speed = 10.0f});
     h.frame();
-    CHECK(h.renderer.frame.weather.rain == 1.0f);
-    CHECK(h.renderer.frame.weather.wetness == 0.5f);
-    CHECK(h.renderer.frame.weather.wind == weather.wind);
+    CHECK(h.renderer.frame.rainfall == 1.0f);
+    CHECK(h.renderer.frame.globals[kShaderGlobalWetness].x == 0.5f);
+    CHECK(h.renderer.frame.globals[kShaderGlobalPuddles].x == 1.0f);
+    CHECK(findShaderGlobalSlot("unread") == -1);
+    CHECK(h.renderer.frame.globals[static_cast<std::size_t>(pulse)] ==
+          glm::vec4(1.0f, 2.0f, 3.0f, 4.0f));
+    CHECK(glm::distance(windVelocity(h.renderer.frame.wind),
+                        glm::vec2(10.0f, 0.0f)) < 1e-5f);
 
     // 100 s at 10 m/s: a kilometre; not while it's stopped.
     const glm::vec2 before = h.renderer.frame.cloudDrift;
@@ -1918,9 +1957,7 @@ int main()
 
     // Under a physical sky, clouds have their light; overcast, eyes don't
     // adapt to the dull day (the clouds' dimming isn't made up).
-    SceneLighting lighting;
-    lighting.sun.direction = {0.5f, -0.2f, 0.8f};
-    h.system.setLighting(lighting);
+    h.light().direction = {0.5f, -0.2f, 0.8f};
     SkySettings physical;
     physical.model = SkyModel::Physical;
     physical.adaptation = 1.0f;
@@ -1928,8 +1965,7 @@ int main()
     h.frame();
     const FrameSky clear = h.renderer.frame.sky;
     CHECK(clear.cloudCover == 0.0f);
-    lighting.cloudCover = 1.0f;
-    h.system.setLighting(lighting);
+    h.clouds().cover = 1.0f;
     h.frame();
     h.system.finishSkyWork();
     h.frame();
@@ -1952,17 +1988,17 @@ int main()
        "a gust")
   {
     Harness h;
-    SceneWeather weather;
-    weather.wind = {5.0f, 0.0f};
-    h.system.setWeather(weather);
+    Wind& wind =
+        h.scene.addSceneData<Wind>(Wind{.direction = 0.0f, .speed = 5.0f});
     h.scene.update(10.0);
     h.scene.render();
     // 10 s at 0.8 x 5 m/s.
     CHECK(std::abs(h.renderer.frame.rainDrift.x - 40.0f) < 1e-2f);
-    CHECK(h.renderer.frame.rainWind == weather.wind);
+    CHECK(glm::distance(h.renderer.frame.rainWind, glm::vec2(5.0f, 0.0f)) <
+          1e-5f);
     // A sudden gust turns the drops over a second or so, not at once.
-    weather.wind = {-15.0f, 5.0f};
-    h.system.setWeather(weather);
+    wind.direction = glm::degrees(std::atan2(5.0f, -15.0f));
+    wind.speed = glm::length(glm::vec2(-15.0f, 5.0f));
     h.scene.update(0.1);
     h.scene.render();
     CHECK(h.renderer.frame.rainWind.x > -2.0f);
@@ -1974,27 +2010,33 @@ int main()
        "and be gone once it has faded")
   {
     Harness h;
-    SceneLighting lighting;
-    lighting.sun.direction = {0.3f, 0.2f, -0.5f}; // night
-    lighting.cloudCover = 1.0f;
-    h.system.setLighting(lighting);
+    h.light().direction = {0.3f, 0.2f, -0.5f}; // night
+    h.clouds().cover = 1.0f;
     SkySettings physical;
     physical.model = SkyModel::Physical;
     h.system.setSkySettings(physical);
     h.frame();
     CHECK(!h.renderer.frame.lightning.active);
 
-    LightningStrike strike;
-    strike.position = {200.0f, 100.0f, 0.0f};
-    strike.seed = 7;
-    h.system.strikeLightning(strike);
-    CHECK(h.system.lightningStrikes() == 1);
-    h.system.holdLightning(0.0f); // the first stroke's peak
+    const std::size_t meshes = h.system.meshes().size();
+    const glm::vec3 where(200.0f, 100.0f, 0.0f);
+    const auto strikeAt = [&](bool inCloud, float hold)
+    {
+      Entity bolt = h.scene.createEntity();
+      bolt.addComponent<TransformComponent>(TransformComponent{where});
+      LightningComponent strike;
+      strike.seed = 7;
+      strike.inCloud = inCloud;
+      strike.hold = hold;
+      bolt.addComponent<LightningComponent>(strike);
+      return bolt;
+    };
+    const Entity bolt = strikeAt(false, 0.0f); // the first stroke's peak
     h.frame();
     const FrameLightning& flash = h.renderer.frame.lightning;
     CHECK(flash.active);
     CHECK(flash.channel);
-    CHECK(flash.low == strike.position);
+    CHECK(flash.low == where);
     CHECK(flash.high.z > 1000.0f);
     CHECK(flash.channelLight.b > 0.0f);
     CHECK(flash.cloudGlow.b > 0.0f);
@@ -2004,33 +2046,88 @@ int main()
           h.renderer.frame.pointLights.size());
     CHECK(h.renderer.frame.pointLights.back().castsShadow);
 
-    // Held, it stays; let go, it fades and is gone.
+    // Held, it stays; let go, it fades and is finished, its meshes freed.
     h.scene.update(5.0);
     h.scene.render();
-    CHECK(h.system.lightningStrikes() == 1);
-    h.system.holdLightning(std::nullopt);
-    h.scene.update(lightningDuration(strike) + 0.1);
+    LightningComponent& strike = *bolt.getComponent<LightningComponent>();
+    CHECK(!strike.finished);
+    CHECK(strike.channel.valid());
+    CHECK(h.system.meshes().size() > meshes);
+    strike.hold = -1.0f;
+    h.scene.update(strike.duration + 0.1);
     h.scene.render();
-    CHECK(h.system.lightningStrikes() == 0);
+    CHECK(strike.finished);
+    CHECK(!strike.channel.valid());
+    CHECK(h.system.meshes().size() == meshes);
     CHECK(!h.renderer.frame.lightning.active);
     CHECK(h.renderer.frame.lightning.shadowLight == -1);
 
     // An in-cloud strike only lights the clouds.
-    strike.inCloud = true;
-    h.system.strikeLightning(strike);
+    const Entity inCloud = strikeAt(true, -1.0f);
     h.frame();
     CHECK(h.renderer.frame.lightning.active);
     CHECK(!h.renderer.frame.lightning.channel);
     CHECK(h.renderer.frame.lightning.shadowLight == -1);
+    h.scene.destroyEntity(inCloud);
+
+    // Destroyed while flashing, its meshes go with it; past four at once, the
+    // oldest finish.
+    const Entity gone = strikeAt(false, 0.0f);
+    h.frame();
+    CHECK(h.system.meshes().size() > meshes);
+    h.scene.destroyEntity(gone);
+    h.frame();
+    CHECK(h.system.meshes().size() == meshes);
+    std::vector<Entity> storm;
+    for (int i = 0; i < 6; ++i)
+    {
+      storm.push_back(strikeAt(false, -1.0f));
+      h.scene.update(0.01);
+      h.scene.render();
+    }
+    int flashing = 0;
+    for (const Entity& one : storm)
+      flashing += one.getComponent<LightningComponent>()->finished ? 0 : 1;
+    CHECK(flashing == 4);
+    CHECK(storm[0].getComponent<LightningComponent>()->finished);
+    CHECK(!storm[5].getComponent<LightningComponent>()->finished);
+
+    // One with nowhere to strike is finished at once.
+    Entity nowhere = h.scene.createEntity();
+    nowhere.addComponent<LightningComponent>();
+    h.frame();
+    CHECK(nowhere.getComponent<LightningComponent>()->finished);
+  }
+
+  TEST("a scene without a directional light should have none, nor its "
+       "shadows; one without ambient light none, and a black sky; a flat sky "
+       "its directional light as it is, whatever its celestial bodies")
+  {
+    Harness h;
+    h.scene.removeSceneData<DirectionalLighting>();
+    h.scene.removeSceneData<AmbientLighting>();
+    h.frame();
+    CHECK(h.renderer.frame.lighting.sun.diffuseStrength == 0.0f);
+    CHECK(!h.renderer.frame.shadows.enabled);
+    CHECK(h.renderer.frame.lighting.ambient == 0.0f);
+    CHECK(h.renderer.frame.lighting.skyColor == glm::vec3(0.0f));
+
+    DirectionalLighting& light = h.light();
+    light.direction = {0.3f, 0.2f, 0.9f};
+    CelestialBodies& bodies = h.bodies();
+    bodies.sunDirection = {0.0f, 0.0f, -1.0f};
+    bodies.moonDirection = {0.2f, 0.1f, 0.9f};
+    h.frame();
+    CHECK(h.renderer.frame.lighting.sun.direction == light.direction);
+    CHECK(h.renderer.frame.shadows.enabled);
   }
 
   TEST("a physical sky should light the frame from the sun's direction, "
        "working its diffuse light out again only when the sun has moved")
   {
     Harness h;
-    SceneLighting lighting;
-    lighting.sun.direction = {0.5f, -0.2f, 0.8f};
-    h.system.setLighting(lighting);
+    CelestialBodies& sky = h.bodies();
+    sky.sunDirection = {0.5f, -0.2f, 0.8f};
 
     // Flat (the default): no model.
     h.frame();
@@ -2044,40 +2141,35 @@ int main()
     CHECK(first.physical != nullptr);
     CHECK(first.sunLight.r > 0.5f);
     CHECK(first.irradiance.at({0, 0, 1}).b > 0.05f);
-    CHECK(glm::length(first.toSun - glm::normalize(lighting.sun.direction)) <
-          1e-5f);
+    CHECK(glm::length(first.toSun - glm::normalize(sky.sunDirection)) < 1e-5f);
 
     // The same sun: nothing worked out again; the same model kept.
     h.frame();
     CHECK(h.renderer.frame.sky.revision == first.revision);
     CHECK(h.renderer.frame.sky.physical == first.physical);
     // A hair's move: still not; a degree: again.
-    lighting.sun.direction = {0.5f, -0.2001f, 0.8f};
-    h.system.setLighting(lighting);
+    sky.sunDirection = {0.5f, -0.2001f, 0.8f};
     h.frame();
     CHECK(h.renderer.frame.sky.revision == first.revision);
     // (In the background: the frame keeps the old until it's ready.)
-    lighting.sun.direction = {0.5f, -0.2f, 0.75f};
-    h.system.setLighting(lighting);
+    sky.sunDirection = {0.5f, -0.2f, 0.75f};
     h.frame();
     h.system.finishSkyWork();
     h.frame();
     CHECK(h.renderer.frame.sky.revision != first.revision);
     CHECK(glm::length(h.renderer.frame.sky.toSun -
-                      glm::normalize(lighting.sun.direction)) < 1e-5f);
+                      glm::normalize(sky.sunDirection)) < 1e-5f);
 
     // Set: no sun, no shadows.
-    lighting.sun.direction = {0.5f, -0.2f, -0.3f};
-    h.system.setLighting(lighting);
+    sky.sunDirection = {0.5f, -0.2f, -0.3f};
     h.frame();
     CHECK(h.renderer.frame.sky.sunLight == glm::vec3(0.0f));
     CHECK(!h.renderer.frame.shadows.enabled);
 
     // A full moon up: it lights the frame in the sun's place, casting
     // shadows, and the night sky glows brighter under it.
-    lighting.moon.direction = {-0.3f, -0.2f, 0.8f};
-    lighting.moon.phase = 1.0f;
-    h.system.setLighting(lighting);
+    sky.moonDirection = {-0.3f, -0.2f, 0.8f};
+    sky.moonPhase = 1.0f;
     // (Twice: the setting sun's may still have been being worked out.)
     for (int i = 0; i < 2; ++i)
     {
@@ -2091,24 +2183,21 @@ int main()
     CHECK(moonlit.night > 1.05f);
     CHECK(h.renderer.frame.shadows.enabled);
     CHECK(glm::length(h.renderer.frame.lighting.sun.direction -
-                      glm::normalize(lighting.moon.direction)) < 1e-5f);
+                      glm::normalize(sky.moonDirection)) < 1e-5f);
     CHECK(glm::length(moonlit.toSun -
                       glm::normalize(glm::vec3(0.5f, -0.2f, -0.3f))) < 1e-5f);
     // A half moon gives less; clouds less again.
-    lighting.moon.phase = 0.5f;
-    h.system.setLighting(lighting);
+    sky.moonPhase = 0.5f;
     h.frame();
     CHECK(h.renderer.frame.sky.sunLight.b < moonlit.sunLight.b * 0.5f);
-    lighting.moon.phase = 1.0f;
-    lighting.cloudCover = 1.0f;
-    h.system.setLighting(lighting);
+    sky.moonPhase = 1.0f;
+    h.clouds().cover = 1.0f;
     h.frame();
     CHECK(h.renderer.frame.sky.sunLight.b < moonlit.sunLight.b * 0.5f);
     CHECK(h.renderer.frame.sky.cloudCover == 1.0f);
     // Set too: nothing shines.
-    lighting.cloudCover = 0.0f;
-    lighting.moon.direction = {-0.3f, -0.2f, -0.5f};
-    h.system.setLighting(lighting);
+    h.clouds().cover = 0.0f;
+    sky.moonDirection = {-0.3f, -0.2f, -0.5f};
     h.frame();
     CHECK(!h.renderer.frame.sky.moonLit);
     CHECK(!h.renderer.frame.shadows.enabled);
@@ -2137,9 +2226,7 @@ int main()
        "one map stay as ever otherwise")
   {
     Harness h;
-    SceneLighting lighting;
-    lighting.sun.direction = {0.4f, -0.3f, 0.8f};
-    h.system.setLighting(lighting);
+    h.light().direction = {0.4f, -0.3f, 0.8f};
 
     h.frame();
     CHECK(h.renderer.frame.shadows.enabled);

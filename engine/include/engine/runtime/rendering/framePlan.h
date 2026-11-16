@@ -48,7 +48,7 @@ struct FrameUniforms
   glm::vec4 cameraForward;  // xyz
   glm::uvec4 clusterSize;   // tiles across, down, slices; lights
   glm::vec4 clusterDepth;   // near, far, slices per log(depth / near), tile px
-  glm::vec4 wind;           // which way it blows (unit xy), strength, gustiness
+  glm::vec4 wind;           // which way it blows (unit xy), sway, gustiness
   glm::vec4 haze;           // strength, 1 / its half distance
   glm::vec4 sunBalance;     // the sun's share x rgb; w 1 if re-balanced
   glm::vec4 ambientBalance; // ambient's share x rgb; w the brightest light
@@ -87,10 +87,11 @@ struct FrameUniforms
   glm::vec4 moon;
   glm::vec4 moonSun;
   glm::vec4 moonLight;
-  // The weather (SceneWeather): rain, wetness, puddles, cloud cover (each
-  // 0..1); the wind (xy, m/s) and how far the clouds have drifted (zw, km).
-  glm::vec4 weather;
-  glm::vec4 weatherWind;
+  // How hard it rains (x: Rain) and the clouds' cover (w: Clouds), each 0..1
+  // (yz unused); the Wind's velocity (xy, m/s) and how far the clouds have
+  // drifted (zw, km).
+  glm::vec4 rainClouds;
+  glm::vec4 windDrift;
   // A physical sky's clouds (none drawn while cloudBase.w is 0): rgb the
   // light on their tops (the sun's at their height, or the moon's), w how
   // dark they are; rgb their undersides lit through (both not adapted), w
@@ -98,7 +99,7 @@ struct FrameUniforms
   // is dimmed by it; their shadows put it back where they aren't).
   glm::vec4 cloudLight;
   glm::vec4 cloudBase;
-  // Rain (RainSettings, while the weather has it): the overhead map's
+  // Rain (RainSettings, while it rains): the overhead map's
   // view-projection (rainMapFor()); its centre (xy), half size, w 1 if it's
   // drawn this frame; its top, depth range, and the streaks and splashes
   // drawn (counts); a streak's length (m), width (m) and brightness, how
@@ -129,12 +130,18 @@ struct FrameUniforms
   // round the line of sight to it things that clear the view (see
   // MeshMaterial::fadeNearCamera) fade away (0: none).
   glm::vec4 cameraTarget;
+  // The scene's global shader parameters (ShaderGlobals), each at its slot
+  // (shaderGlobalSlot()).
+  ShaderGlobalValues globals;
 };
-static_assert(sizeof(FrameUniforms) == 64 * 2 + 16 * 13 +
-                                           64 * (2 + kMaxShadowCascades) +
-                                           16 * (2 * kMaxShadowCascades + 4 +
-                                                 9 + 1 + 3 + 3 + 4 + 4 + 7),
+static_assert(sizeof(FrameUniforms) ==
+                  64 * 2 + 16 * 13 + 64 * (2 + kMaxShadowCascades) +
+                      16 * (2 * kMaxShadowCascades + 4 + 9 + 1 + 3 + 3 + 4 + 4 +
+                            7 + kMaxShaderGlobals),
               "FrameUniforms must match the WGSL Frame layout");
+// meshCommon.wgsl's Frame holds `globals: array<vec4f, 16>`: change both.
+static_assert(kMaxShaderGlobals == 16,
+              "the global shader parameters' slots must match meshCommon.wgsl");
 
 /**
  * `Sky` in sky.wgsl: a physical sky's atmosphere (PhysicalSky), for the
@@ -573,8 +580,9 @@ public:
   }
   /**
    * Whether rain's overhead map is drawn this frame (rainMap(), from
-   * shadowDraws()): while the weather has rain, wet or puddles, with the sun's
-   * shadows on.
+   * shadowDraws()): while it rains or surfaces are wet or the puddles have
+   * water (the `wetness` and `puddles` global shader parameters), with the
+   * sun's shadows on.
    */
   bool rainMapOn() const;
   /** Rain's overhead map this frame (after finish()). */

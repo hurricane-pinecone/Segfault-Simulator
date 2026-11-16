@@ -651,4 +651,21 @@ std::vector<glm::vec2> brdfTable(int size)
   return out;
 }
 
+glm::vec2
+driftClouds(const glm::vec2& drift, const glm::vec2& wind, float seconds)
+{
+  glm::vec2 out = drift;
+  if (std::isfinite(wind.x) && std::isfinite(wind.y) && std::isfinite(seconds))
+    out += wind * (0.001f * seconds);
+  for (int axis = 0; axis < 2; ++axis)
+  {
+    out[axis] = std::fmod(out[axis], kCloudPeriod);
+    if (out[axis] < 0.0f)
+      out[axis] += kCloudPeriod;
+    if (!std::isfinite(out[axis]) || out[axis] >= kCloudPeriod)
+      out[axis] = 0.0f;
+  }
+  return out;
+}
+
 } // namespace sfs

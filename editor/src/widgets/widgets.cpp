@@ -98,6 +98,30 @@ bool inputText(const char* label, std::string& value, int flags)
                           &value);
 }
 
+bool inputTextOnCommit(const char* label, std::string& value, int flags)
+{
+  // What's been typed in the one field being typed in, kept from frame to
+  // frame while it's active: every other field shows its value.
+  static ImGuiID typingIn = 0;
+  static std::string typed;
+  const bool typing = typingIn != 0 && typingIn == ImGui::GetID(label);
+  std::string shown = typing ? typed : value;
+  inputText(label, shown, flags);
+  const ImGuiID id = ImGui::GetItemID();
+  if (ImGui::IsItemActive())
+  {
+    typingIn = id;
+    typed = shown;
+    return false;
+  }
+  if (typingIn == id)
+    typingIn = 0;
+  if (!ImGui::IsItemDeactivatedAfterEdit() || shown == value)
+    return false;
+  value = std::move(shown);
+  return true;
+}
+
 namespace
 {
 // A square icon button a frame high, drawn like the hierarchy's: the icon in

@@ -168,10 +168,11 @@ target_compile_options(engine-core PUBLIC
     $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wno-unknown-attributes>
 )
 
-# Reflection for the engine's own components, generated the same way a game's
-# is. Without codegen a stub registers nothing.
+# Reflection for the engine's own components and scene data, generated the
+# same way a game's is. Without codegen a stub registers nothing.
 if(SFS_CODEGEN_AVAILABLE)
     set(ENGINE_COMPONENT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/include/engine/core/components")
+    set(ENGINE_SCENE_DATA_DIR "${CMAKE_CURRENT_SOURCE_DIR}/include/engine/core/sceneData")
     # The engine's own event and scene data types' traits go where
     # eventTraits.h and sceneData.h include them, for the engine and the games
     # built on it alike.
@@ -207,7 +208,15 @@ if(SFS_CODEGEN_AVAILABLE)
             "${ENGINE_COMPONENT_DIR}/cursorPickComponent.h"
             "${ENGINE_COMPONENT_DIR}/windZoneComponent.h"
             "${ENGINE_COMPONENT_DIR}/inputContextComponent.h"
-            "${ENGINE_COMPONENT_DIR}/cameraCollisionComponent.h")
+            "${ENGINE_COMPONENT_DIR}/cameraCollisionComponent.h"
+            "${ENGINE_COMPONENT_DIR}/lightningComponent.h"
+            "${ENGINE_SCENE_DATA_DIR}/wind.h"
+            "${ENGINE_SCENE_DATA_DIR}/directionalLighting.h"
+            "${ENGINE_SCENE_DATA_DIR}/ambientLighting.h"
+            "${ENGINE_SCENE_DATA_DIR}/celestialBodies.h"
+            "${ENGINE_SCENE_DATA_DIR}/clouds.h"
+            "${ENGINE_SCENE_DATA_DIR}/rain.h"
+            "${ENGINE_SCENE_DATA_DIR}/shaderGlobals.h")
     # Every other engine header is scanned for event types alone, so an event
     # type is seen wherever in the engine it's declared. Codegen rewrites the
     # traits header only when it changes: a header edited without changing

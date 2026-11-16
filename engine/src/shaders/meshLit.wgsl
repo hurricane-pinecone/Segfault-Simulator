@@ -119,11 +119,11 @@ fn rainExposure(worldPosition: vec3f, geometryNormal: vec3f) -> f32 {
   return mix(1.0, open * 0.25, smoothstep(0.0, 0.05, edge));
 }
 
-// How wet a surface is (0..1): the weather's wetness where the rain reaches
-// it: all of it facing up, about a third on walls (rain driven against
-// them), none facing down or sheltered.
+// How wet a surface is (0..1): the `wetness` global shader parameter where
+// the rain reaches it: all of it facing up, about a third on walls (rain
+// driven against them), none facing down or sheltered.
 fn surfaceWetness(worldPosition: vec3f, geometryNormal: vec3f) -> f32 {
-  let wetness = frame.weather.y;
+  let wetness = frame.globals[GLOBAL_WETNESS].x;
   if (wetness <= 0.0) {
     return 0.0;
   }
@@ -181,7 +181,7 @@ fn wetMaterial(albedo: vec3f, metallic: f32, roughness: f32, normal: vec3f, geom
   var out = WetMaterial(albedo, roughness, normal);
   let level = smoothstep(0.92, 0.99, geometryNormal.z);
   let waterLike = level * (1.0 - metallic) * (1.0 - smoothstep(0.08, 0.2, roughness));
-  if (wet <= 0.0 && water <= 0.0 && (waterLike <= 0.0 || frame.weather.x <= 0.0)) {
+  if (wet <= 0.0 && water <= 0.0 && (waterLike <= 0.0 || frame.rainClouds.x <= 0.0)) {
     return out;
   }
   let porosity = clamp((roughness - 0.35) / 0.45, 0.0, 1.0) * (1.0 - metallic);
@@ -192,8 +192,8 @@ fn wetMaterial(albedo: vec3f, metallic: f32, roughness: f32, normal: vec3f, geom
   out.normal = normalize(mix(normal, geometryNormal, water));
 
   let ringing = max(water, waterLike) * frame.rainStreaks.w;
-  if (rings && frame.weather.x > 0.0 && ringing > 0.0) {
-    let slope = rainRipples(worldPosition.xy, frame.time.x, frame.weather.x) * ringing *
+  if (rings && frame.rainClouds.x > 0.0 && ringing > 0.0) {
+    let slope = rainRipples(worldPosition.xy, frame.time.x, frame.rainClouds.x) * ringing *
                 rainExposure(worldPosition, geometryNormal);
     out.normal = normalize(out.normal - vec3f(slope, 0.0));
   }
@@ -569,10 +569,10 @@ fn cloudShadowAt(worldPosition: vec3f) -> f32 {
   let toLight = frame.sunDirection.xyz;
   let rise = CLOUD_ALTITUDE * 1000.0 - worldPosition.z;
   let slant = toLight.xy / max(toLight.z, 0.08);
-  let p = (worldPosition.xy + slant * rise) * 0.001 + frame.weatherWind.zw;
+  let p = (worldPosition.xy + slant * rise) * 0.001 + frame.windDrift.zw;
   // A closing deck has no gaps left to let the sun through (as clearSky()).
-  let deck = smoothstep(0.75, 1.0, frame.weather.w);
-  let density = mix(cloudDensityAt(p, frame.weather.w, 4), 1.0, deck);
+  let deck = smoothstep(0.75, 1.0, frame.rainClouds.w);
+  let density = mix(cloudDensityAt(p, frame.rainClouds.w, 4), 1.0, deck);
   let blocked = (0.85 + 0.12 * frame.cloudLight.w) * density;
   return (1.0 - blocked) * (1.0 - 0.9 * deck) * frame.cloudBase.w;
 }
@@ -847,12 +847,12 @@ fn shadeSeen(in: VertexOut, found: Found) -> LitOut {
   // (A grass blade's found per vertex, and too thin to show rings.)
   let perPoint = in.rain.x < 0.0;
   var dripped = in.rain.y;
-  var weathered = in.rain.x;
+  var surfaceWet = in.rain.x;
   if (perPoint) {
     dripped = dripLineWetness(in.worldPosition, geometryNormal);
-    weathered = surfaceWetness(in.worldPosition, geometryNormal);
+    surfaceWet = surfaceWetness(in.worldPosition, geometryNormal);
   }
-  let wet = max(max(weathered, s.soak), dripped);
+  let wet = max(max(surfaceWet, s.soak), dripped);
   let water = max(max(standingWater(in.worldPosition, geometryNormal, wet), s.water), dripped * 0.5);
   let wetted = wetMaterial(s.baseColor * in.tint.rgb, metallic, clamp(s.roughness, 0.04, 1.0), bumped,
                            geometryNormal, in.worldPosition, wet, water, perPoint);

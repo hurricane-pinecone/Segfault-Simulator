@@ -91,8 +91,8 @@ struct TerrainLayer
  * x its own maps. A vertex colour isn't used.
  *
  * With `puddles`, rain water collects in the mesh's low spots as the
- * weather's puddles rise (SceneWeather::puddles; see PuddleModule, which
- * has the GPU find them near the camera from the mesh's heights and its
+ * `puddles` global shader parameter rises (ShaderGlobals; see PuddleModule,
+ * which has the GPU find them near the camera from the mesh's heights and its
  * deformation). Up to `puddleDepth` of water
  * stands in a low spot at full, above its lowest point (or to its brim, if
  * shallower), so a big basin holds a puddle in its bottom, not a lake.

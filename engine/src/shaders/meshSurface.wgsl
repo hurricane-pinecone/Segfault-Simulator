@@ -73,7 +73,7 @@ struct Surface {
   alphaClip: f32,   // ALPHA_MASK: cut out below this alpha
   bloom: f32,       // how much of its light blooms (1 normally; 0 none)
   water: f32,       // water standing on it, 0 to 1 (a terrain's puddles; 0 normally)
-  soak: f32,        // how soaked it is besides the weather's wetness (a puddle's edge)
+  soak: f32,        // how soaked it is besides the wetness parameter's (a puddle's edge)
   translucency: f32, // sunlight let through from behind, 0 (none) to 1 (a thin leaf)
 }
 

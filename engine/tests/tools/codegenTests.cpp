@@ -1615,6 +1615,33 @@ struct [[sfs::event_request(sfs::EngineResponse)]] AskEngine { int g = 0; };
           std::string::npos);
   }
 
+  TEST("a list of shader parameters should be the ShaderParameters kind, "
+       "unqualified only inside namespace sfs")
+  {
+    const ParseResult result =
+        parseHeader("namespace game { struct [[sfs::scene_data]] Look { "
+                    "std::vector<sfs::ShaderParameter> values; "
+                    "std::vector<ShaderParameter> bare; }; }",
+                    "Look.h");
+    CHECK(findField(*result.type, "values")->kind == "ShaderParameters");
+    CHECK(findField(*result.type, "bare") == nullptr);
+    const ParseResult engine =
+        parseHeader("namespace sfs { struct [[sfs::scene_data]] Look { "
+                    "std::vector<ShaderParameter> values; }; }",
+                    "Look.h");
+    CHECK(engine.type->fields.size() == 1u);
+    CHECK(engine.type->fields[0].kind == "ShaderParameters");
+
+    GeneratorOptions options;
+    options.module = "game";
+    options.function = "registerTypes";
+    const std::string code = generateRegistration({*result.type}, options);
+    CHECK(code.find("decltype(std::declval<game::Look&>().values)>, "
+                    "std::vector<sfs::ShaderParameter>>") != std::string::npos);
+    CHECK(code.find("field.kind = FieldKind::ShaderParameters;") !=
+          std::string::npos);
+  }
+
   TEST("[[sfs::part]] should name an entity field's node; bad ones warn")
   {
     const ParseResult result = parseHeader(

@@ -281,7 +281,7 @@ and the map's red, green, blue and alpha paint the second to fifth over it
 | `antiTiling` | Break repeats up (true) |
 | `variation` | How much the brightness drifts over tens of metres (0.15) |
 | `triplanarSharpness` | How `triplanar` layers switch between their side and top projections: 0 a wide blend, toward 1 a crisp switch (0.5) |
-| `puddles` | Rain water collects in the mesh's low spots as the weather's `puddles` rise (false). See [Puddles](#puddles) |
+| `puddles` | Rain water collects in the mesh's low spots as the `puddles` global shader parameter rises (false). See [Puddles](#puddles) |
 | `puddleDepth` | How deep water stands in a low spot at full, in metres above its lowest point (or to its brim, if shallower) (0.05) |
 | `microRelief` | Shallow dips this deep (metres) scattered over the ground, drawn only, so flat ground has low spots too (0) |
 | `microReliefSize` | About how wide those dips are, in metres (3) |
@@ -371,7 +371,8 @@ for its ruts and hollows).
 
 The map holds, per texel, how far up its hollow's water line it is (0 its
 bottom, 1 the line) and how deep the hollow's water is there. The
-terrain shader puts water where the line, risen to the weather's `puddles` x
+terrain shader puts water where the line, risen to the `puddles` global shader
+parameter x
 the layers' `puddles` there, is above it. So as `puddles` goes from 0 to 1,
 water spreads out from each hollow's bottom to its line. Water stays
 when the rain stops: drying it is the game's job, by lowering `puddles`.
@@ -602,27 +603,39 @@ renders through `camera()` as set, as before.
 
 ## Lighting
 
-`setLighting(SceneLighting)` sets the sun, the ambient level and the sky
-colour, in every style, so a day/night controller works the same in a flat,
-isometric or 3D game:
+The scene's light is [scene data](../../../core/ecs/index.md#scene-data),
+in every style, so a day/night cycle works the same in a flat, isometric or 3D
+game. The render system reads it each frame, as it is. Each is optional:
+author it in Scene Settings > Scene Data, and write it from a system (see
+[Light, sky, wind and global shader parameters](../light-and-sky/index.md) for
+a day/night cycle and a storm).
 
-| Field | Meaning |
-| --- | --- |
-| `sun.direction` | Points toward the sun. Z <= 0 means the sun has set, and shadows switch off. |
-| `sun.color` | Sunlight tint |
-| `sun.diffuseStrength` | How much sun-facing surfaces brighten over ambient |
-| `moon.direction` | Points toward the moon (3D only). Z <= 0 means it's below the horizon (the default: no moon). |
-| `moon.phase` | How much of its face is lit: 0 new, 0.5 half, 1 full |
-| `moon.color`, `moon.diffuseStrength` | Its light's tint and strength under a flat sky (a physical sky works them out) |
-| `ambient` | Base brightness. |
-| `skyColor` | Background clear colour |
-| `cloudCover` | How overcast it is (0..1): dims the sun's and the moon's light. A physical sky draws the clouds (see [Weather](#weather)). |
+| Scene data | Field | Meaning |
+| --- | --- | --- |
+| `DirectionalLighting` | `direction` | Points toward the light: the sun by day, the moon by night. Z <= 0 means it's below the horizon, and shadows switch off. A 2D game's is in its own space: x and y across its plane, z up from it. |
+| | `color` | Its tint |
+| | `intensity` | How much surfaces facing it brighten over ambient (a full moon's is about 0.12) |
+| `AmbientLighting` | `intensity` | Base brightness |
+| | `skyColor` | The sky's colour: the background, what haze and shiny things show |
+| `Clouds` | `cover` | How overcast it is (0..1): dims the directional light and softens shadows. A physical sky draws the clouds (see [Clouds and rain](#clouds-and-rain)). |
+| | `darkness` | How heavy the clouds are: white fair-weather cloud (0) to dark rain cloud (1) |
+| `Rain` | `intensity` | How hard it's raining (0..1; see [Rain](#rain)) |
+| `CelestialBodies` | `sunDirection`, `moonDirection`, `moonPhase` | A physical sky's sun and moon (below) |
 
-Once the sun has set, the moon takes over as the light that shines and casts
-shadows. It fades in as the sun sinks to about 6 degrees below the horizon,
-and it's brighter the fuller and higher it is (`moonlight()` in `lighting.h`
-gives its share). A physical sky also draws its disk, lit to its phase, and
-glows brighter under it.
+Without a DirectionalLighting there's no directional light (and no shadows
+from one); without an AmbientLighting no ambient light, and a black sky;
+without Clouds a clear sky; without Rain none.
+
+What the renderer and the render modules light with is the frame's
+`SceneLighting` (`FrameParams::lighting`, `RenderContext::lighting`), which it
+works out from them each frame (`sceneLighting()`): the light turned into the
+world's space in a 2D game, a visual style's sky tint, and the clouds'
+dimming.
+
+By night a game puts the moon in the directional light's place, less
+intense. `moonlight(bodies)` in `lighting.h` gives its share of a full moon's
+light: brighter the fuller and higher it is, fading in as the sun sinks to
+about 6 degrees below the horizon (the renderer dims it behind clouds itself).
 
 The shading:
 
@@ -638,9 +651,12 @@ The shading:
 That's the **flat** sky, the default. A 3D scene can have a **physical** sky
 instead (`setSkySettings()`, or a visual style's `"sky"`): an atmosphere the
 sun lights, behind everything, whose light then lights the scene physically
-(the sun's colour through the air, the sky's diffuse light and reflections);
-only the sun's and moon's directions, the moon's phase and the cloud cover
-are taken from `SceneLighting` then. Its diffuse light is worked out again on a
+(the sun's colour through the air, the sky's diffuse light and reflections).
+It takes where its sun and moon are and the moon's phase from the scene's
+`CelestialBodies` (without them, a sun along the DirectionalLighting and no
+moon), and works the directional light out itself: the sun's, and once it has
+set, the moon's, fading in as above (it lights the scene and casts shadows).
+It draws the moon's disk, lit to its phase, and glows brighter under it. Its diffuse light is worked out again on a
 worker thread as the sun moves, the frame keeping the last until it's ready.
 See
 [Physical sky and image-based lighting](../visual-styles/index.md#physical-sky-and-image-based-lighting).
@@ -882,20 +898,17 @@ a visual style can replace each. See
 [Visual styles](../visual-styles/index.md#ambient-occlusion) for their fields
 and how they work. They're a 3D scene's: a 2D scene has none.
 
-### Weather
+### Clouds and rain
 
-`setWeather(SceneWeather)` sets the weather, which a game usually drives each
-frame, as it does the lighting. How cloudy it is stays the lighting's
-`cloudCover`. Scene Settings shows both under **Weather**, and the weather is
-saved with the scene when it isn't the default. It's a 3D scene's.
-
-| Field | Meaning |
-| --- | --- |
-| `rain` | How hard it's raining now (0..1) |
-| `wetness` | How wet surfaces are (0..1). It lags the rain as things wet and dry. |
-| `puddles` | How full the low spots are (0..1): water standing in a terrain's low spots (see [Puddles](#puddles)) |
-| `wind` | The wind the clouds drift on, in metres a second along world X and Y |
-| `cloudDarkness` | How heavy the clouds are: white fair-weather cloud (0) to dark rain cloud (1) |
+The sky's clouds and rain are the scene's `Clouds` (`cover`, `darkness`)
+and `Rain` (`intensity`); the wind they drift on is the scene's `sfs::Wind`
+(its `speed` along its `direction`, see
+[Wind](../light-and-sky/index.md#wind)); and how wet surfaces
+are and how full the puddles are, looks a game decides (they lag the rain as
+things wet and dry), are the global shader parameters `wetness` and `puddles`
+(see
+[Global shader parameters](../light-and-sky/index.md#global-shader-parameters)). They're a 3D
+scene's.
 
 Under a physical sky the clouds are a layer 1.5 km up, made of drifting noise.
 At low cover they're scattered cumulus, in the middle broken cloud, and near 1
@@ -917,9 +930,9 @@ reflection textures redraw them each time they've drifted (or the camera's
 moved) 30 m, and when the sun moves; the sky's diffuse light accounts for them
 on average (in the background, as it does for the sun's moves).
 
-The shaders get the weather as the `Frame` uniform's `weather` (rain,
-wetness, puddles, cloud cover) and `weatherWind` (the wind, then how far the
-clouds have drifted in km).
+The shaders get them as the `Frame` uniform's `rainClouds` (x the rain, w the
+cloud cover) and `windDrift` (the wind's velocity, then how far the clouds have
+drifted in km).
 
 #### Rain
 
@@ -927,7 +940,7 @@ While `rain` is above 0:
 
 - **Streaks** fall through the air around the camera: about 40,000 in a
   downpour (many fewer in a drizzle: about 5,000 at rain 0.3), half in a box around the camera and half in a bigger one reaching
-  ahead. They fall at about 8 m/s, slanted by the weather's wind, and each is
+  ahead. They fall at about 8 m/s, slanted by the scene's wind, and each is
   drawn as long as its blur while it falls. They drift as far as the wind has
   carried them (the render system keeps that, `RainDrift`, in the `Frame`'s
   `rainDrift`), and the wind they see is eased over about a second, so a gust
@@ -968,7 +981,7 @@ splashes. Things past the map's edge count as open.
 
 How rain looks is `setRainSettings(RainSettings)`, which a visual style can
 replace (its `"rain"` section). It's saved with the scene when it isn't the
-default, and it's under **Weather** in Scene Settings.
+default, and it's under **Rain** in Scene Settings.
 
 | Field | Default | Meaning |
 | --- | --- | --- |
@@ -988,21 +1001,45 @@ its history, which would otherwise smear them away.
 
 #### Lightning
 
-`strikeLightning(LightningStrike)` sets off a strike (a 3D scene's). A game
-does it during storms, more often at a storm's height.
+A strike is an entity with a `LightningComponent` and a `TransformComponent`
+(where it hits the ground; an in-cloud strike flashes in the cloud base above
+it), a 3D scene's. A game creates one for each strike, more often at a storm's
+height, and destroys it once the renderer has `finished` it:
+
+```cpp
+sfs::Entity bolt = registry->createEntity();
+bolt.addComponent<sfs::TransformComponent>(sfs::TransformComponent{where});
+sfs::LightningComponent strike;
+strike.intensity = 1.2f;
+strike.seed = nextSeed++;
+bolt.addComponent<sfs::LightningComponent>(strike);
+
+// Later, each frame:
+for (auto [entity, strike] : registry->query<sfs::LightningComponent>())
+  if (strike.finished)
+    registry->destroyEntity(entity);
+```
 
 | Field | Default | Meaning |
 | --- | --- | --- |
-| `position` | 0, 0, 0 | Where it hits the ground (world). An in-cloud strike flashes in the cloud base above it. |
 | `intensity` | 1 | How bright it is (1: a typical strike; 0.5 to 2 for variety) |
 | `inCloud` | false | In the cloud only: no channel to the ground |
 | `seed` | 0 | Shapes its channel and strokes. Give each strike its own. |
+| `hold` | -1 | Hold it this many seconds after it began (0: the first stroke's peak), for screenshots and tests; below 0 it runs |
+
+It flashes from the frame the render system first sees it, aging in real time
+while the render system animates. Its hidden fields are the renderer's: its
+`age`, its channel's meshes, and `finished` once it has gone dark (its meshes
+freed then, or as soon as its entity is destroyed). In a 2D scene, or without
+a `TransformComponent` (logged), it's finished at once. Clear a strike by
+destroying its entity: removing only its `LightningComponent` before it has
+finished leaves its channel's meshes until the scene ends.
 
 A strike flickers through its strokes (`lightningBrightness()`). A
 cloud-to-ground one has 2 to 5 return strokes over 0.15 to 0.5 s, each a flash
 dying away in tens of milliseconds, sometimes one held by a continuing
 current. An in-cloud one has 3 to 7 softer pulses. Up to 4 strikes flash at
-once; the oldest gives way.
+once; past that, the oldest are finished early.
 
 Under a physical sky a strike really emits light:
 
@@ -1033,9 +1070,7 @@ far brighter than the scene, so bloom picks them up. The main channel follows
 every stroke. Branches are lit by the first stroke and then fade. After each
 stroke a faint afterimage fades over about half a second.
 
-`holdLightning(seconds)` holds every strike that long after it began (0: the
-first stroke's peak), for screenshots and tests. `frameLightning()` is what the
-frame got. The shaders get it as the `Frame` uniform's `lightningLow`,
+`frameLightning()` is what the frame got. The shaders get it as the `Frame` uniform's `lightningLow`,
 `lightningHigh`, `lightningLight` and `lightningGlow`. `meshCommon.wgsl` has
 `lightningGlowAt(p)` (the glowing clouds' light at a point) and
 `lightningCloudsToward(origin, direction)` (the glow seen along a ray), and
@@ -1043,7 +1078,7 @@ frame got. The shaders get it as the `Frame` uniform's `lightningLow`,
 
 #### Wet surfaces
 
-`wetness` wets every lit surface the rain reaches: meshes, terrain, grass and
+The `wetness` global shader parameter (its x, 0..1) wets every lit surface the rain reaches: meshes, terrain, grass and
 its ground. It follows Lagarde's physically based wet surfaces. Porous things
 (rough and not metal, like soil, wood, stone and cloth) soak the water up and
 darken, down to half their albedo when soaked. Everything gets glossier: its
@@ -1059,7 +1094,8 @@ For shader authors: `meshCommon.wgsl` has `rainRipples(p: vec2f, time: f32,
 rain: f32) -> vec2f`. It returns the slope (d height / dx, dy) of rain's
 ripples at a world XY point. Tilt an up-facing normal with
 `normalize(n - vec3f(slope * strength, 0.0))`. `meshLit.wgsl` has
-`surfaceWetness()` (how wet a point is: weather, facing and shelter),
+`surfaceWetness()` (how wet a point is: the `wetness` parameter, facing and
+shelter),
 `standingWater()` (how much water stands on it; a terrain's puddles add
 theirs through Surface's `water`, and their soaked rims through `soak`),
 `wetMaterial()` (the wet albedo, roughness and normal, rippled where water
@@ -1454,8 +1490,7 @@ brush, see the editor's [Grass](../../../editor/index.md#grass). Underneath:
 
 ## Debug settings
 
-`RenderSystem::settings()` exposes ambient, sun strength, shadow, wind and
-projection controls as `ModuleSetting`s, so the debug panel shows them like any
+`RenderSystem::settings()` exposes shadow, haze and projection controls as `ModuleSetting`s, so the debug panel shows them like any
 other system's settings. Set the `SFS_GPU_TIMING` environment variable to have the
 WebGPU renderer time its sun shadow, grass growth, puddle and lit passes with
 GPU timestamp queries, where the device has them, and log their averages in

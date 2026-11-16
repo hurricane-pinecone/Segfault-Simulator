@@ -686,6 +686,30 @@ int main()
     CHECK(near(evaluate(compiled, side, {image}).baseColor, glm::vec3(1.0f)));
   }
 
+  TEST("a global parameter node should read the frame's parameter at its "
+       "slot, survive a round trip by name, and read 0 without one or on the "
+       "CPU")
+  {
+    Graph graph;
+    const NodeId out = graph.add(std::string(kOutputType), {});
+    const NodeId global = graph.add("globalParameter", {});
+    graph.find(global)->global = "wetness";
+    graph.connect(global, 1, out, kRoughness);
+    const CompiledGraph compiled = compile(graph);
+    CHECK(compiled.errors.empty());
+    CHECK(compiled.shader && compiled.shader->wgsl().find("frame.globals[0]") !=
+                                 std::string::npos);
+    CHECK(near(evaluate(compiled).roughness, 0.0f));
+
+    const auto loaded = Graph::fromJson(graph.toJson());
+    CHECK(loaded && loaded->find(global)->global == "wetness");
+
+    graph.find(global)->global = "";
+    const CompiledGraph unnamed = compile(graph);
+    CHECK(unnamed.shader &&
+          unnamed.shader->wgsl().find("frame.globals") == std::string::npos);
+  }
+
   TEST("posterize should round down to even steps")
   {
     Graph graph;

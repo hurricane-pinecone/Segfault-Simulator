@@ -10,6 +10,9 @@
 #include "scene/unusedOverrides.h"
 
 #include "engine/core/assets/assetDatabase.h"
+#include "engine/core/sceneData/ambientLighting.h"
+#include "engine/core/sceneData/directionalLighting.h"
+#include "engine/core/sceneData/wind.h"
 #include "engine/runtime/assetStore/assetStore.h"
 #include "engine/runtime/rendering/renderSystem.h"
 #include "engine/runtime/sceneManager/sceneManager.h"
@@ -198,6 +201,46 @@ int main()
     CHECK(unusedOverrides::of(editor.find("Rig")).size() == 1u);
     editor.history->undo();
     CHECK(unusedOverrides::of(editor.find("Rig")).size() == 2u);
+  }
+
+  // The scene's AmbientLighting, added only if it hasn't one.
+  const auto ambientOf = [](EditorScene& scene) -> sfs::AmbientLighting&
+  {
+    sfs::AmbientLighting* ambient = scene.sceneData<sfs::AmbientLighting>();
+    return ambient ? *ambient : scene.addSceneData<sfs::AmbientLighting>();
+  };
+
+  TEST("a prefab's tab should keep its own scene data across a restore, and a "
+       "scene's take the snapshot's")
+  {
+    Editor editor(project);
+    ambientOf(*editor.scene).intensity = 0.1f;
+    const json snapshot = editor.document->snapshot();
+    editor.scene->sceneData<sfs::AmbientLighting>()->intensity = 0.2f;
+    editor.document->restore(snapshot);
+    const auto* restored =
+        editor.scene->sceneData<const sfs::AmbientLighting>();
+    CHECK(restored && testing::approx(restored->intensity, 0.1f));
+
+    Editor prefab(project);
+    prefab.document->setPrefabContent(true);
+    ambientOf(*prefab.scene).intensity = 0.3f;
+    prefab.document->restore(prefab.document->snapshot());
+    const auto* kept = prefab.scene->sceneData<const sfs::AmbientLighting>();
+    CHECK(kept && testing::approx(kept->intensity, 0.3f));
+  }
+
+  TEST("a new scene should have a directional and an ambient light, and a 3D "
+       "one a wind too")
+  {
+    Editor editor(project);
+    editor.scene->resetToDefault(EditorScene::Style::ThreeD);
+    CHECK(editor.scene->sceneData<const sfs::DirectionalLighting>() != nullptr);
+    CHECK(editor.scene->sceneData<const sfs::AmbientLighting>() != nullptr);
+    CHECK(editor.scene->sceneData<const sfs::Wind>() != nullptr);
+    editor.scene->resetToDefault(EditorScene::Style::Flat);
+    CHECK(editor.scene->sceneData<const sfs::DirectionalLighting>() != nullptr);
+    CHECK(editor.scene->sceneData<const sfs::Wind>() == nullptr);
   }
 
   fs::remove_all(project);

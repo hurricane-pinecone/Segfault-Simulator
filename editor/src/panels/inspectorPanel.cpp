@@ -31,6 +31,7 @@
 #include "engine/core/reflection/reflection.h"
 #include "engine/core/rendering/aabb.h"
 #include "engine/core/rendering/emissionLights.h"
+#include "engine/core/sceneData/shaderGlobals.h"
 #include "engine/core/util/atomicFile.h"
 #include "engine/core/util/string.h"
 #include "engine/runtime/assetStore/assetStore.h"
@@ -376,6 +377,47 @@ bool assetRefList(const char* label,
       [&](std::size_t i)
       { assets.erase(assets.begin() + static_cast<std::ptrdiff_t>(i)); },
       [&] { assets.emplace_back(); });
+}
+
+// The scene's global shader parameters (ShaderGlobals): a row each, its name
+// and its value, taken out with its "x", and one more added at the end with
+// "+". Each change is an undo step. True when it's changed.
+bool shaderParameterList(const char* label,
+                         std::vector<sfs::ShaderParameter>& parameters,
+                         EditorHistory* history)
+{
+  return listRows(
+      label,
+      parameters.size(),
+      history,
+      [&](std::size_t i)
+      {
+        sfs::ShaderParameter& parameter = parameters[i];
+        const float width = ImGui::CalcItemWidth();
+        const float spacing = ImGui::GetStyle().ItemInnerSpacing.x;
+        const float nameWidth = std::max(width * 0.35f, 1.0f);
+        ImGui::SetNextItemWidth(nameWidth);
+        bool changed = widgets::undoable(
+            history,
+            parameter.name,
+            [](std::string& name)
+            { return widgets::inputTextOnCommit("##name", name); });
+        ImGui::SetItemTooltip("Its name, as shaders and materials' Global "
+                              "Parameter nodes read it");
+        ImGui::SameLine(0.0f, spacing);
+        ImGui::SetNextItemWidth(std::max(width - nameWidth - spacing, 1.0f));
+        changed |= widgets::undoable(
+            history,
+            parameter.value,
+            [](glm::vec4& v)
+            { return ImGui::DragFloat4("##value", &v.x, 0.01f); });
+        ImGui::SetItemTooltip("Its value (a number is its first)");
+        return changed;
+      },
+      [&](std::size_t i) {
+        parameters.erase(parameters.begin() + static_cast<std::ptrdiff_t>(i));
+      },
+      [&] { parameters.emplace_back(); });
 }
 
 // What an entity reference slot needs beyond its value: the entity and the
@@ -1065,6 +1107,10 @@ void fieldWidget(const FieldInfo& field,
                  field.in<std::vector<sfs::Entity>>(object),
                  history);
     break;
+  case FieldKind::ShaderParameters:
+    shaderParameterList(
+        label, field.in<std::vector<sfs::ShaderParameter>>(object), history);
+    break;
   }
 }
 
@@ -1128,6 +1174,18 @@ nlohmann::json fieldValue(const FieldInfo& field,
     return field.in<sfs::AssetRefBase>(object).asset;
   case Kind::AssetRefList:
     return field.in<sfs::AssetRefListBase>(object).assets;
+  case Kind::ShaderParameters:
+  {
+    nlohmann::json parameters = nlohmann::json::array();
+    for (const sfs::ShaderParameter& parameter :
+         field.in<std::vector<sfs::ShaderParameter>>(object))
+      parameters.push_back({parameter.name,
+                            parameter.value.x,
+                            parameter.value.y,
+                            parameter.value.z,
+                            parameter.value.w});
+    return parameters;
+  }
   case Kind::Entity:
   case Kind::EntityList:
     return holder ? references::comparable(holder->entity,
@@ -1195,6 +1253,10 @@ void copyField(const FieldInfo& field,
     break;
   case Kind::AssetRefList:
     field.in<sfs::AssetRefListBase>(to) = field.in<sfs::AssetRefListBase>(from);
+    break;
+  case Kind::ShaderParameters:
+    field.in<std::vector<sfs::ShaderParameter>>(to) =
+        field.in<std::vector<sfs::ShaderParameter>>(from);
     break;
   case Kind::Entity:
   case Kind::EntityList:
@@ -2671,8 +2733,9 @@ bool InspectorPanel::drawTerrain(EditorContext& context,
                           "wide blend, toward 1 a crisp switch");
   }
   changed |= widgets::propertyCheckbox("Puddles", &terrain.puddles);
-  ImGui::SetItemTooltip("Rain water collects in the mesh's low spots as the weather's puddles rise (worked out from "
-                        "its heights in the background)");
+  ImGui::SetItemTooltip("Rain water collects in the mesh's low spots as the "
+                        "`puddles` global shader parameter rises "
+                        "(worked out from its heights in the background)");
   if (terrain.puddles)
   {
     float depth = terrain.puddleDepth * 100.0f;

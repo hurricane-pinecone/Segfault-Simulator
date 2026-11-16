@@ -31,6 +31,8 @@ enum class FieldKind : uint8_t
   Entity,       // sfs::Entity: another entity, resolved at load (saved as a
                 // path; see sceneSerializer.h)
   EntityList,   // std::vector<sfs::Entity>: a list of them (saved as an array)
+  ShaderParameters, // std::vector<sfs::ShaderParameter>: named values (saved
+                    // as an array of {"name", "value"})
 };
 
 /** Editor hints for a field, from its [[sfs::...]] attributes. */

@@ -730,6 +730,10 @@ void GoalSystem::update(double)
 - Loading a scene, a type no module registers is kept as it was saved and
   written back, as unregistered components are; one the scene has already is
   logged and the file's skipped.
+- The engine has scene data of its own: the scene's `DirectionalLighting`,
+  `AmbientLighting`, `CelestialBodies`, `Clouds`, `Rain`, `Wind` and
+  `ShaderGlobals`, which the render system and the particles read each frame
+  (see [Light, sky, wind and global shader parameters](../../runtime/rendering/light-and-sky/index.md)).
 
 ## GameObjects — the OOP layer
 

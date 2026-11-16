@@ -402,10 +402,10 @@ bool rain(EditorHistory* history, sfs::RainSettings& rain)
       rain.enabled,
       [&](bool& on) { return ImGui::Checkbox(row("Rain").c_str(), &on); });
   ImGui::SetItemTooltip(
-      "While the weather has rain: streaks falling around the camera, drops\n"
-      "splashing and ringing water, and a grey veil over the distance.\n"
-      "Nothing falls under a roof (with the sun's shadows on). Wet surfaces\n"
-      "are drawn either way.");
+      "While it rains (the scene's Rain): streaks falling around the\n"
+      "camera, drops splashing and ringing water, and a grey veil over the\n"
+      "distance. Nothing falls under a roof (with the sun's shadows on). Wet\n"
+      "surfaces are drawn either way.");
   if (!rain.enabled)
     return changed;
   changed |= slider(history,
@@ -518,56 +518,6 @@ bool fog(EditorHistory* history, sfs::FogSettings& fog)
                     0.0f,
                     2.0f,
                     "How much it glows toward the sun (a physical sky's)");
-  return changed;
-}
-
-bool weather(EditorHistory* history,
-             sfs::SceneWeather& weather,
-             float& cloudCover)
-{
-  bool changed = slider(history,
-                        "Cloud Cover",
-                        cloudCover,
-                        0.0f,
-                        1.0f,
-                        "How overcast it is: scattered cumulus at low cover, "
-                        "broken cloud, a grey deck near 1 (a physical sky "
-                        "draws them)");
-  changed |= slider(history,
-                    "Cloud Darkness",
-                    weather.cloudDarkness,
-                    0.0f,
-                    1.0f,
-                    "How heavy the clouds are: white fair-weather cloud (0) "
-                    "to dark rain cloud (1)");
-  changed |= widgets::undoable(
-      history,
-      weather.wind,
-      [](glm::vec2& v)
-      {
-        return ImGui::DragFloat2(
-            row("Wind").c_str(), &v.x, 0.1f, -40.0f, 40.0f, "%.1f");
-      });
-  ImGui::SetItemTooltip(
-      "The wind the clouds drift on, metres a second along world X and Y");
-  changed |= slider(history,
-                    "Rain",
-                    weather.rain,
-                    0.0f,
-                    1.0f,
-                    "How hard it's raining (0: not; 1: a downpour)");
-  changed |= slider(history,
-                    "Wetness",
-                    weather.wetness,
-                    0.0f,
-                    1.0f,
-                    "How wet surfaces are (0: dry; 1: soaked)");
-  changed |= slider(history,
-                    "Puddles",
-                    weather.puddles,
-                    0.0f,
-                    1.0f,
-                    "How full the low spots are (0: dry; 1: full)");
   return changed;
 }
 

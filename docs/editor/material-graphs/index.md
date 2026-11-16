@@ -126,7 +126,7 @@ the menu for what it does.
 - **Input:** Colour, Number, Texture, Normal Map, Triplanar Texture,
   Triplanar Normal Map, UV,
   Vertex Colour (a model's own colours), Position, Normal, View Direction,
-  Time, Grass.
+  Time, Grass, Global Parameter.
 - **Math:** Add, Subtract, Multiply, Divide, Power, Minimum, Maximum, Mix,
   Clamp, Saturate, One Minus, Negate, Absolute, Fraction, Floor, Posterize,
   Square Root, Sine, Cosine, Step, Smoothstep, Remap.
@@ -166,6 +166,14 @@ Time counts the seconds the scene has been running, for things that move (water,
 flicker, pulsing glows). It runs while you edit too, so you see the movement in
 the viewport and the preview; untick **Animate** in the viewport's toolbar to
 hold it still while editing.
+
+Global Parameter reads one of the scene's global shader parameters by name
+(type it on the node: Scene Settings > Scene Data > Shader Globals lists the
+scene's), its **Value** (four numbers) and its **X**: one value the game sets
+for every material at once, such as how wet things are after rain or a pulse
+every glowing sign shares. A name the scene hasn't got reads 0, and so does
+the preview drawn on the CPU. See
+[Global shader parameters](../../runtime/rendering/light-and-sky/index.md#global-shader-parameters).
 
 ## Transparency
 

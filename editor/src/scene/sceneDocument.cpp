@@ -120,7 +120,8 @@ nlohmann::json SceneDocument::snapshot()
 void SceneDocument::restore(const nlohmann::json& snapshot)
 {
   m_opening.reset();
-  m_scene->clear();
+  // A prefab's content holds no scene data: its tab keeps its own.
+  m_scene->clear(m_prefabContent);
   serializerFor(*m_scene).load(snapshot, *m_scene, &m_scene->sceneScripts());
   m_scene->flushEntities();
 }

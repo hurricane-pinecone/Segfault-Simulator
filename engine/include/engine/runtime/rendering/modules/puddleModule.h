@@ -29,9 +29,9 @@ struct TextureData;
  * Render module that has the renderer find where rain water collects on
  * terrains (a MeshRendererComponent whose first material, as drawn, is a
  * terrain with TerrainMaterial::puddles), for the terrain shader to fill as
- * the weather's puddles rise (SceneWeather::puddles). It draws nothing
- * itself, and the water is only drawn: nothing on the CPU knows where it
- * stands.
+ * the `puddles` global shader parameter rises (ShaderGlobals). It draws
+ * nothing itself, and the water is only drawn: nothing on the CPU knows where
+ * it stands.
  *
  * Each such entity's puddles are worked out on the GPU (see puddles.h) in a
  * window kPuddleWindow across, ahead of the camera, from the mesh's surface
@@ -63,9 +63,9 @@ public:
   /**
    * How fast water rises in `ground`'s puddles, over its mesh's UVs (see
    * TerrainPuddles::fillRate: red 0 none stands .. 1 as fast as the
-   * weather's), e.g. a game's ground: loose sand soaks rain up, packed
-   * tracks pond at once. Null: 1 everywhere (as it starts). Its puddles are
-   * found again with it, so set it when it's changed, not every frame.
+   * `puddles` parameter), e.g. a game's ground: loose sand soaks rain up,
+   * packed tracks pond at once. Null: 1 everywhere (as it starts). Its puddles
+   * are found again with it, so set it when it's changed, not every frame.
    */
   void setFillRate(const Entity& ground,
                    std::shared_ptr<const TextureData> fillRate);

@@ -28,8 +28,11 @@ replace a scene's contents, destroy its entities and call
   children are listed under its `"children"` key, beside its components. A
   component can't be called `children`.
 - **The scene's render settings**, when it has a `RenderSystem`: its
-  [style](#the-style), lighting, shadows, wind, haze and the camera. In an editor scene, that camera is the viewport's
-  view. The game sees through a camera entity, which is saved like any other
+  [style](#the-style), shadows, haze, its look and the camera. In an editor scene, that camera is the viewport's
+  view. (Its environment, wind and global shader parameters are scene data:
+  an older file's render `"lighting"`, `"wind"` and `"weather"` are converted
+  to them as it loads; see
+  [Light, sky, wind and global shader parameters](../rendering/light-and-sky/index.md#older-scene-files).) The game sees through a camera entity, which is saved like any other
   entity.
 - **The scene's [scene data](../../core/ecs/index.md#scene-data)**, by type
   name, under `"sceneData"` (only when it has some; never in a prefab), each
@@ -74,7 +77,7 @@ replace a scene's contents, destroy its entities and call
     }
   ],
   "formatVersion": 3,
-  "render": { "style": { "kind": "3d" }, "camera": {}, "lighting": {}, "shadows": {} }
+  "render": { "style": { "kind": "3d" }, "camera": {}, "shadows": {} }
 }
 ```
 

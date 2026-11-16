@@ -5,6 +5,7 @@
 #include "engine/core/components/windZoneComponent.h"
 #include "engine/core/hierarchy/hierarchy.h"
 #include "engine/core/particles/decalSplatter.h"
+#include "engine/core/sceneData/wind.h"
 // Pulled in for the query rows (queryView.h) and entity.inl's templates.
 #include "engine/core/ecs/registry.h" // IWYU pragma: keep
 #include "engine/core/util/profiling.h"
@@ -282,10 +283,11 @@ void ParticleEngine::stepInstance(EmitterInstance& inst,
 
   const float damp =
       desc.drag > 0.0f ? glm::max(0.0f, 1.0f - desc.drag * dt) : 1.0f;
-  // Carried toward windInfluence times the wind by its drag.
+  // Carried toward windInfluence times the wind (where its emitter is) by
+  // its drag.
   const glm::vec2 planarAccel =
       desc.windInfluence > 0.0f
-          ? desc.gravity + desc.drag * desc.windInfluence * m_wind
+          ? desc.gravity + desc.drag * desc.windInfluence * windAt(inst.origin)
           : desc.gravity;
 
   auto& ps = inst.particles;
@@ -650,13 +652,31 @@ void ParticleEngine::syncComponentEmitters(float dt)
 void ParticleEngine::gatherWind()
 {
   m_wind = glm::vec2(0.0f);
+  m_windZones.clear();
   if (!registry)
     return;
-  for (WindZoneComponent& zone : registry->query<WindZoneComponent>())
+  if (const Wind* wind = registry->sceneData<const Wind>())
+    m_wind = windVelocity(*wind);
+  for (const auto& [entity, zone, transform] :
+       registry->query<WindZoneComponent, TransformComponent>())
   {
-    if (zone.enabled)
-      m_wind += zone.wind;
+    if (zone.enabled && zone.radius > 0.0f)
+      m_windZones.push_back({hierarchy::worldTransform(entity).position2D(),
+                             zone.radius,
+                             zone.wind});
   }
+}
+
+glm::vec2 ParticleEngine::windAt(const glm::vec2& point) const
+{
+  glm::vec2 wind = m_wind;
+  for (const WindZoneArea& zone : m_windZones)
+  {
+    const float away = glm::distance(point, zone.center);
+    if (away < zone.radius)
+      wind += zone.wind * (1.0f - away / zone.radius);
+  }
+  return wind;
 }
 
 void ParticleEngine::simulate(double deltaTime)

@@ -1,5 +1,9 @@
 #pragma once
 
+#include "engine/core/sceneData/ambientLighting.h"
+#include "engine/core/sceneData/celestialBodies.h"
+#include "engine/core/sceneData/clouds.h"
+#include "engine/core/sceneData/directionalLighting.h"
 #include "glm/glm/ext/vector_float3.hpp"
 #include "glm/glm/ext/vector_float4.hpp"
 
@@ -48,8 +52,12 @@ struct MoonLight
 };
 
 /**
- * Scene-wide lighting: the sun and moon, plus the ambient level and sky
- * colour.
+ * A frame's lighting, as the renderer works it out from the scene's
+ * DirectionalLighting, AmbientLighting, Clouds and (under a physical sky)
+ * CelestialBodies each frame (sceneLighting()) and gives it to the renderer and
+ * the render modules (FrameParams::lighting, RenderContext::lighting): the
+ * sun and moon, plus the ambient level and sky colour. A game sets the
+ * scene data, never this.
  *
  * @param ambient    base brightness everything receives (0 = black night,
  *                   1 = fully lit); also gates point lights, which fade in as
@@ -57,7 +65,7 @@ struct MoonLight
  * @param skyColor   linear RGB background clear colour
  * @param cloudCover how overcast it is (0 clear .. 1 overcast): dims the sun's
  *                   and the moon's light and hides the stars and the moon's
- *                   disk (the clouds themselves aren't drawn yet)
+ *                   disk
  */
 struct SceneLighting
 {
@@ -67,6 +75,24 @@ struct SceneLighting
   glm::vec3 skyColor{0.55f, 0.72f, 0.90f};
   float cloudCover = 0.0f;
 };
+
+/**
+ * The lighting a scene's light gives, each part optional: its directional
+ * light as the sun (none: below the horizon, strength 0), its ambient light
+ * (none: 0, and a black sky), its clouds' cover (none: clear) and, for a
+ * physical sky, where its sun and moon are (none: the sun along the
+ * directional light, no moon).
+ *
+ * @param light   the scene's DirectionalLighting (null: none)
+ * @param ambient its AmbientLighting (null: none)
+ * @param clouds  its Clouds (null: none)
+ * @param bodies  its CelestialBodies, for a physical sky (null: none)
+ * @return the lighting
+ */
+SceneLighting sceneLighting(const DirectionalLighting* light,
+                            const AmbientLighting* ambient,
+                            const Clouds* clouds,
+                            const CelestialBodies* bodies);
 
 /** How much of the sun's or moon's light gets through `cloudCover` (0..1). */
 float clearSky(float cloudCover);
@@ -78,6 +104,16 @@ float clearSky(float cloudCover);
  * setting to about 6 degrees below), behind clouds.
  */
 float moonlight(const SceneLighting& lighting);
+
+/**
+ * The same for a sky's sun and moon under clear skies: how strongly its moon
+ * lights the scene, 0..1, for a game putting the moon in its directional
+ * light's place at night (the renderer dims it behind clouds).
+ *
+ * @param bodies where the sun and moon are, and the moon's phase
+ * @return its share of a full moon's light
+ */
+float moonlight(const CelestialBodies& bodies);
 
 /**
  * One point light, resolved to world space for a frame.
@@ -183,22 +219,6 @@ struct ShadowSettings
   float cascadeSplit = 0.75f;
 
   bool operator==(const ShadowSettings&) const = default;
-};
-
-/**
- * The scene's wind: what grass (GrassComponent) sways in, and anything else
- * that moves with it. Gusts roll across the ground in waves, the way the wind
- * blows.
- *
- * @param direction  which way it blows, in degrees from +X toward +Y
- * @param strength   how hard (0: still air; 1: a gale)
- * @param gustiness  how much it comes and goes in gusts (0: steady)
- */
-struct WindSettings
-{
-  float direction = 30.0f;
-  float strength = 0.35f;
-  float gustiness = 0.5f;
 };
 
 /**

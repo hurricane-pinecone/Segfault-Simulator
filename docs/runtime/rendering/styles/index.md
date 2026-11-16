@@ -176,7 +176,7 @@ exported game draw it the same way:
 "render": {
   "style": { "kind": "isometric", "pixelsPerUnit": 32, "tilePixels": [32, 16],
              "heightPixels": 8, "yDown": false, "ySort": false },
-  "lighting": { ... }, "shadows": { ... }, "camera": { ... }
+  "shadows": { ... }, "camera": { ... }
 }
 ```
 
@@ -185,7 +185,9 @@ exported game draw it the same way:
 
 ## Lighting in 2D
 
-A 2D game's sun direction is in the game's own space: x and y across its plane
+A 2D game's sun direction (its `DirectionalLighting`'s `direction`, see
+[Light](../light-and-sky/index.md#light)) is in the game's own space: x and y
+across its plane
 (y down the screen if the plane's y runs down), z up from it (toward the
 viewer, in a flat game). The render system turns it into the world's. Haze is
 a 3D world's: it fades things by their distance from the camera, which in a 2D

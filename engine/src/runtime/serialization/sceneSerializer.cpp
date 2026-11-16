@@ -6,6 +6,13 @@
 #include "engine/core/logger/logger.h"
 #include "engine/core/reflection/reflection.h"
 #include "engine/core/rendering/sunShadow.h"
+#include "engine/core/sceneData/ambientLighting.h"
+#include "engine/core/sceneData/celestialBodies.h"
+#include "engine/core/sceneData/clouds.h"
+#include "engine/core/sceneData/directionalLighting.h"
+#include "engine/core/sceneData/rain.h"
+#include "engine/core/sceneData/shaderGlobals.h"
+#include "engine/core/sceneData/wind.h"
 #include "engine/core/util/atomicFile.h"
 #include "engine/runtime/rendering/meshLibrary.h"
 #include "engine/runtime/rendering/renderSystem.h"
@@ -18,6 +25,7 @@
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_float3.hpp"
 #include "glm/glm/ext/vector_float4.hpp"
+#include "glm/glm/geometric.hpp"
 
 #include <algorithm>
 #include <charconv>
@@ -156,6 +164,15 @@ json fieldToJson(const reflect::FieldInfo& field,
                 "': the mesh has no name, so it can't be saved");
     return std::string(name);
   }
+  case Kind::ShaderParameters:
+  {
+    json parameters = json::array();
+    for (const ShaderParameter& parameter :
+         field.in<std::vector<ShaderParameter>>(object))
+      parameters.push_back({{"name", parameter.name},
+                            {"value", vecToJson<4>(&parameter.value.x)}});
+    return parameters;
+  }
   case Kind::Entity:
   case Kind::EntityList:
     break; // saved in context, by SceneSerializer::saveRef
@@ -260,6 +277,25 @@ bool fieldFromJson(const reflect::FieldInfo& field,
     field.in<MeshHandle>(object) = mesh;
     return true;
   }
+  case Kind::ShaderParameters:
+  {
+    if (!value.is_array())
+      return false;
+    std::vector<ShaderParameter> parameters;
+    parameters.reserve(value.size());
+    for (const json& item : value)
+    {
+      ShaderParameter parameter;
+      if (!item.is_object() || !item.contains("name") ||
+          !item["name"].is_string() || !item.contains("value") ||
+          !vecFromJson<4>(item["value"], &parameter.value.x))
+        return false;
+      parameter.name = item["name"].get<std::string>();
+      parameters.push_back(std::move(parameter));
+    }
+    field.in<std::vector<ShaderParameter>>(object) = std::move(parameters);
+    return true;
+  }
   case Kind::Entity:
   case Kind::EntityList:
     break; // resolved once loaded, by SceneSerializer::loadFields
@@ -320,23 +356,11 @@ json gradingToJson(const ColorGrading& grading)
 
 json renderToJson(const RenderSystem& render)
 {
-  const SceneLighting& lighting = render.lighting();
   const ShadowSettings& shadows = render.shadowSettings();
   const Camera& camera = render.camera();
 
   json out = {
       {"style", styleToJson(render.space2D())},
-      {"lighting",
-       {{"sunDirection", toJson(lighting.sun.direction)},
-        {"sunColor", toJson(lighting.sun.color)},
-        {"sunStrength", cleanFloat(lighting.sun.diffuseStrength)},
-        {"ambient", cleanFloat(lighting.ambient)},
-        {"skyColor", toJson(lighting.skyColor)},
-        {"moonDirection", toJson(lighting.moon.direction)},
-        {"moonPhase", cleanFloat(lighting.moon.phase)},
-        {"moonColor", toJson(lighting.moon.color)},
-        {"moonStrength", cleanFloat(lighting.moon.diffuseStrength)},
-        {"cloudCover", cleanFloat(lighting.cloudCover)}}},
       {"shadows",
        {{"enabled", shadows.enabled},
         {"distance", cleanFloat(shadows.distance)},
@@ -344,10 +368,6 @@ json renderToJson(const RenderSystem& render)
         {"softness", cleanFloat(shadows.softness)},
         {"pointLights", shadows.pointLights},
         {"pointResolution", shadows.pointResolution}}},
-      {"wind",
-       {{"direction", cleanFloat(render.windSettings().direction)},
-        {"strength", cleanFloat(render.windSettings().strength)},
-        {"gustiness", cleanFloat(render.windSettings().gustiness)}}},
       {"haze",
        {{"strength", cleanFloat(render.hazeSettings().strength)},
         {"distance", cleanFloat(render.hazeSettings().distance)}}},
@@ -399,13 +419,6 @@ json renderToJson(const RenderSystem& render)
     out["fog"] = cleaned(render.fogSettings().toJson());
   if (render.rainSettings() != RainSettings{})
     out["rain"] = cleaned(render.rainSettings().toJson());
-  if (render.weather() != SceneWeather{})
-  {
-    json weather = cleaned(render.weather().toJson());
-    for (json& item : weather["wind"])
-      item = cleanFloat(item.get<float>());
-    out["weather"] = std::move(weather);
-  }
   if (render.temporalAntiAliasing())
     out["temporalAntiAliasing"] = true;
   // Debug settings (they do nothing in a release export; see
@@ -421,25 +434,6 @@ void renderFromJson(const json& value, RenderSystem& render)
 {
   if (const json& in = value.value("style", json::object()); in.is_object())
     styleFromJson(in, render);
-
-  if (const json& in = value.value("lighting", json::object()); in.is_object())
-  {
-    SceneLighting lighting = render.lighting();
-    lighting.sun.direction = vec3Or(in, "sunDirection", lighting.sun.direction);
-    lighting.sun.color = vec3Or(in, "sunColor", lighting.sun.color);
-    lighting.sun.diffuseStrength =
-        valueOr(in, "sunStrength", lighting.sun.diffuseStrength);
-    lighting.ambient = valueOr(in, "ambient", lighting.ambient);
-    lighting.skyColor = vec3Or(in, "skyColor", lighting.skyColor);
-    lighting.moon.direction =
-        vec3Or(in, "moonDirection", lighting.moon.direction);
-    lighting.moon.phase = valueOr(in, "moonPhase", lighting.moon.phase);
-    lighting.moon.color = vec3Or(in, "moonColor", lighting.moon.color);
-    lighting.moon.diffuseStrength =
-        valueOr(in, "moonStrength", lighting.moon.diffuseStrength);
-    lighting.cloudCover = valueOr(in, "cloudCover", lighting.cloudCover);
-    render.setLighting(lighting);
-  }
 
   if (const json& in = value.value("shadows", json::object()); in.is_object())
   {
@@ -476,23 +470,12 @@ void renderFromJson(const json& value, RenderSystem& render)
     render.setFogSettings(FogSettings::fromJson(in, render.fogSettings()));
   if (const json& in = value.value("rain", json::object()); in.is_object())
     render.setRainSettings(RainSettings::fromJson(in, render.rainSettings()));
-  if (const json& in = value.value("weather", json::object()); in.is_object())
-    render.setWeather(SceneWeather::fromJson(in, render.weather()));
   render.setTemporalAntiAliasing(
       value.value("temporalAntiAliasing", render.temporalAntiAliasing()));
   // Saved only when on: none is off (older files, and undoing a tick).
   const json& debug = value.value("debug", json::object());
   render.setDrawColliders(debug.is_object() &&
                           valueOr(debug, "drawColliders", false));
-
-  if (const json& in = value.value("wind", json::object()); in.is_object())
-  {
-    WindSettings wind = render.windSettings();
-    wind.direction = valueOr(in, "direction", wind.direction);
-    wind.strength = valueOr(in, "strength", wind.strength);
-    wind.gustiness = valueOr(in, "gustiness", wind.gustiness);
-    render.setWindSettings(wind);
-  }
 
   if (const json& in = value.value("haze", json::object()); in.is_object())
   {
@@ -522,6 +505,105 @@ void renderFromJson(const json& value, RenderSystem& render)
     camera.fieldOfView = valueOr(in, "fieldOfView", camera.fieldOfView);
     camera.orthoHeight = valueOr(in, "orthoHeight", camera.orthoHeight);
   }
+}
+
+// A scene file from before its light, clouds, rain, wind and global shader
+// parameters were scene data kept them in its render settings: "lighting",
+// "wind" and "weather". They become its DirectionalLighting,
+// AmbientLighting, CelestialBodies, Clouds, Rain, Wind and ShaderGlobals,
+// each only if the scene hasn't got one (logged once).
+void convertRenderSceneData(const json& value, Scene& scene)
+{
+  // Each block on its own: one that isn't an object is logged and skipped.
+  const auto block = [&value](const char* key)
+  {
+    const auto it = value.find(key);
+    if (it == value.end())
+      return json::object();
+    if (!it->is_object())
+    {
+      LOG_WARN(std::string("Loading a scene: its render \"") + key +
+               "\" isn't an object; skipped");
+      return json::object();
+    }
+    return *it;
+  };
+  const json lighting = block("lighting");
+  const json wind = block("wind");
+  const json weather = block("weather");
+  bool converted = false;
+  // The sun as the directional light; the ambient level and the sky colour as
+  // the ambient light; a moon above the horizon as a physical sky's, with
+  // the sun (a flat sky's moonlight is the game's to put in the directional
+  // light now: its colour and strength aren't kept).
+  if (!lighting.empty() && !scene.sceneData<DirectionalLighting>())
+  {
+    DirectionalLighting& light = scene.addSceneData<DirectionalLighting>();
+    light.direction = vec3Or(lighting, "sunDirection", light.direction);
+    light.color = vec3Or(lighting, "sunColor", light.color);
+    light.intensity = valueOr(lighting, "sunStrength", light.intensity);
+    converted = true;
+  }
+  if (!lighting.empty() && !scene.sceneData<AmbientLighting>())
+  {
+    AmbientLighting& ambient = scene.addSceneData<AmbientLighting>();
+    ambient.intensity = valueOr(lighting, "ambient", ambient.intensity);
+    ambient.skyColor = vec3Or(lighting, "skyColor", ambient.skyColor);
+    converted = true;
+  }
+  if (const glm::vec3 moon =
+          vec3Or(lighting, "moonDirection", glm::vec3(0.0f, 0.0f, -1.0f));
+      moon.z > 0.0f && !scene.sceneData<CelestialBodies>())
+  {
+    CelestialBodies& bodies = scene.addSceneData<CelestialBodies>();
+    bodies.sunDirection = vec3Or(lighting, "sunDirection", bodies.sunDirection);
+    bodies.moonDirection = moon;
+    bodies.moonPhase = valueOr(lighting, "moonPhase", bodies.moonPhase);
+    converted = true;
+  }
+  if ((lighting.contains("cloudCover") || weather.contains("cloudDarkness")) &&
+      !scene.sceneData<Clouds>())
+  {
+    Clouds& clouds = scene.addSceneData<Clouds>();
+    clouds.cover = valueOr(lighting, "cloudCover", clouds.cover);
+    clouds.darkness = valueOr(weather, "cloudDarkness", clouds.darkness);
+    converted = true;
+  }
+  if (weather.contains("rain") && !scene.sceneData<Rain>())
+  {
+    scene.addSceneData<Rain>().intensity = valueOr(weather, "rain", 0.0f);
+    converted = true;
+  }
+  if ((!wind.empty() || weather.contains("wind")) && !scene.sceneData<Wind>())
+  {
+    Wind& sceneWind = scene.addSceneData<Wind>();
+    sceneWind.direction = valueOr(wind, "direction", sceneWind.direction);
+    sceneWind.gustiness = valueOr(wind, "gustiness", sceneWind.gustiness);
+    // How hard things swayed is what shows: the speed that sways them as
+    // hard (windSway()'s curve backwards). Without it, the speed the
+    // weather's wind carried the clouds and rain at.
+    if (const auto strength = wind.find("strength");
+        strength != wind.end() && strength->is_number())
+      sceneWind.speed =
+          std::max(strength->get<float>(), 0.0f) / kSwayAtBreeze * kBreezeSpeed;
+    else if (glm::vec2 velocity(0.0f);
+             vecFromJson<2>(weather.value("wind", json()), &velocity.x))
+      sceneWind.speed = glm::length(velocity);
+    converted = true;
+  }
+  if ((weather.contains("wetness") || weather.contains("puddles")) &&
+      !scene.sceneData<ShaderGlobals>())
+  {
+    ShaderGlobals& globals = scene.addSceneData<ShaderGlobals>();
+    setShaderGlobal(globals, "wetness", valueOr(weather, "wetness", 0.0f));
+    setShaderGlobal(globals, "puddles", valueOr(weather, "puddles", 0.0f));
+    converted = true;
+  }
+  if (converted)
+    LOG_INFO("Scene's render \"lighting\", \"wind\" and \"weather\" are "
+             "scene data now (DirectionalLighting, AmbientLighting, "
+             "CelestialBodies, Clouds, Rain, Wind, ShaderGlobals): converted; "
+             "save the scene to keep them so");
 }
 
 // Indented JSON with short scalar arrays (vectors, colours) kept on one line,
@@ -856,6 +938,15 @@ void SceneSerializer::loadComponents(const json& entry,
     type->component.add(entity);
     loadFields(
         *type, type->component.get(entity), fields, entity, &pending, source);
+    // A wind zone saved before zones were local (it has no radius) blew
+    // everywhere: what the scene's Wind is now.
+    if (typeName == "WindZoneComponent" && fields.is_object() &&
+        !fields.contains("radius"))
+      LOG_WARN("Loading " + std::string(source) +
+               ": a WindZoneComponent from before zones were local blew "
+               "everywhere; it now blows within its radius of its entity "
+               "(nowhere without a TransformComponent). Move its wind into "
+               "the scene's Wind (Scene Data) and remove it");
   }
 
   if (!unresolved.empty())
@@ -945,8 +1036,12 @@ bool SceneSerializer::load(const json& in,
   }
 
   if (in.contains("render"))
+  {
     if (RenderSystem* render = scene.tryGetSystem<RenderSystem>())
       renderFromJson(in["render"], *render);
+    if (in["render"].is_object())
+      convertRenderSceneData(in["render"], scene);
+  }
 
   if (scripts)
   {

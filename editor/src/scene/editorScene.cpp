@@ -6,6 +6,9 @@
 #include "engine/core/components/pointLightComponent.h"
 #include "engine/core/components/spriteComponent.h"
 #include "engine/core/components/transformComponent.h"
+#include "engine/core/sceneData/ambientLighting.h"
+#include "engine/core/sceneData/directionalLighting.h"
+#include "engine/core/sceneData/wind.h"
 #include "engine/runtime/animation/animationSystem.h"
 #include "engine/runtime/rendering/renderSystem.h"
 
@@ -105,18 +108,25 @@ sfs::Entity EditorScene::atSaveOrder(std::size_t index)
   return index < order.size() ? getEntity(order[index].id) : sfs::Entity();
 }
 
-void EditorScene::clear()
+void EditorScene::clear(bool keepSceneData)
 {
   for (const sfs::Entity& entity : entities())
     destroyEntity(entity);
   flushEntities();
-  clearSceneData();
+  if (!keepSceneData)
+    clearSceneData();
 }
 
 void EditorScene::resetToDefault(Style style)
 {
   clear();
   sceneScripts() = {};
+  // Lit by a sun and the light all round, and in 3D swaying in a breeze, as a
+  // new scene always was.
+  addSceneData<sfs::DirectionalLighting>();
+  addSceneData<sfs::AmbientLighting>();
+  if (style == Style::ThreeD)
+    addSceneData<sfs::Wind>();
 
   sfs::RenderSystem& render = renderSystem();
   if (style != Style::ThreeD)

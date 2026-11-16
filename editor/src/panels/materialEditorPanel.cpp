@@ -384,7 +384,10 @@ void MaterialEditorPanel::drawNodeValues(EditorContext& context, mg::Node& node)
   ImGui::PopStyleColor();
 
   // Room on the right for the longest label.
-  float labelWidth = ImGui::CalcTextSize("Image").x;
+  float labelWidth =
+      ImGui::CalcTextSize(type->property == mg::Property::Global ? "Parameter"
+                                                                 : "Image")
+          .x;
   for (const mg::InputPin& pin : type->inputs)
     labelWidth = std::max(labelWidth, ImGui::CalcTextSize(pin.name.c_str()).x);
   ImGui::PushItemWidth(
@@ -437,6 +440,11 @@ void MaterialEditorPanel::drawNodeValues(EditorContext& context, mg::Node& node)
     }
     break;
   }
+  case mg::Property::Global:
+    widgets::inputTextOnCommit("Parameter", node.global);
+    ImGui::SetItemTooltip("The global shader parameter's name, as the scene "
+                          "has it (Scene Data > Shader Globals)");
+    break;
   case mg::Property::None:
     break;
   }

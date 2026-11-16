@@ -315,6 +315,8 @@ int main()
         graph::Graph g;
         const graph::NodeId out = g.add(std::string(graph::kOutputType), {});
         const graph::NodeId node = g.add(type.id, {});
+        // A global parameter's read from the frame.
+        g.find(node)->global = "wetness";
         g.connect(node, output, out, graph::kBaseColor);
         const MaterialHandle handle = harness.renderer.createMaterial(
             graphMaterial(g, AlphaMode::Opaque));
@@ -1140,30 +1142,29 @@ int main()
                              {.density = 300.0f, .height = 0.3f},
                              0.0f,
                              drawDistance};
-      return drawPlane(
-          harness,
-          plane,
-          material,
-          2.0f,
-          [&](FrameParams& frame)
-          {
-            frame.cameraPosition = {0.0f, -5.0f, 0.2f};
-            frame.cameraForward = {0.0f, 1.0f, 0.0f};
-            frame.view = glm::lookAt(frame.cameraPosition,
-                                     glm::vec3(0.0f, 0.0f, 0.2f),
-                                     glm::vec3(0.0f, 0.0f, 1.0f));
-            frame.projection =
-                glm::orthoRH_ZO(box.x, box.y, box.z, box.w, 0.1f, 10.0f);
-            frame.viewProjection = frame.projection * frame.view;
-            viewProjection = frame.viewProjection;
-            frame.lighting.skyColor = glm::vec3(0.0f);
-            frame.wind = {
-                .direction = 0.0f, .strength = wind, .gustiness = 0.0f};
-            frame.bloom.enabled = false;
-          },
-          {},
-          {},
-          {&batch, 1});
+      return drawPlane(harness,
+                       plane,
+                       material,
+                       2.0f,
+                       [&](FrameParams& frame)
+                       {
+                         frame.cameraPosition = {0.0f, -5.0f, 0.2f};
+                         frame.cameraForward = {0.0f, 1.0f, 0.0f};
+                         frame.view = glm::lookAt(frame.cameraPosition,
+                                                  glm::vec3(0.0f, 0.0f, 0.2f),
+                                                  glm::vec3(0.0f, 0.0f, 1.0f));
+                         frame.projection = glm::orthoRH_ZO(
+                             box.x, box.y, box.z, box.w, 0.1f, 10.0f);
+                         frame.viewProjection = frame.projection * frame.view;
+                         viewProjection = frame.viewProjection;
+                         frame.lighting.skyColor = glm::vec3(0.0f);
+                         frame.wind = {.direction = 0.0f, .gustiness = 0.0f};
+                         frame.sway = wind;
+                         frame.bloom.enabled = false;
+                       },
+                       {},
+                       {},
+                       {&batch, 1});
     };
     // Grass pixels standing above a height (by default, a blade's flattened
     // height), in the last view drawn.
@@ -2353,8 +2354,8 @@ int main()
                 glm::lookAt(glm::vec3(0.0f, 0.0f, 2.0f),
                             glm::vec3(0.0f),
                             glm::vec3(0.0f, 1.0f, 0.0f));
-            frame.weather.rain = rain;
-            frame.weather.wetness = wetness;
+            frame.rainfall = rain;
+            frame.globals[kShaderGlobalWetness].x = wetness;
           },
           {},
           batches);

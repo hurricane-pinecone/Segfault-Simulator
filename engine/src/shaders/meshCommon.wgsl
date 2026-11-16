@@ -15,7 +15,7 @@ struct Frame {
   cameraForward: vec4f, // xyz unit view direction
   clusterSize: vec4u,   // the light clusters: x tiles across, y down, z depth slices, w lights
   clusterDepth: vec4f,  // x near, y far, z slices per log(depth / near), w tile size (pixels)
-  wind: vec4f,          // xy which way it blows (unit), z strength, w gustiness
+  wind: vec4f,          // xy which way it blows (unit), z how hard things sway (windSway()), w gustiness
   haze: vec4f,          // x strength, y 1 / the distance it's half that
   sunBalance: vec4f,    // rgb the sun's share of a surface's light x this, w 1 if re-balanced (a visual style)
   ambientBalance: vec4f, // rgb ambient's share x this, w the brightest light gets (1 unless tone mapped)
@@ -44,13 +44,13 @@ struct Frame {
   moonSun: vec4f,      // xyz toward the sun (the moon's lit side), w how much of it is lit (0..1)
   moonLight: vec4f,    // rgb its disk's light (not adapted), w 1 if it's the frame's light (in the
                        // sun's place: sunDirection, sunLight)
-  weather: vec4f,      // the weather (SceneWeather), each 0..1: x rain, y wetness, z puddles, w cloud cover
-  weatherWind: vec4f,  // xy the wind (m/s, world XY), zw how far the clouds have drifted (km)
+  rainClouds: vec4f,   // each 0..1: x how hard it rains (Rain), w the clouds' cover (Clouds); yz unused
+  windDrift: vec4f,    // xy the Wind's velocity (m/s, world XY), zw how far the clouds have drifted (km)
   cloudLight: vec4f,   // a physical sky's clouds: rgb the light on their tops (the sun's at their
                        // height, or the moon's; not adapted), w how dark they are (0..1)
   cloudBase: vec4f,    // rgb their undersides lit through (not adapted), w 1 / the share of the sun's
                        // light they let through on average (sunLight is dimmed by it); 0: no clouds
-  // Rain (RainSettings, while the weather has it; see rain.wgsl):
+  // Rain (RainSettings, while it rains; see rain.wgsl):
   rainView: mat4x4f,   // the overhead map's view-projection (straight down, z 0 at its top)
   rainMap: vec4f,      // xy its centre (world), z its half size, w 1 if it's drawn this frame
   rainDepth: vec4f,    // x its top (world Z), y how far down it reaches, z streaks, w splashes
@@ -68,12 +68,19 @@ struct Frame {
   lightningGlow: vec4f,  // rgb the cloud base's glow at its middle, w 1 while it flashes
   cameraTarget: vec4f,   // xyz what the camera looks at, w how far round the line of sight to it what
                          // clears the view fades (0: none; see cameraFaded() in meshSurface.wgsl)
+  // The scene's global shader parameters (ShaderGlobals), each at its slot (shaderGlobalSlot()).
+  globals: array<vec4f, 16>,
 }
+
+// The engine's own global shader parameters' slots (their x, 0..1): how wet surfaces are, and how full
+// a terrain's low spots are.
+const GLOBAL_WETNESS = 0u;
+const GLOBAL_PUDDLES = 1u;
 
 // A physical sky's cloud layer this frame (skyCommon.wgsl's CloudLayer), as
 // seen from the camera.
 fn frameClouds() -> CloudLayer {
-  return CloudLayer(frame.cameraPosition.xy * 0.001 + frame.weatherWind.zw, frame.weather.w, frame.cloudLight.w,
+  return CloudLayer(frame.cameraPosition.xy * 0.001 + frame.windDrift.zw, frame.rainClouds.w, frame.cloudLight.w,
                     frame.cloudLight.rgb, frame.cloudBase.rgb, frame.sunDirection.xyz);
 }
 
@@ -118,7 +125,7 @@ fn lightningCloudsToward(origin: vec3f, direction: vec3f) -> vec3f {
   let away = q.xy - frame.lightningHigh.xy;
   let r = frame.lightningLight.w;
   let spot = exp(-dot(away, away) / (r * r)) + 0.5 * r * r / (r * r + dot(away, away));
-  let density = cloudDensityAt(q.xy * 0.001 + frame.weatherWind.zw, frame.weather.w, 3);
+  let density = cloudDensityAt(q.xy * 0.001 + frame.windDrift.zw, frame.rainClouds.w, 3);
   return frame.lightningGlow.rgb * (spot * (0.3 + 0.7 * density) * exp(-t / 60000.0));
 }
 

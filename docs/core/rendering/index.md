@@ -16,10 +16,12 @@ terrain are meshes and materials too, just placed on its plane.
 - **Camera:** `Camera` and `Ray` (`camera.h`): an orbit camera for a Z-up
   world, with perspective or orthographic projection, and the ray through a
   pixel for picking.
-- **Lighting:** `SceneLighting` (the sun, the moon, ambient light, sky colour
-  and cloud cover),
-  `PointLight`, and the settings for shadows, bloom, depth of field, haze and
-  wind (`lighting.h`).
+- **Lighting:** `SceneLighting` (a frame's sun, moon, ambient light, sky
+  colour and cloud cover, worked out from the scene's light scene data),
+  `PointLight`, and the settings for shadows, bloom, depth of field and haze
+  (`lighting.h`). The scene's environment, wind and global shader parameters
+  are scene data (`engine/core/sceneData/`: see
+  [Light, sky, wind and global shader parameters](../../runtime/rendering/light-and-sky/index.md)).
 - **Grass:** the ground grass grows on, its painted maps and trampling
   (`grass.h`).
 - **Culling and lights:** `Frustum` and `Aabb` for culling, the light

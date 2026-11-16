@@ -10,6 +10,35 @@
 namespace sfs
 {
 
+SceneLighting sceneLighting(const DirectionalLighting* light,
+                            const AmbientLighting* ambient,
+                            const Clouds* clouds,
+                            const CelestialBodies* bodies)
+{
+  SceneLighting lighting;
+  if (light)
+  {
+    lighting.sun.direction = light->direction;
+    lighting.sun.color = light->color;
+    lighting.sun.diffuseStrength = light->intensity;
+  }
+  else
+  {
+    lighting.sun.direction = glm::vec3(0.0f, 0.0f, -1.0f);
+    lighting.sun.diffuseStrength = 0.0f;
+  }
+  if (bodies)
+  {
+    lighting.sun.direction = bodies->sunDirection;
+    lighting.moon.direction = bodies->moonDirection;
+    lighting.moon.phase = bodies->moonPhase;
+  }
+  lighting.ambient = ambient ? ambient->intensity : 0.0f;
+  lighting.skyColor = ambient ? ambient->skyColor : glm::vec3(0.0f);
+  lighting.cloudCover = clouds ? clouds->cover : 0.0f;
+  return lighting;
+}
+
 float clearSky(float cloudCover)
 {
   // Broken cloud lets the sun through its gaps; a closed deck (the last
@@ -20,20 +49,38 @@ float clearSky(float cloudCover)
   return (1.0f - 0.85f * cover) * (1.0f - 0.9f * deck);
 }
 
-float moonlight(const SceneLighting& lighting)
+namespace
 {
-  const glm::vec3& moon = lighting.moon.direction;
-  const glm::vec3& sun = lighting.sun.direction;
+
+// moonlight() under clear skies.
+float clearMoonlight(const glm::vec3& sun, const glm::vec3& moon, float phase)
+{
   if (glm::dot(moon, moon) < 1e-12f)
     return 0.0f;
   const float moonUp = glm::normalize(moon).z;
   const float sunUp =
       glm::dot(sun, sun) > 1e-12f ? glm::normalize(sun).z : -1.0f;
   // A half moon gives far less than half a full one's light.
-  const float phase = glm::clamp(lighting.moon.phase, 0.0f, 1.0f);
+  const float lit = glm::clamp(phase, 0.0f, 1.0f);
   const float risen = glm::smoothstep(0.0f, 0.15f, moonUp);
   const float dark = 1.0f - glm::smoothstep(-0.10f, -0.005f, sunUp);
-  return phase * phase * risen * dark * clearSky(lighting.cloudCover);
+  return lit * lit * risen * dark;
+}
+
+} // namespace
+
+float moonlight(const SceneLighting& lighting)
+{
+  return clearMoonlight(lighting.sun.direction,
+                        lighting.moon.direction,
+                        lighting.moon.phase) *
+         clearSky(lighting.cloudCover);
+}
+
+float moonlight(const CelestialBodies& bodies)
+{
+  return clearMoonlight(
+      bodies.sunDirection, bodies.moonDirection, bodies.moonPhase);
 }
 
 void setSpot(PointLight& light,

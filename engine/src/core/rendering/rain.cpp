@@ -1,5 +1,7 @@
 #include "engine/core/rendering/rain.h"
 
+#include "engine/core/util/clamp.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -13,12 +15,6 @@ void read(const nlohmann::json& json, const char* key, float& out)
 {
   if (const auto it = json.find(key); it != json.end() && it->is_number())
     out = it->get<float>();
-}
-
-float unit(float value)
-{
-  // (NaN to 0.)
-  return value > 0.0f ? std::min(value, 1.0f) : 0.0f;
 }
 
 // At least 0 (NaN to 0), at most `most`.
@@ -74,7 +70,7 @@ uint32_t rainStreaks(const RainSettings& settings, float rain)
   // Up to twice the usual, so a style can't ask for millions. Many more as
   // it rains harder: a drizzle (0.3) has an eighth of a downpour's.
   const float share =
-      std::pow(unit(rain), 1.75f) * upTo(settings.density, 2.0f);
+      std::pow(unitInterval(rain), 1.75f) * upTo(settings.density, 2.0f);
   return static_cast<uint32_t>(std::round(share * kRainStreaks));
 }
 
@@ -83,7 +79,7 @@ uint32_t rainSplashes(const RainSettings& settings, float rain)
   if (!settings.enabled)
     return 0;
   const float share =
-      std::pow(unit(rain), 1.5f) * upTo(settings.splashes, 2.0f);
+      std::pow(unitInterval(rain), 1.5f) * upTo(settings.splashes, 2.0f);
   return static_cast<uint32_t>(std::round(share * kRainSplashes));
 }
 
@@ -93,7 +89,7 @@ float rainVeilDensity(const RainSettings& settings, float rain)
     return 0.0f;
   // Light rain barely veils the distance; a downpour (1) hides half of what's
   // 150 m away: 1 - exp(-150 d) = 0.5.
-  const float hard = unit(rain);
+  const float hard = unitInterval(rain);
   constexpr float kDownpour = 0.00462f;
   return kDownpour * hard * std::sqrt(hard) * upTo(settings.veil, 4.0f);
 }
@@ -111,16 +107,16 @@ RainDrips rainDrips(const RainSettings& settings, float rain, float wetness)
     const float t = std::clamp((x - from) / (to - from), 0.0f, 1.0f);
     return t * t * (3.0f - 2.0f * t);
   };
-  const float heavy = ease(0.4f, 1.0f, unit(rain));
-  const float soaked = 0.25f * ease(0.5f, 1.0f, unit(wetness));
+  const float heavy = ease(0.4f, 1.0f, unitInterval(rain));
+  const float soaked = 0.25f * ease(0.5f, 1.0f, unitInterval(wetness));
   const float share = std::max(heavy, soaked) * upTo(settings.drips, 2.0f);
   out.count = static_cast<uint32_t>(std::round(share * kRainDrips));
   if (out.count == 0)
     return out;
   out.rate = 0.3f + 0.7f * heavy;
-  out.trickle = ease(0.7f, 1.0f, unit(rain));
+  out.trickle = ease(0.7f, 1.0f, unitInterval(rain));
   // The drip line soaks as the ground around it does, wetter while it pours.
-  out.line = unit(wetness) * std::max(heavy, 0.5f) *
+  out.line = unitInterval(wetness) * std::max(heavy, 0.5f) *
              std::min(upTo(settings.drips, 2.0f), 1.0f);
   return out;
 }

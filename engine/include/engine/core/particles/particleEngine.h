@@ -215,11 +215,23 @@ private:
   std::unordered_map<Entity::EntityId, EmitterInstance> m_entityEmitters;
   std::vector<EmitterInstance> m_bursts;
 
-  // The wind (WindZoneComponent) summed this update, across the plane.
+  // The scene's wind this update (Wind: its velocity across the plane), and
+  // the enabled wind zones there (WindZoneComponent): where each is, how far
+  // it reaches and its wind. Rebuilt each update; its room is kept.
+  struct WindZoneArea
+  {
+    glm::vec2 center{0.0f};
+    float radius = 0.0f;
+    glm::vec2 wind{0.0f};
+  };
   glm::vec2 m_wind{0.0f};
+  std::vector<WindZoneArea> m_windZones;
 
-  // Sum the enabled wind zones into m_wind (none without a registry).
+  // Read the scene's wind and its zones (none without a registry).
   void gatherWind();
+
+  // The wind at a point of the plane: the scene's, and each zone's there.
+  glm::vec2 windAt(const glm::vec2& point) const;
 
   // Global live-particle ceiling (see setMaxParticles).
   int m_maxParticles = 6000;

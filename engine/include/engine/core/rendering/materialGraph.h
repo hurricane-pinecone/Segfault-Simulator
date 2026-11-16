@@ -36,6 +36,8 @@ struct Node
   // A Texture node's image holds data (masks, roughness), not colour: it's
   // read as-is rather than converted from sRGB.
   bool dataTexture = false;
+  // A Global Parameter node's parameter: its name (see ShaderGlobals).
+  std::string global;
 
   bool operator==(const Node&) const = default;
 };

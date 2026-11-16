@@ -11,12 +11,12 @@ namespace sfs
 {
 
 /**
- * How rain looks (the weather says how hard it's raining: SceneWeather::rain,
- * and how wet things are: SceneWeather::wetness). A 3D scene's, and a visual
- * style's to override.
+ * How rain looks (how hard it's raining is the scene's Rain, and how wet
+ * things are the `wetness` global shader parameter). A 3D scene's, and a
+ * visual style's to override.
  *
  * While it rains, streaks fall through the air around the camera (slanted by
- * the weather's wind, lit by the sky and lamps, faded with distance), drops
+ * the scene's Wind, lit by the sky and lamps, faded with distance), drops
  * splash where they land and ring the water they fall on, and the distance
  * greys over behind a veil of rain. Nothing falls (or splashes) under a roof:
  * an overhead map of what's drawn says where the sky is open (with the sun's

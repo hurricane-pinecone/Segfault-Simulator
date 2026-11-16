@@ -29,6 +29,18 @@ bool propertyCheckbox(const char* label, bool* value);
 /** ImGui::InputText over a std::string, growing it as the user types. */
 bool inputText(const char* label, std::string& value, int flags = 0);
 
+/**
+ * A text field over `value` that changes it only when the edit is committed:
+ * Enter, or the field losing focus. While it's typed in, `value` keeps what it
+ * was (for a name others look things up by, which mustn't see it half typed).
+ *
+ * @param label the field's label (ImGui's)
+ * @param value the text, written when the edit is committed
+ * @param flags more ImGuiInputTextFlags
+ * @return true on the frame `value` changed
+ */
+bool inputTextOnCommit(const char* label, std::string& value, int flags = 0);
+
 // ImGui's colour pickers, kept to 0..1 (ImGui only limits dragging, so a typed
 // 1000 in a 0..255 field would otherwise stick).
 bool colorEdit3(const char* label, float* rgb);

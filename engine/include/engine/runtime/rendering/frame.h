@@ -10,7 +10,8 @@
 #include "engine/core/rendering/rain.h"
 #include "engine/core/rendering/sky.h"
 #include "engine/core/rendering/sunShadow.h"
-#include "engine/core/rendering/weather.h"
+#include "engine/core/sceneData/shaderGlobals.h"
+#include "engine/core/sceneData/wind.h"
 #include "glm/glm/ext/matrix_float4x4.hpp"
 #include "glm/glm/ext/vector_float3.hpp"
 #include "glm/glm/ext/vector_float4.hpp"
@@ -82,7 +83,7 @@ struct FrameSky
   // The clouds' light (none drawn while cloudCover is 0): what lights their
   // tops (the sun's at their height, or the moon's) and their undersides
   // lit through (PhysicalSky::cloudBase), neither adapted; and how heavy
-  // they are (SceneWeather::cloudDarkness).
+  // they are (Clouds::darkness).
   glm::vec3 cloudLight{0.0f};
   glm::vec3 cloudBase{0.0f};
   float cloudDarkness = 0.0f;
@@ -90,7 +91,7 @@ struct FrameSky
 };
 
 /**
- * A frame's lightning (see LightningStrike): its brightest strike's light,
+ * A frame's lightning (see LightningComponent): its brightest strike's light,
  * as it flashes now (not adapted: the backend adapts it as the sky's), under
  * a physical sky. `active` while any strike is still going (afterimages
  * too): auto exposure holds while it is, so a flash brightens the scene.
@@ -150,16 +151,21 @@ struct FrameParams
   BloomSettings bloom;
   DepthOfFieldSettings depthOfField;
   float focusDistance = 20.0f; // the view's (where depth of field is sharp)
-  WindSettings wind;
+  // The scene's Wind (still air, speed 0, while it has none), and how hard
+  // things sway in it (windSway(); 0 without one).
+  Wind wind;
+  float sway = 0.0f;
   HazeSettings haze;
-  // The weather (clamped), and how far the clouds have drifted (km, within
-  // kCloudPeriod).
-  SceneWeather weather;
+  // How hard it's raining (the scene's Rain, 0..1), and how far the clouds
+  // have drifted on the wind (km, within kCloudPeriod).
+  float rainfall = 0.0f;
   glm::vec2 cloudDrift{0.0f};
-  // How rain looks (a 3D scene's; while the weather has it); how far its
-  // drops have drifted on the wind (m, in the world's XY, within
-  // kRainDriftPeriod), and the wind they slant in (eased: gusts don't flick
-  // them).
+  // The scene's global shader parameters (ShaderGlobals), each at its slot
+  // (shaderGlobalSlot()); the engine's own (wetness, puddles) clamped 0..1.
+  ShaderGlobalValues globals{};
+  // How rain looks (a 3D scene's; while it rains); how far its drops have
+  // drifted on the wind (m, in the world's XY, within kRainDriftPeriod), and
+  // the wind they slant in (eased: gusts don't flick them).
   RainSettings rain;
   glm::vec2 rainDrift{0.0f};
   glm::vec2 rainWind{0.0f};

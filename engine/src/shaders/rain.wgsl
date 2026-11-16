@@ -1,4 +1,4 @@
-// Rain (RainSettings, while the weather has it): streaks falling through the
+// Rain (RainSettings, while it rains): streaks falling through the
 // air around the camera and drops splashing where they land, drawn last in
 // the lit pass, blended over what's there and behind what's in front (depth
 // tested, not written). One draw: frame.rainDepth.z streaks, then .w

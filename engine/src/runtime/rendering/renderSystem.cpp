@@ -3,6 +3,7 @@
 #include "engine/core/components/cameraComponent.h"
 #include "engine/core/components/cameraFeedComponent.h"
 #include "engine/core/components/cameraFollowComponent.h"
+#include "engine/core/components/lightningComponent.h"
 #include "engine/core/components/meshRendererComponent.h"
 #include "engine/core/components/pointLightComponent.h"
 #include "engine/core/components/transformComponent.h"
@@ -11,6 +12,7 @@
 #include "engine/core/logger/logger.h"
 #include "engine/core/rendering/materialGraphCompiler.h"
 #include "engine/core/rendering/sunShadow.h"
+#include "engine/core/util/clamp.h"
 #include "engine/core/util/cpuTiming.h"
 #include "engine/core/util/debugFeatures.h"
 #include "engine/runtime/rendering/debug/colliderLines.h"
@@ -46,6 +48,31 @@ constexpr float kLightningChannelGlow = 40.0f;
 constexpr float kLightningShadowReach = 1200.0f;
 constexpr std::size_t kMostLightningStrikes = 4;
 
+// The air of a scene without a Wind, and the sky of one without Clouds or
+// Rain.
+const sfs::Wind kStillAir{.speed = 0.0f, .gustiness = 0.0f};
+const sfs::Clouds kClearSky{};
+const sfs::Rain kDry{};
+
+// A strike as the lightning functions take it: where it strikes (its
+// entity's place in the world) and its settings.
+sfs::LightningStrike strikeOf(const sfs::Entity& entity,
+                              const sfs::LightningComponent& strike)
+{
+  sfs::LightningStrike out;
+  out.position = sfs::hierarchy::cachedWorldTransform(entity).position;
+  out.intensity = strike.intensity;
+  out.inCloud = strike.inCloud;
+  out.seed = strike.seed;
+  return out;
+}
+
+// When in its strokes a strike is shown: its hold, or its age.
+float shownAge(const sfs::LightningComponent& strike)
+{
+  return strike.hold >= 0.0f ? strike.hold : strike.age;
+}
+
 } // namespace
 
 namespace sfs
@@ -61,6 +88,50 @@ void RenderSystem::create()
   // What's on screen moves on in real time, however fast the game's going
   // (its particles keep the game's time with their own time scale).
   setTimeStep(TimeStep::Real);
+  // A strike destroyed before it finished frees its channel's meshes.
+  observe<LightningComponent>(
+      {},
+      [this](const Entity& entity)
+      {
+        if (auto* strike = entity.getComponent<LightningComponent>())
+          releaseStrike(*strike);
+      });
+}
+
+void RenderSystem::update(double deltaTime)
+{
+  float seconds = 0.0f;
+  if (m_animating)
+  {
+    m_time += deltaTime;
+    seconds = static_cast<float>(deltaTime);
+    const glm::vec2 velocity = windVelocity(sceneWind());
+    m_cloudDrift = driftClouds(m_cloudDrift, velocity, seconds);
+    m_rainDrift.advance(velocity, seconds);
+  }
+  updateLightning(seconds);
+  refreshMeshBounds();
+  makeFeedPictures();
+  updateModules(deltaTime);
+}
+
+const Wind& RenderSystem::sceneWind() const
+{
+  const Wind* wind = registry ? registry->sceneData<const Wind>() : nullptr;
+  return wind ? *wind : kStillAir;
+}
+
+const Clouds& RenderSystem::sceneClouds() const
+{
+  const Clouds* clouds =
+      registry ? registry->sceneData<const Clouds>() : nullptr;
+  return clouds ? *clouds : kClearSky;
+}
+
+const Rain& RenderSystem::sceneRain() const
+{
+  const Rain* rain = registry ? registry->sceneData<const Rain>() : nullptr;
+  return rain ? *rain : kDry;
 }
 
 RenderSystem::~RenderSystem() = default;
@@ -417,11 +488,20 @@ void RenderSystem::render()
   if (m_style)
     frame.lightBalance = m_style->lightBalance();
   frame.lighting = m_worldLighting;
-  frame.wind = m_wind;
-  frame.weather = m_weather.clamped();
+  frame.wind = sceneWind();
+  frame.sway = registry && registry->sceneData<const Wind>()
+                   ? windSway(frame.wind)
+                   : 0.0f;
+  frame.rainfall = unitInterval(sceneRain().intensity);
   frame.cloudDrift = m_cloudDrift;
+  gatherShaderGlobals(
+      registry ? registry->sceneData<const ShaderGlobals>() : nullptr,
+      frame.globals);
+  for (const std::size_t slot : {kShaderGlobalWetness, kShaderGlobalPuddles})
+    frame.globals[slot].x = unitInterval(frame.globals[slot].x);
   frame.rainDrift = m_rainDrift.drift;
-  frame.rainWind = m_rainDrift.started ? m_rainDrift.wind : frame.weather.wind;
+  frame.rainWind =
+      m_rainDrift.started ? m_rainDrift.wind : windVelocity(frame.wind);
   frame.lightning = m_lightning;
   // Haze is distance from the camera, which in a 2D game is the same for
   // everything on its plane: there it would only fog the whole picture.
@@ -628,16 +708,23 @@ bool RenderSystem::buildContext(const glm::ivec2& viewport)
   m_context.viewProjection = m_camera.viewProjection(aspect);
   m_context.frustum = Frustum::fromViewProjection(m_context.viewProjection);
 
-  // A 2D game's sun shines from a direction of its own space (its plane's x
-  // and y, and z up from it): into the world's.
-  m_worldLighting = m_lighting;
+  // The scene's light; a physical sky's sun and moon where its celestial
+  // bodies are.
+  const bool physicalSky = !m_space2D && effectiveSky().physical();
+  m_worldLighting =
+      sceneLighting(sceneDataOf<DirectionalLighting>(),
+                    sceneDataOf<AmbientLighting>(),
+                    sceneDataOf<Clouds>(),
+                    physicalSky ? sceneDataOf<CelestialBodies>() : nullptr);
   // A visual style tints the sky (its sun and ambient light are re-balanced
   // as they light each surface: FrameParams::lightBalance).
   if (m_style)
     m_worldLighting.skyColor *= m_style->skyScale();
+  // A 2D game's sun shines from a direction of its own space (its plane's x
+  // and y, and z up from it): into the world's.
   if (m_space2D)
   {
-    const glm::vec3 sun = m_space2D->direction(m_lighting.sun.direction);
+    const glm::vec3 sun = m_space2D->direction(m_worldLighting.sun.direction);
     if (glm::dot(sun, sun) > 0.0f)
       m_worldLighting.sun.direction = glm::normalize(sun);
   }
@@ -739,7 +826,7 @@ void RenderSystem::updateSky()
   const glm::vec3 toSun = m_toSun;
   const float night = PhysicalSky::nightScale(m_moonShare);
   const SkyClouds clouds{std::clamp(m_worldLighting.cloudCover, 0.0f, 1.0f),
-                         m_weather.clamped().cloudDarkness};
+                         unitInterval(sceneClouds().darkness)};
 
   // The sky's diffuse light and reflections change slowly with the sun (and
   // the moon's glow, and the clouds): work them out again once it's moved a
@@ -1329,64 +1416,96 @@ void RenderSystem::chooseShadowedLights()
   m_stats.shadowedLights = m_shadowedLights.size();
 }
 
-void RenderSystem::strikeLightning(const LightningStrike& strike)
+void RenderSystem::updateLightning(float seconds)
 {
-  if (m_space2D)
+  if (!registry)
     return;
-  ActiveStrike active;
-  active.strike = strike;
-  active.duration = lightningDuration(strike);
-  const float cloudBase = PhysicalSky::kCloudAltitude * 1000.0f;
-  active.top = strike.inCloud ? glm::vec3(glm::vec2(strike.position), cloudBase)
-                              : lightningTop(strike, cloudBase);
-  if (!strike.inCloud)
+  std::size_t flashing = 0;
+  for (auto [entity, strike, transform] :
+       registry->query<LightningComponent, TransformComponent>())
   {
-    // Its ribbons face the camera (where it was last drawn from: a strike's
-    // over before it can move far), a few pixels wide however far off.
-    const glm::vec3 eye = m_camera.position();
-    const glm::vec3 nearest =
-        lightningLightCentre(strike.position, active.top, eye);
-    active.width = std::max(0.8f, glm::distance(eye, nearest) * 0.0013f);
-    const std::vector<LightningSegment> segments =
-        lightningChannel(strike, active.top);
-    const MeshData channel = lightningMesh(segments, eye, active.width, false);
-    const MeshData branches = lightningMesh(segments, eye, active.width, true);
-    if (!channel.empty())
-      active.channel = m_meshes.add(channel);
-    if (!branches.empty())
-      active.branches = m_meshes.add(branches);
-  }
-  // A few at once: the oldest gives way.
-  if (m_strikes.size() >= kMostLightningStrikes)
-  {
-    const auto oldest =
-        std::max_element(m_strikes.begin(),
-                         m_strikes.end(),
-                         [](const ActiveStrike& a, const ActiveStrike& b)
-                         { return a.age < b.age; });
-    for (const MeshHandle mesh : {oldest->channel, oldest->branches})
-      if (mesh.valid())
-        m_meshes.remove(mesh);
-    m_strikes.erase(oldest);
-  }
-  m_strikes.push_back(active);
-}
-
-void RenderSystem::advanceLightning(float seconds)
-{
-  for (auto it = m_strikes.begin(); it != m_strikes.end();)
-  {
-    if (!m_lightningHold)
-      it->age += seconds;
-    if (it->age <= it->duration)
+    if (strike.finished)
+      continue;
+    // Lightning is a 3D world's.
+    if (m_space2D)
     {
-      ++it;
+      strike.finished = true;
       continue;
     }
-    for (const MeshHandle mesh : {it->channel, it->branches})
-      if (mesh.valid())
-        m_meshes.remove(mesh);
-    it = m_strikes.erase(it);
+    if (!strike.shaped)
+    {
+      const LightningStrike shape = strikeOf(entity, strike);
+      strike.shaped = true;
+      strike.age = 0.0f;
+      strike.duration = lightningDuration(shape);
+      const float cloudBase = PhysicalSky::kCloudAltitude * 1000.0f;
+      strike.top = shape.inCloud
+                       ? glm::vec3(glm::vec2(shape.position), cloudBase)
+                       : lightningTop(shape, cloudBase);
+      if (!shape.inCloud)
+      {
+        // Its ribbons face the camera (where it was last drawn from: a
+        // strike's over before it can move far), a few pixels wide however
+        // far off.
+        const glm::vec3 eye = m_camera.position();
+        const glm::vec3 nearest =
+            lightningLightCentre(shape.position, strike.top, eye);
+        strike.width = std::max(0.8f, glm::distance(eye, nearest) * 0.0013f);
+        const std::vector<LightningSegment> segments =
+            lightningChannel(shape, strike.top);
+        const MeshData channel =
+            lightningMesh(segments, eye, strike.width, false);
+        const MeshData branches =
+            lightningMesh(segments, eye, strike.width, true);
+        if (!channel.empty())
+          strike.channel = m_meshes.add(channel);
+        if (!branches.empty())
+          strike.branches = m_meshes.add(branches);
+      }
+    }
+    if (strike.hold < 0.0f)
+      strike.age += seconds;
+    if (strike.hold < 0.0f && strike.age > strike.duration)
+    {
+      releaseStrike(strike);
+      strike.finished = true;
+      continue;
+    }
+    ++flashing;
+  }
+
+  // One with nowhere to strike (no TransformComponent) is finished at once.
+  for (auto [entity, strike] :
+       registry->query<LightningComponent, Excluding<TransformComponent>>())
+  {
+    if (strike.finished)
+      continue;
+    strike.finished = true;
+    LOG_WARN("A lightning strike (entity " + std::to_string(entity.getId()) +
+             ") has no TransformComponent to strike at; finished it");
+  }
+
+  // A few at once: the oldest give way.
+  for (; flashing > kMostLightningStrikes; --flashing)
+  {
+    LightningComponent* oldest = nullptr;
+    for (LightningComponent& strike : registry->query<LightningComponent>())
+      if (!strike.finished && (!oldest || strike.age > oldest->age))
+        oldest = &strike;
+    if (!oldest)
+      break;
+    releaseStrike(*oldest);
+    oldest->finished = true;
+  }
+}
+
+void RenderSystem::releaseStrike(LightningComponent& strike)
+{
+  for (MeshHandle* mesh : {&strike.channel, &strike.branches})
+  {
+    if (mesh->valid())
+      m_meshes.remove(*mesh);
+    *mesh = {};
   }
 }
 
@@ -1394,21 +1513,26 @@ void RenderSystem::placeLightning()
 {
   m_lightning = {};
   m_lightningLight = 0.0f;
-  if (m_space2D || m_strikes.empty())
+  if (m_space2D || !registry)
     return;
-  m_lightning.active = true;
 
   // The brightest strike now lights the scene (they rarely overlap).
-  const ActiveStrike* brightest = nullptr;
-  for (const ActiveStrike& active : m_strikes)
+  Entity brightestEntity;
+  const LightningComponent* brightest = nullptr;
+  for (auto [entity, strike, transform] :
+       registry->query<LightningComponent, TransformComponent>())
   {
-    const float age = m_lightningHold.value_or(active.age);
-    const float light = lightningBrightness(active.strike, age) *
-                        std::max(active.strike.intensity, 0.0f);
+    if (strike.finished || !strike.shaped)
+      continue;
+    m_lightning.active = true;
+    const float light =
+        lightningBrightness(strikeOf(entity, strike), shownAge(strike)) *
+        std::max(strike.intensity, 0.0f);
     if (light > m_lightningLight)
     {
       m_lightningLight = light;
-      brightest = &active;
+      brightest = &strike;
+      brightestEntity = entity;
     }
   }
   if (!brightest)
@@ -1418,31 +1542,36 @@ void RenderSystem::placeLightning()
   // the sun's light at noon on what faces it from a kilometre off), and the
   // cloud base glowing around it (dimmer the less cloud there is to light).
   const glm::vec3 color(0.82f, 0.86f, 1.0f);
-  const LightningStrike& strike = brightest->strike;
   const float cloud =
       0.15f + 0.85f * std::clamp(m_worldLighting.cloudCover, 0.0f, 1.0f);
-  m_lightning.channel = !strike.inCloud;
-  m_lightning.low = strike.position;
+  m_lightning.channel = !brightest->inCloud;
+  m_lightning.low = strikeOf(brightestEntity, *brightest).position;
   m_lightning.high = brightest->top;
   if (m_lightning.channel)
     m_lightning.channelLight =
         color * (kLightningChannelLight * m_lightningLight);
   m_lightning.cloudGlow = color * (kLightningCloudGlow * m_lightningLight *
-                                   cloud * (strike.inCloud ? 0.8f : 1.0f));
-  m_lightning.glowRadius = strike.inCloud ? 2500.0f : 1800.0f;
+                                   cloud * (brightest->inCloud ? 0.8f : 1.0f));
+  m_lightning.glowRadius = brightest->inCloud ? 2500.0f : 1800.0f;
 }
 
 void RenderSystem::emitLightning()
 {
+  if (m_space2D || !registry)
+    return;
   // As bright to the eye by day as at night (emission is drawn x the
   // lamps' scale): far brighter than anything else in view, so it blooms.
   const float lamp =
       m_frameSky.physical ? std::max(m_frameSky.lampScale, 0.1f) : 1.0f;
-  for (const ActiveStrike& active : m_strikes)
+  for (auto [entity, strike, transform] :
+       registry->query<LightningComponent, TransformComponent>())
   {
-    const float age = m_lightningHold.value_or(active.age);
-    const float light = lightningChannelBrightness(active.strike, age) *
-                        std::max(active.strike.intensity, 0.0f) *
+    if (strike.finished || !strike.shaped)
+      continue;
+    const LightningStrike shape = strikeOf(entity, strike);
+    const float age = shownAge(strike);
+    const float light = lightningChannelBrightness(shape, age) *
+                        std::max(strike.intensity, 0.0f) *
                         (kLightningChannelGlow / lamp);
     if (light <= 0.0f)
       continue;
@@ -1452,7 +1581,7 @@ void RenderSystem::emitLightning()
     glm::mat4 model(1.0f);
     const glm::vec3 eye = m_camera.position();
     const float within = m_camera.farPlane * 0.8f;
-    const float farthest = glm::distance(eye, active.strike.position);
+    const float farthest = glm::distance(eye, shape.position);
     if (farthest > within)
     {
       const float shrink = within / farthest;
@@ -1464,8 +1593,8 @@ void RenderSystem::emitLightning()
     // the main channel.
     const float branches =
         light * (1.0f - 0.8f * std::clamp((age - 0.03f) / 0.07f, 0.0f, 1.0f));
-    for (const auto& [mesh, glow] : {std::pair(active.channel, light),
-                                     std::pair(active.branches, branches)})
+    for (const auto& [mesh, glow] : {std::pair(strike.channel, light),
+                                     std::pair(strike.branches, branches)})
     {
       if (!mesh.valid())
         continue;
@@ -1529,30 +1658,6 @@ void RenderSystem::submit(const MeshDrawCommand& command)
 std::vector<ModuleSetting> RenderSystem::settings()
 {
   std::vector<ModuleSetting> out = {
-      settings::floatRange(
-          "Ambient",
-          0.0f,
-          1.0f,
-          [this] { return m_lighting.ambient; },
-          [this](float v) { m_lighting.ambient = v; }),
-      settings::floatRange(
-          "Sun strength",
-          0.0f,
-          1.0f,
-          [this] { return m_lighting.sun.diffuseStrength; },
-          [this](float v) { m_lighting.sun.diffuseStrength = v; }),
-      settings::floatRange(
-          "Moon phase",
-          0.0f,
-          1.0f,
-          [this] { return m_lighting.moon.phase; },
-          [this](float v) { m_lighting.moon.phase = v; }),
-      settings::floatRange(
-          "Moon strength",
-          0.0f,
-          1.0f,
-          [this] { return m_lighting.moon.diffuseStrength; },
-          [this](float v) { m_lighting.moon.diffuseStrength = v; }),
       settings::boolean(
           "Sun shadows",
           [this] { return m_shadows.enabled; },
@@ -1591,35 +1696,17 @@ std::vector<ModuleSetting> RenderSystem::settings()
   // One shadow map covers a distance around what the camera looks at;
   // cascades (Scene Settings' Sky & Shadows) reach along the view instead.
   if (m_shadows.cascades <= 1 || m_space2D)
-    out.insert(out.begin() + 3,
+    out.insert(out.begin() + 1,
                settings::floatRange(
                    "Shadow distance",
                    5.0f,
                    200.0f,
                    [this] { return m_shadows.distance; },
                    [this](float v) { m_shadows.distance = v; }));
-  // Wind (what grass sways in) and haze are a 3D world's.
+  // Haze is a 3D world's.
   if (!m_space2D)
     out.insert(out.end(),
                {
-                   settings::floatRange(
-                       "Wind direction",
-                       0.0f,
-                       360.0f,
-                       [this] { return m_wind.direction; },
-                       [this](float v) { m_wind.direction = v; }),
-                   settings::floatRange(
-                       "Wind strength",
-                       0.0f,
-                       1.0f,
-                       [this] { return m_wind.strength; },
-                       [this](float v) { m_wind.strength = v; }),
-                   settings::floatRange(
-                       "Wind gustiness",
-                       0.0f,
-                       1.0f,
-                       [this] { return m_wind.gustiness; },
-                       [this](float v) { m_wind.gustiness = v; }),
                    settings::floatRange(
                        "Haze",
                        0.0f,

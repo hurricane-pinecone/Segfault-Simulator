@@ -9,8 +9,8 @@
 // paint layers over the splat map's (see paintedUv). Layers marked as
 // meadow look like grass seen from afar (see meadowLook). Triplanar layers
 // are also laid from the sides on steep ground (see terrainProjections).
-// Water stands in its low spots as the weather's puddles rise (see
-// terrainPuddles). A deformable one is pressed in where things have gone over
+// Water stands in its low spots as the `puddles` global shader parameter
+// rises (see terrainPuddles). A deformable one is pressed in where things have gone over
 // it (see terrainDeformed). Must match TerrainUniforms in framePlan.h.
 
 struct Terrain {
@@ -239,17 +239,17 @@ fn meadowLook(color: vec3f, world: vec2f, normal: vec3f, toView: vec3f, pixel: f
   return mix(look, look * 1.15 + vec3f(grey * 0.12), sheen);
 }
 
-// Puddles where the weather's puddles (0..1) have filled its low spots, x
-// how readily water pools on the layers there (`pooling`). The puddle map
-// (PuddleModule's, see puddles.h) holds for each texel how far up its
-// hollow's water line it is (r: 0 its lowest point, 1 the line or dry) and
-// how deep the hollow's water is at the line (g): water stands where the
-// line, risen to the weather's puddles x how fast it fills there (b, the
+// Puddles where the `puddles` global shader parameter (0..1) has filled its
+// low spots, x how readily water pools on the layers there (`pooling`). The
+// puddle map (PuddleModule's, see puddles.h) holds for each texel how far up
+// its hollow's water line it is (r: 0 its lowest point, 1 the line or dry)
+// and how deep the hollow's water is at the line (g): water stands where the
+// line, risen to the puddles parameter x how fast it fills there (b, the
 // game's fill rate: loose soil soaks it up), is above it. x the water (0..1,
-// a narrow soft edge), y how deep it is (m), z how soaked the ground is
-// just above its edge (a darker wet rim).
+// a narrow soft edge), y how deep it is (m), z how soaked the ground is just
+// above its edge (a darker wet rim).
 fn terrainPuddles(texel: vec4f, pooling: f32) -> vec3f {
-  let line = frame.weather.z * pooling * texel.b;
+  let line = frame.globals[GLOBAL_PUDDLES].x * pooling * texel.b;
   if (terrain.puddleParams.x < 0.5 || line <= 0.0) {
     return vec3f(0.0);
   }

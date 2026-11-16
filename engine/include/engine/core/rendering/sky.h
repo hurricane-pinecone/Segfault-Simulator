@@ -16,9 +16,10 @@ namespace sfs
 /**
  * What the sky is.
  *
- * - Flat: the scene's sky colour (SceneLighting::skyColor) behind everything,
- *   and the engine's classic lighting: the sun's colour and strength, and the
- *   ambient level, as the scene sets them. The default.
+ * - Flat: the scene's sky colour (AmbientLighting::skyColor) behind
+ *   everything, and the engine's classic lighting: the directional light's
+ *   colour and intensity, and the ambient level, as the scene sets them. The
+ *   default.
  * - Physical: an atmosphere lit by the sun (PhysicalSky): blue by day, warm
  *   at sunrise and sunset, dark blue at night, with the sun's disk. The sun's
  *   colour and strength come from how much of its light gets through the air
@@ -82,8 +83,8 @@ struct SkySettings
 
 /**
  * A physical sky's cloud layer, as far as its light goes: how much of the sky
- * it covers (SceneLighting::cloudCover) and how heavy it is
- * (SceneWeather::cloudDarkness), each 0..1.
+ * it covers (Clouds::cover) and how heavy it is (Clouds::darkness), each
+ * 0..1.
  */
 struct SkyClouds
 {
@@ -325,6 +326,20 @@ private:
   SkySettings m_settings;
   std::vector<glm::vec4> m_transmittance;
 };
+
+/**
+ * How far the cloud layer's pattern repeats, km (its noise tiles that wide):
+ * how far they've drifted is kept within it, so it never loses precision.
+ */
+inline constexpr float kCloudPeriod = 192.0f;
+
+/**
+ * Where the clouds have drifted to (km, in the world's XY; within
+ * kCloudPeriod) from `drift`, after `seconds` more on a `wind` of metres a
+ * second (the scene's Wind: windVelocity()).
+ */
+glm::vec2
+driftClouds(const glm::vec2& drift, const glm::vec2& wind, float seconds);
 
 /**
  * The split-sum BRDF table image-based lighting needs (Karis 2013): for a

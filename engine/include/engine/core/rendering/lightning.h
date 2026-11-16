@@ -10,8 +10,9 @@ namespace sfs
 {
 
 /**
- * A lightning strike, as a game sets one off (RenderSystem::
- * strikeLightning()); a 3D scene's. Under a physical sky it lights the scene:
+ * A lightning strike, as the lightning functions below take it: a
+ * LightningComponent's settings and where its entity is. Under a physical
+ * sky it lights the scene:
  * a cloud-to-ground strike's channel is a very bright line of light from the
  * cloud base down to `position` (falling off with distance as a line light
  * does, specular on wet ground, with a shadow when it's near what the camera

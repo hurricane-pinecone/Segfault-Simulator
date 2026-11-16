@@ -6,6 +6,7 @@
 #include "imgui_internal.h" // DockBuilder: two panels docked together
 
 #include <functional>
+#include <string>
 
 namespace
 {
@@ -135,6 +136,47 @@ int main()
     settle();
     CHECK(ownsA);
     CHECK(!ownsB);
+  }
+
+  TEST("a commit-on-Enter text field should keep its value while it's typed "
+       "in, and change it once, on Enter")
+  {
+    Gui gui;
+    std::string name = "wet";
+    int changes = 0;
+    const auto field = [&]
+    {
+      ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f));
+      ImGui::SetNextWindowSize(ImVec2(400.0f, 400.0f));
+      ImGui::Begin("Panel",
+                   nullptr,
+                   ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove);
+      ImGui::SetNextItemWidth(200.0f);
+      changes += widgets::inputTextOnCommit("##name", name) ? 1 : 0;
+      ImGui::End();
+    };
+    ImGuiIO& io = ImGui::GetIO();
+    gui.frame(field);
+    // Clicked at its right end (after the text), then typed in.
+    io.AddMousePosEvent(190.0f, 15.0f);
+    gui.frame(field);
+    io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+    gui.frame(field);
+    io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+    gui.frame(field);
+    for (const char c : std::string("ness"))
+    {
+      io.AddInputCharacter(static_cast<unsigned int>(c));
+      gui.frame(field);
+      CHECK(name == "wet");
+    }
+    CHECK(changes == 0);
+    io.AddKeyEvent(ImGuiKey_Enter, true);
+    gui.frame(field);
+    io.AddKeyEvent(ImGuiKey_Enter, false);
+    gui.frame(field);
+    CHECK(name == "wetness");
+    CHECK(changes == 1);
   }
 
   return testing::report("widgetsTests");

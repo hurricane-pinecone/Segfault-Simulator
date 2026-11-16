@@ -91,20 +91,34 @@ trail rather than a clump each frame.
 
 ### Wind
 
-A `WindZoneComponent` blows on particles, as Unity's directional WindZone does:
-`wind` (metres a second across the world's XY) and `enabled`. Where its entity
-is doesn't matter. Each update the particles add up the enabled zones. An
-effect is carried by the wind only if its `windInfluence` is above 0: its
+The wind particles feel is the scene's `sfs::Wind`
+([scene data](../rendering/light-and-sky/index.md#wind): its `speed` along its
+`direction`), plus the `WindZoneComponent`s their emitter is in. A
+`WindZoneComponent` is a local wind, as Unity's spherical WindZone: within its
+`radius` of its entity (across the plane: the entity's x and y; it needs a
+`TransformComponent`) it adds its `wind` (metres a second across the world's
+XY), fully at its middle, fading to nothing at its edge, while it's `enabled`.
+
+An effect is carried by the wind only if its `windInfluence` is above 0: its
 particles get `drag * windInfluence * wind` added to their planar
 acceleration, so their drag carries them toward `windInfluence` times the
-wind (dust 0.5, smoke near 1, sparks 0). A game's weather writes the zones:
+wind (dust 0.5, smoke near 1, sparks 0). Each update the particle engine reads
+the scene's Wind and gathers the zones once; each emitter's wind is worked out
+where it is. A game's weather writes the Wind:
 
 ```cpp
-for (sfs::WindZoneComponent& zone : scene().query<sfs::WindZoneComponent>())
-  zone.wind = weather.wind;
+if (sfs::Wind* wind = registry->sceneData<sfs::Wind>())
+{
+  wind->direction = glm::degrees(std::atan2(gust.y, gust.x));
+  wind->speed = glm::length(gust);
+}
 ```
 
 A `ParticleEngine` with no registry (a tool, a test) has no wind.
+
+A `WindZoneComponent` saved before zones were local (it has no `radius`) blew
+everywhere: that's the scene's `Wind` now. Loading one logs a note; move its
+wind into the scene's Wind and remove it.
 
 ### Pausing
 

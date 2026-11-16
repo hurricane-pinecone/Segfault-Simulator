@@ -8,7 +8,12 @@
 #include "engine/core/rendering/rain.h"
 #include "engine/core/rendering/sky.h"
 #include "engine/core/rendering/visualStyle.h"
-#include "engine/core/rendering/weather.h"
+#include "engine/core/sceneData/ambientLighting.h"
+#include "engine/core/sceneData/celestialBodies.h"
+#include "engine/core/sceneData/clouds.h"
+#include "engine/core/sceneData/directionalLighting.h"
+#include "engine/core/sceneData/rain.h"
+#include "engine/core/sceneData/wind.h"
 #include "engine/runtime/rendering/commands.h"
 #include "engine/runtime/rendering/meshLibrary.h"
 #include "engine/runtime/rendering/modules/renderModuleHost.h"
@@ -31,6 +36,7 @@ namespace sfs
 {
 
 class WorkerPool;
+struct LightningComponent;
 
 class IRenderer;
 
@@ -50,10 +56,16 @@ struct RenderStats
 };
 
 /**
- * The render system, for every style of game: owns the scene's camera,
- * lighting and meshes, hosts the render modules (sprites, particles, decals,
- * voxels, grass, UI...), and drives an IRenderer each frame. A flat or
- * isometric game gives it a Space2D (setSpace2D()).
+ * The render system, for every style of game: owns the scene's camera and
+ * meshes, hosts the render modules (sprites, particles, decals, voxels,
+ * grass, UI...), and drives an IRenderer each frame. A flat or isometric game
+ * gives it a Space2D (setSpace2D()).
+ *
+ * What the scene shows it reads live each frame, where it lives: the scene's
+ * DirectionalLighting, AmbientLighting, Clouds, Rain, Wind, ShaderGlobals
+ * and, under a physical sky, CelestialBodies (scene data), and its lights and
+ * lightning strikes (PointLightComponent and LightningComponent entities). A
+ * game changes them there, never through this system.
  *
  * Each frame it builds a RenderContext (camera, frusta, lighting, the point
  * lights gathered from PointLightComponent entities), lets every module emit
@@ -116,47 +128,11 @@ public:
   const std::optional<Space2D>& space2D() const { return m_space2D; }
 
   /**
-   * Sun, ambient and sky (e.g. driven by a day/night cycle). A 2D game's sun
-   * direction is in its own space: x and y across its plane (y down the
-   * screen if it runs down), z up from it (toward the viewer, in a flat game).
-   */
-  void setLighting(const SceneLighting& lighting) { m_lighting = lighting; }
-  const SceneLighting& lighting() const { return m_lighting; }
-
-  /**
-   * The weather (see SceneWeather; e.g. driven by a game's weather each
-   * frame, like the lighting). How cloudy it is is the lighting's
-   * cloudCover. A 3D scene's: a physical sky draws its clouds, which drift on
-   * its wind while the clock runs (see setAnimating()).
-   */
-  void setWeather(const SceneWeather& weather) { m_weather = weather; }
-  const SceneWeather& weather() const { return m_weather; }
-
-  /**
-   * How far the clouds have drifted on the wind (km in the world's XY,
-   * within kCloudPeriod), as the next frame draws them.
+   * How far the clouds have drifted on the scene's Wind (km in the world's
+   * XY, within kCloudPeriod), as the next frame draws them. They drift while
+   * the clock runs (see setAnimating()).
    */
   const glm::vec2& cloudDrift() const { return m_cloudDrift; }
-
-  /**
-   * Set off a lightning strike (see LightningStrike; a 3D scene's): it
-   * flashes from now, its strokes flickering over the next half second or
-   * so, then fades. Its light needs a physical sky (its channel is drawn
-   * under any). A few can flash at once (the oldest gives way to a new one).
-   */
-  void strikeLightning(const LightningStrike& strike);
-
-  /** The strikes still flashing (or fading). */
-  std::size_t lightningStrikes() const { return m_strikes.size(); }
-
-  /**
-   * Hold every strike `seconds` after it began (e.g. 0: the first stroke's
-   * peak), for screenshots and tests; none: they run (the default).
-   */
-  void holdLightning(std::optional<float> seconds)
-  {
-    m_lightningHold = seconds;
-  }
 
   /** This frame's lightning, as the renderer is given it (for tests). */
   const FrameLightning& frameLightning() const { return m_lightning; }
@@ -181,10 +157,6 @@ public:
    * toward it). For tests.
    */
   void finishSkyWork();
-
-  /** The scene's wind (what grass sways in). */
-  void setWindSettings(const WindSettings& settings) { m_wind = settings; }
-  const WindSettings& windSettings() const { return m_wind; }
 
   /** The scene's haze (see HazeSettings); a 3D scene's only. */
   void setHazeSettings(const HazeSettings& settings) { m_haze = settings; }
@@ -230,8 +202,8 @@ public:
   }
 
   /**
-   * How rain looks while the weather has it (see RainSettings; a 3D scene's
-   * only). How hard it rains is the weather's (setWeather()).
+   * How rain looks while it rains (see RainSettings; a 3D scene's only). How
+   * hard it rains is the scene's Rain's.
    */
   void setRainSettings(const RainSettings& settings) { m_rain = settings; }
   const RainSettings& rainSettings() const { return m_rain; }
@@ -349,7 +321,7 @@ public:
    */
   std::shared_ptr<const RenderTexture> cameraFeed(Entity entity);
 
-  /** Lighting, shadow and camera knobs for the debug UI. */
+  /** Shadow, haze and camera knobs for the debug UI. */
   std::vector<ModuleSetting> settings() override;
 
   /**
@@ -362,8 +334,8 @@ public:
 
   /**
    * Whether its clock runs: what animated materials and grass's wind move by
-   * (FrameParams::time). Off, they hold still (the editor's Animate toggle,
-   * while editing).
+   * (FrameParams::time), and clouds, rain and lightning strikes with them.
+   * Off, they hold still (the editor's Animate toggle, while editing).
    */
   void setAnimating(bool animating) { m_animating = animating; }
 
@@ -373,22 +345,7 @@ public:
 
 protected:
   void create() override;
-  void update(double deltaTime) override
-  {
-    if (m_animating)
-    {
-      m_time += deltaTime;
-      m_cloudDrift = driftClouds(m_cloudDrift,
-                                 m_weather.clamped().wind,
-                                 static_cast<float>(deltaTime));
-      m_rainDrift.advance(
-          m_weather.clamped().wind, static_cast<float>(deltaTime));
-      advanceLightning(static_cast<float>(deltaTime));
-    }
-    refreshMeshBounds();
-    makeFeedPictures();
-    updateModules(deltaTime);
-  }
+  void update(double deltaTime) override;
   void render() override;
 
   ModuleInit moduleInit() override { return {registry, nullptr}; }
@@ -401,8 +358,28 @@ private:
   // Give every CameraFeedComponent without a picture its picture.
   void makeFeedPictures();
 
-  // Age the strikes, dropping (and freeing) those that have faded.
-  void advanceLightning(float seconds);
+  // The scene's T, or null while it has none.
+  template <typename T>
+  const T* sceneDataOf() const
+  {
+    return registry ? registry->sceneData<const T>() : nullptr;
+  }
+
+  // The scene's Wind, or still air while it has none.
+  const Wind& sceneWind() const;
+
+  // The scene's Clouds and Rain, or a clear, dry sky while it has none.
+  const Clouds& sceneClouds() const;
+  const Rain& sceneRain() const;
+
+  // Shape the strikes (LightningComponent) seen for the first time (their
+  // channel's meshes, facing the camera), age them `seconds` unless held,
+  // and finish those that have gone dark, and the oldest past the few that
+  // flash at once (freeing their meshes). A 2D scene finishes them at once.
+  void updateLightning(float seconds);
+
+  // Free a strike's channel meshes.
+  void releaseStrike(LightningComponent& strike);
 
   // Work out this frame's lightning (m_lightning) from the strikes: its
   // brightest's light, before the lights are gathered (its shadow's light
@@ -456,30 +433,14 @@ private:
   int m_renderedFrames = 0;
   std::optional<Space2D> m_space2D;
   bool m_followSceneCamera = true;
-  SceneLighting m_lighting;
-  SceneLighting m_worldLighting; // this frame's: the sun in the world's space
+  // This frame's light, from the scene's light scene data: the sun in the
+  // world's space (or, under a physical sky, the moon in its place).
+  SceneLighting m_worldLighting;
   ShadowSettings m_shadows;
   BloomSettings m_bloom;
-  WindSettings m_wind;
   HazeSettings m_haze;
-  SceneWeather m_weather;
   glm::vec2 m_cloudDrift{0.0f}; // km (driftClouds())
   RainDrift m_rainDrift;
-  // Lightning strikes still going: each its age (s), where its channel
-  // leaves the cloud, and its channel's meshes (main and branches; none for
-  // one in the cloud).
-  struct ActiveStrike
-  {
-    LightningStrike strike;
-    float age = 0.0f;
-    float duration = 0.0f;
-    glm::vec3 top{0.0f};
-    float width = 1.0f;
-    MeshHandle channel;
-    MeshHandle branches;
-  };
-  std::vector<ActiveStrike> m_strikes;
-  std::optional<float> m_lightningHold;
   FrameLightning m_lightning;
   float m_lightningLight = 0.0f; // the brightest strike's, this frame
   FogSettings m_fog;

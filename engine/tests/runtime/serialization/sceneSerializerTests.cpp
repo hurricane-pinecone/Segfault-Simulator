@@ -12,11 +12,19 @@
 #include <engine/core/components/sceneIdComponent.h>
 #include <engine/core/components/spriteComponent.h>
 #include <engine/core/components/transformComponent.h>
+#include <engine/core/components/windZoneComponent.h>
 #include <engine/core/hierarchy/hierarchy.h>
 #include <engine/core/reflection/reflection.h>
 #include <engine/core/reflection/registration.h>
 #include <engine/core/rendering/grass.h>
 #include <engine/core/rendering/meshPrimitives.h>
+#include <engine/core/sceneData/ambientLighting.h>
+#include <engine/core/sceneData/celestialBodies.h>
+#include <engine/core/sceneData/clouds.h>
+#include <engine/core/sceneData/directionalLighting.h>
+#include <engine/core/sceneData/rain.h>
+#include <engine/core/sceneData/shaderGlobals.h>
+#include <engine/core/sceneData/wind.h>
 #include <engine/core/util/random.h>
 #include <engine/runtime/assetStore/assetStore.h>
 #include <engine/runtime/rendering/renderSystem.h>
@@ -156,16 +164,10 @@ int main()
   TEST("render settings should round-trip with the scene")
   {
     World source;
-    SceneLighting lighting;
-    lighting.ambient = 0.2f;
-    lighting.skyColor = {0.1f, 0.2f, 0.3f};
-    source.render.setLighting(lighting);
     source.render.setShadowSettings({.enabled = false,
                                      .distance = 77.0f,
                                      .pointLights = 4,
                                      .pointResolution = 512});
-    source.render.setWindSettings(
-        {.direction = 200.0f, .strength = 0.8f, .gustiness = 0.1f});
     source.render.setHazeSettings({.strength = 0.4f, .distance = 300.0f});
     source.render.camera().yaw = 1.25f;
     source.render.camera().projection = Camera::Projection::Orthographic;
@@ -174,15 +176,10 @@ int main()
     target.serializer().load(
         source.serializer().save(source.scene), target.scene);
 
-    CHECK(testing::approx(target.render.lighting().ambient, 0.2f));
-    CHECK(testing::approx(target.render.lighting().skyColor.b, 0.3f));
     CHECK(!target.render.shadowSettings().enabled);
     CHECK(testing::approx(target.render.shadowSettings().distance, 77.0f));
     CHECK(target.render.shadowSettings().pointLights == 4u);
     CHECK(target.render.shadowSettings().pointResolution == 512u);
-    CHECK(testing::approx(target.render.windSettings().direction, 200.0f));
-    CHECK(testing::approx(target.render.windSettings().strength, 0.8f));
-    CHECK(testing::approx(target.render.windSettings().gustiness, 0.1f));
     CHECK(testing::approx(target.render.hazeSettings().strength, 0.4f));
     CHECK(testing::approx(target.render.hazeSettings().distance, 300.0f));
     CHECK(testing::approx(target.render.camera().yaw, 1.25f));
@@ -326,27 +323,136 @@ int main()
     CHECK(target.render.effectiveFog() == fog);
   }
 
-  TEST("the weather should round-trip; a scene without any saves as before "
-       "it existed")
+  TEST("the light, sky, rain, wind and global shader parameters should "
+       "round-trip as scene data, and a scene without them save none")
   {
     World plain;
     const nlohmann::json plainSaved = plain.serializer().save(plain.scene);
-    CHECK(!plainSaved["render"].contains("weather"));
+    CHECK(!plainSaved.contains("sceneData"));
+    for (const char* old : {"lighting", "wind", "weather"})
+      CHECK(!plainSaved["render"].contains(old));
 
     World source;
-    SceneWeather weather;
-    weather.rain = 0.5f;
-    weather.wetness = 0.75f;
-    weather.puddles = 0.25f;
-    weather.wind = {-2.0f, 6.0f};
-    weather.cloudDarkness = 0.5f;
-    source.render.setWeather(weather);
+    source.scene.addSceneData<AmbientLighting>(
+        AmbientLighting{.intensity = 0.2f, .skyColor = {0.1f, 0.2f, 0.3f}});
+    source.scene.addSceneData<DirectionalLighting>().intensity = 0.4f;
+    source.scene.addSceneData<CelestialBodies>().moonPhase = 0.25f;
+    source.scene.addSceneData<Clouds>(Clouds{.cover = 0.5f, .darkness = 0.25f});
+    source.scene.addSceneData<Rain>(Rain{.intensity = 0.75f});
+    source.scene.addSceneData<Wind>(
+        Wind{.direction = 200.0f, .speed = 6.5f, .gustiness = 0.1f});
+    ShaderGlobals& globals = source.scene.addSceneData<ShaderGlobals>();
+    setShaderGlobal(globals, "wetness", 0.25f);
+    setShaderGlobal(globals, "glow", glm::vec4(0.5f, 1.0f, 1.5f, 2.0f));
     const nlohmann::json saved = source.serializer().save(source.scene);
-    CHECK(saved["render"]["weather"]["rain"] == 0.5);
+    CHECK(saved["sceneData"]["Wind"]["speed"] == 6.5);
+    CHECK(saved["sceneData"]["ShaderGlobals"]["parameters"] ==
+          nlohmann::json::array(
+              {{{"name", "wetness"}, {"value", {0.25, 0.0, 0.0, 0.0}}},
+               {{"name", "glow"}, {"value", {0.5, 1.0, 1.5, 2.0}}}}));
+
     World target;
     target.serializer().load(saved, target.scene);
-    CHECK(target.render.weather() == weather);
+    const AmbientLighting* ambient =
+        target.scene.sceneData<const AmbientLighting>();
+    CHECK(ambient && testing::approx(ambient->intensity, 0.2f));
+    CHECK(ambient && testing::approx(ambient->skyColor.b, 0.3f));
+    const DirectionalLighting* light =
+        target.scene.sceneData<const DirectionalLighting>();
+    CHECK(light && testing::approx(light->intensity, 0.4f));
+    const CelestialBodies* bodies =
+        target.scene.sceneData<const CelestialBodies>();
+    CHECK(bodies && testing::approx(bodies->moonPhase, 0.25f));
+    const Rain* rain = target.scene.sceneData<const Rain>();
+    CHECK(rain && testing::approx(rain->intensity, 0.75f));
+    const Wind* wind = target.scene.sceneData<const Wind>();
+    CHECK(wind && testing::approx(wind->direction, 200.0f));
+    CHECK(wind && testing::approx(wind->speed, 6.5f));
+    const ShaderGlobals* parameters =
+        target.scene.sceneData<const ShaderGlobals>();
+    CHECK(parameters && parameters->parameters == globals.parameters);
     CHECK(target.serializer().save(target.scene) == saved);
+  }
+
+  TEST("a scene file's old render lighting, wind and weather should load as "
+       "its light, sky, rain, wind and global shader parameters")
+  {
+    World source;
+    nlohmann::json file = source.serializer().save(source.scene);
+    file["render"]["lighting"] = {{"ambient", 0.3},
+                                  {"sunDirection", {0.0, 1.0, 1.0}},
+                                  {"sunStrength", 0.7},
+                                  {"moonDirection", {0.2, 0.1, 0.9}},
+                                  {"moonPhase", 0.5},
+                                  {"cloudCover", 0.4}};
+    file["render"]["wind"] = {
+        {"direction", 90.0}, {"strength", 0.6}, {"gustiness", 0.2}};
+    file["render"]["weather"] = {{"rain", 0.5},
+                                 {"wetness", 0.75},
+                                 {"puddles", 0.25},
+                                 {"wind", {3.0, 4.0}},
+                                 {"cloudDarkness", 0.6}};
+    LogLines log;
+    World target;
+    target.serializer().load(file, target.scene);
+    CHECK(log.count("converted") == 1);
+    const DirectionalLighting* light =
+        target.scene.sceneData<const DirectionalLighting>();
+    CHECK(light && light->direction == glm::vec3(0, 1, 1));
+    CHECK(light && testing::approx(light->intensity, 0.7f));
+    const AmbientLighting* ambient =
+        target.scene.sceneData<const AmbientLighting>();
+    CHECK(ambient && testing::approx(ambient->intensity, 0.3f));
+    // The moon was up: a physical sky's, with the sun.
+    const CelestialBodies* bodies =
+        target.scene.sceneData<const CelestialBodies>();
+    CHECK(bodies && bodies->sunDirection == glm::vec3(0, 1, 1));
+    CHECK(bodies && testing::approx(bodies->moonPhase, 0.5f));
+    const Clouds* clouds = target.scene.sceneData<const Clouds>();
+    CHECK(clouds && testing::approx(clouds->cover, 0.4f));
+    CHECK(clouds && testing::approx(clouds->darkness, 0.6f));
+    const Rain* rain = target.scene.sceneData<const Rain>();
+    CHECK(rain && testing::approx(rain->intensity, 0.5f));
+    const Wind* wind = target.scene.sceneData<const Wind>();
+    // Its sway kept: the speed that sways things as hard.
+    CHECK(wind && testing::approx(wind->direction, 90.0f));
+    CHECK(wind && testing::approx(windSway(*wind), 0.6f));
+    CHECK(wind && testing::approx(wind->gustiness, 0.2f));
+    const ShaderGlobals* globals =
+        target.scene.sceneData<const ShaderGlobals>();
+    const glm::vec4* wetness =
+        globals ? shaderGlobal(*globals, "wetness") : nullptr;
+    CHECK(wetness && testing::approx(wetness->x, 0.75f));
+    const glm::vec4* puddles =
+        globals ? shaderGlobal(*globals, "puddles") : nullptr;
+    CHECK(puddles && testing::approx(puddles->x, 0.25f));
+    // Saved again, they're scene data.
+    const nlohmann::json saved = target.serializer().save(target.scene);
+    CHECK(!saved["render"].contains("lighting"));
+    CHECK(saved["sceneData"].contains("DirectionalLighting"));
+
+    // A block that isn't an object is logged and skipped, the rest converted.
+    file["render"]["wind"] = nullptr;
+    World broken;
+    broken.serializer().load(file, broken.scene);
+    CHECK(log.count("render \"wind\" isn't an object") == 1);
+    CHECK(broken.scene.sceneData<const AmbientLighting>() != nullptr);
+    CHECK(broken.scene.sceneData<const ShaderGlobals>() != nullptr);
+  }
+
+  TEST("a wind zone saved before zones were local should load as a local "
+       "zone, with a note")
+  {
+    LogLines log;
+    World source;
+    nlohmann::json file = source.serializer().save(source.scene);
+    file["entities"] = nlohmann::json::array(
+        {{{"WindZoneComponent", {{"enabled", true}, {"wind", {3.0, 0.0}}}}},
+         {{"WindZoneComponent",
+           {{"enabled", true}, {"radius", 4.0}, {"wind", {1.0, 0.0}}}}}});
+    World target;
+    target.serializer().load(file, target.scene);
+    CHECK(log.count("from before zones were local") == 1);
   }
 
   TEST("contact shadows should round-trip; a scene without them saves as "

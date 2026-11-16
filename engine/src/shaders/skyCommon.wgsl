@@ -23,7 +23,7 @@ fn octDecode(uv: vec2f) -> vec3f {
   return normalize(n);
 }
 
-// A physical sky's clouds (see SceneWeather, and PhysicalSky's cloudBase and
+// A physical sky's clouds (see Clouds, and PhysicalSky's cloudBase and
 // cloudSides, which work their average light out the same way): a layer
 // CLOUD_ALTITUDE up, its density a noise pattern drifting on the wind, more
 // of it showing the cloudier it is: scattered cumulus at low cover, broken

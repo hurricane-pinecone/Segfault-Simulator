@@ -5,6 +5,7 @@
 #include <engine/core/components/windZoneComponent.h>
 #include <engine/core/ecs/registry.h>
 #include <engine/core/particles/particleEngine.h>
+#include <engine/core/sceneData/wind.h>
 
 #include <cmath>
 
@@ -55,11 +56,23 @@ glm::vec2 settledVelocity(ParticleEngine& engine, float seconds)
   return (onlyParticle(engine) - before) / static_cast<float>(kStep);
 }
 
-Entity windZone(Registry& registry, const glm::vec2& wind)
+// A wind zone at `at` reaching `radius` round it.
+Entity windZone(Registry& registry,
+                const glm::vec2& wind,
+                const glm::vec2& at = glm::vec2(0.0f),
+                float radius = 100.0f)
 {
   Entity zone = registry.createEntity();
-  zone.addComponent<WindZoneComponent>(WindZoneComponent{wind, true});
+  zone.addComponent<TransformComponent>(
+      TransformComponent{glm::vec3(at, 0.0f)});
+  zone.addComponent<WindZoneComponent>(WindZoneComponent{wind, radius, true});
   return zone;
+}
+
+// The scene's wind, blowing `speed` m/s along +X.
+void sceneWind(Registry& registry, float speed)
+{
+  registry.addSceneData<Wind>(Wind{.direction = 0.0f, .speed = speed});
 }
 } // namespace
 
@@ -211,11 +224,10 @@ int main()
   }
 
   TEST("a particle with drag d and wind influence k should settle at k times "
-       "the wind")
+       "the scene's wind")
   {
     Registry registry;
-    windZone(registry, {5.0f, 0.0f});
-    registry.flushEntities();
+    sceneWind(registry, 5.0f);
     ParticleEngine engine;
     engine.setRegistry(&registry);
     engine.registerEffect("dust", driftEffect(0.5f));
@@ -226,7 +238,7 @@ int main()
     CHECK(testing::approx(velocity.y, 0.0f, 1e-4f));
   }
 
-  TEST("with no wind zone, or no influence, a particle should run as before")
+  TEST("with no wind, or no influence, a particle should run as before")
   {
     Registry registry;
     ParticleEngine engine;
@@ -236,6 +248,7 @@ int main()
     CHECK(glm::length(settledVelocity(engine, 1.0f)) < 1e-4f);
 
     Registry windy;
+    sceneWind(windy, 5.0f);
     windZone(windy, {5.0f, 0.0f});
     windy.flushEntities();
     ParticleEngine still;
@@ -245,11 +258,14 @@ int main()
     CHECK(glm::length(settledVelocity(still, 1.0f)) < 1e-4f);
   }
 
-  TEST("two wind zones should add, and a disabled one blow nothing")
+  TEST("wind zones should add to the scene's wind within their reach, fading "
+       "to their edge, and a disabled one blow nothing")
   {
     Registry registry;
-    windZone(registry, {3.0f, 0.0f});
+    sceneWind(registry, 3.0f);
     windZone(registry, {0.0f, 4.0f});
+    windZone(registry, {0.0f, 2.0f}, {5.0f, 0.0f}, 10.0f);    // half way out
+    windZone(registry, {40.0f, 0.0f}, {100.0f, 0.0f}, 10.0f); // out of reach
     Entity off = windZone(registry, {50.0f, 50.0f});
     off.getComponent<WindZoneComponent>()->enabled = false;
     registry.flushEntities();
@@ -259,7 +275,7 @@ int main()
     engine.spawnBurst("dust", {0.0f, 0.0f});
     const glm::vec2 velocity = settledVelocity(engine, 5.0f);
     CHECK(testing::approx(velocity.x, 3.0f, 0.08f));
-    CHECK(testing::approx(velocity.y, 4.0f, 0.1f));
+    CHECK(testing::approx(velocity.y, 5.0f, 0.12f));
   }
 
   return testing::report("particleEngineTests");

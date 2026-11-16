@@ -825,7 +825,7 @@ private:
 
   // Rain's overhead map (RainMap: depth looking straight down), and its
   // heights (a float's bits: OpenGL can only compare against a depth
-  // texture, not read it), while the weather has rain (until then 1x1
+  // texture, not read it), while it rains (until then 1x1
   // stand-ins, never read); whether they're the real ones, and drawn this
   // frame. Rain's streaks and splashes' pipeline (rain.wgsl), and whether it
   // failed to build (logged).

@@ -551,7 +551,7 @@ void FramePlan::finish(
   const float windAngle = glm::radians(m_frame.wind.direction);
   m_uniforms.wind = glm::vec4(std::cos(windAngle),
                               std::sin(windAngle),
-                              std::max(m_frame.wind.strength, 0.0f),
+                              std::max(m_frame.sway, 0.0f),
                               std::max(m_frame.wind.gustiness, 0.0f));
   m_uniforms.haze = glm::vec4(std::clamp(m_frame.haze.strength, 0.0f, 1.0f),
                               1.0f / std::max(m_frame.haze.distance, 1e-3f),
@@ -664,13 +664,16 @@ void FramePlan::finish(
   else
     m_uniforms.skyScale = glm::vec4(1.0f);
 
-  // The weather; and a physical sky's clouds, where there are any.
-  const SceneWeather& weather = m_frame.weather;
-  m_uniforms.weather = glm::vec4(weather.rain,
-                                 weather.wetness,
-                                 weather.puddles,
-                                 std::clamp(lighting.cloudCover, 0.0f, 1.0f));
-  m_uniforms.weatherWind = glm::vec4(weather.wind, m_frame.cloudDrift);
+  // The rain and the clouds; the wind and how far it's carried them; the
+  // global shader parameters; and a physical sky's clouds, where there are
+  // any.
+  const float rainfall = m_frame.rainfall;
+  const float wetness = m_frame.globals[kShaderGlobalWetness].x;
+  m_uniforms.rainClouds = glm::vec4(
+      rainfall, 0.0f, 0.0f, std::clamp(lighting.cloudCover, 0.0f, 1.0f));
+  m_uniforms.windDrift =
+      glm::vec4(windVelocity(m_frame.wind), m_frame.cloudDrift);
+  m_uniforms.globals = m_frame.globals;
   if (sky.physical && sky.cloudCover > 0.0f)
   {
     m_uniforms.cloudLight = glm::vec4(sky.cloudLight, sky.cloudDarkness);
@@ -688,14 +691,14 @@ void FramePlan::finish(
   m_uniforms.rainDepth =
       glm::vec4(m_rainMap.top,
                 m_rainMap.depthRange,
-                static_cast<float>(rainStreaks(rain, weather.rain)),
-                static_cast<float>(rainSplashes(rain, weather.rain)));
+                static_cast<float>(rainStreaks(rain, rainfall)),
+                static_cast<float>(rainSplashes(rain, rainfall)));
   m_uniforms.rainStreaks =
       glm::vec4(std::max(rain.length, 0.0f),
                 std::max(rain.width, 0.0f) * 0.001f,
                 std::max(rain.brightness, 0.0f),
                 rain.enabled ? std::max(rain.ripples, 0.0f) : 0.0f);
-  m_uniforms.rainVeil = glm::vec4(rainVeilDensity(rain, weather.rain),
+  m_uniforms.rainVeil = glm::vec4(rainVeilDensity(rain, rainfall),
                                   static_cast<float>(viewport.x),
                                   static_cast<float>(viewport.y),
                                   0.0f);
@@ -703,7 +706,7 @@ void FramePlan::finish(
   // Drips off edges: they're found on the overhead map, so none without it.
   if (rainMapOn())
   {
-    const RainDrips drips = rainDrips(rain, weather.rain, weather.wetness);
+    const RainDrips drips = rainDrips(rain, rainfall, wetness);
     m_uniforms.rainDrips = glm::vec4(
         static_cast<float>(drips.count), drips.rate, drips.trickle, drips.line);
   }
@@ -967,10 +970,10 @@ bool FramePlan::contactShadowsOn() const
 
 bool FramePlan::rainMapOn() const
 {
-  const SceneWeather& weather = m_frame.weather;
   return m_frame.shadows.enabled &&
-         (weather.rain > 0.0f || weather.wetness > 0.0f ||
-          weather.puddles > 0.0f);
+         (m_frame.rainfall > 0.0f ||
+          m_frame.globals[kShaderGlobalWetness].x > 0.0f ||
+          m_frame.globals[kShaderGlobalPuddles].x > 0.0f);
 }
 
 std::optional<FocusUniforms> FramePlan::focusUniforms(glm::ivec2 viewport) const

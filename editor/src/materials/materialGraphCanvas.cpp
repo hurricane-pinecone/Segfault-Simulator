@@ -2,6 +2,7 @@
 
 #include "assets/assetDrop.h"
 #include "widgets/theme.h"
+#include "widgets/widgets.h"
 
 #include "engine/core/assets/assetDatabase.h"
 #include "engine/core/rendering/materialNodes.h"
@@ -112,6 +113,12 @@ std::string textureLabel(const mg::Node& node, const sfs::AssetDatabase* assets)
   return "Missing image";
 }
 
+// A global parameter node's parameter, by its name.
+std::string globalLabel(const mg::Node& node)
+{
+  return node.global.empty() ? "No parameter" : node.global;
+}
+
 mg::ValueType dynamicOf(const mg::CompiledGraph& compiled, mg::NodeId node)
 {
   const auto it = compiled.dynamicTypes.find(node);
@@ -195,6 +202,9 @@ MaterialGraphCanvas::layout(const mg::Node& node,
     propertyWidth =
         std::max(fieldWidth(mg::ValueType::Float) + 30.0f,
                  textWidth(valueText(node.value, mg::ValueType::Float)));
+  else if (type->property == mg::Property::Global)
+    propertyWidth =
+        std::max(fieldWidth(mg::ValueType::Vec4), textWidth(globalLabel(node)));
 
   const float width =
       std::max({kMinWidth,
@@ -426,7 +436,8 @@ void MaterialGraphCanvas::drawFields(mg::Node& node,
     }
   };
 
-  // The property row: a Colour's colour, a Number's number.
+  // The property row: a Colour's colour, a Number's number, a Global
+  // Parameter's name.
   const float propertyTop = min.y + kHeader * m_zoom;
   const float rowWidth = max.x - min.x - 2.0f * kPad * m_zoom;
   if (type->property == mg::Property::Color)
@@ -444,6 +455,17 @@ void MaterialGraphCanvas::drawFields(mg::Node& node,
     ImGui::SetNextItemWidth(rowWidth);
     ImGui::DragFloat("##value", &node.value.x, 0.01f, 0.0f, 0.0f, "%.3g");
     selectIfEdited();
+  }
+  else if (type->property == mg::Property::Global)
+  {
+    ImGui::SetCursorScreenPos(
+        ImVec2(min.x + kPad * m_zoom,
+               propertyTop + (kRow * m_zoom - frameHeight) * 0.5f));
+    ImGui::SetNextItemWidth(rowWidth);
+    widgets::inputTextOnCommit("##global", node.global);
+    selectIfEdited();
+    ImGui::SetItemTooltip("The global shader parameter's name, as the scene "
+                          "has it (Scene Data > Shader Globals)");
   }
 
   // Each unlinked input's own value, after its name.
@@ -654,6 +676,10 @@ void MaterialGraphCanvas::drawNode(ImDrawList* draw,
       text(ImVec2(rowMin.x, y + textOffset),
            IM_COL32(220, 222, 216, 255),
            valueText(node.value, mg::ValueType::Float));
+    else if (type->property == mg::Property::Global && !fieldsShown())
+      text(ImVec2(rowMin.x, y + textOffset),
+           IM_COL32(220, 222, 216, 255),
+           globalLabel(node));
     else if (type->property == mg::Property::Texture)
       text(ImVec2(rowMin.x, y + textOffset),
            IM_COL32(220, 222, 216, 255),

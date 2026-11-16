@@ -37,17 +37,19 @@ const std::map<std::string, std::string, std::less<>>& fieldKinds()
       {"MeshHandle", "Mesh"},     {"sfs::MeshHandle", "Mesh"},
       {"nlohmann::json", "Json"}, {"std::vector<std::string>", "StringList"},
       {"sfs::Entity", "Entity"},  {"std::vector<sfs::Entity>", "EntityList"},
+      {"std::vector<sfs::ShaderParameter>", "ShaderParameters"},
   };
   return kinds;
 }
 
-// Spellings of the entity kinds that name sfs::Entity only inside namespace
-// sfs (elsewhere `Entity` may be anything).
+// Spellings of the kinds that name an sfs type unqualified only inside
+// namespace sfs (elsewhere `Entity` may be anything).
 const std::map<std::string, std::string, std::less<>>& sfsFieldKinds()
 {
   static const std::map<std::string, std::string, std::less<>> kinds = {
       {"Entity", "Entity"},
       {"std::vector<Entity>", "EntityList"},
+      {"std::vector<ShaderParameter>", "ShaderParameters"},
   };
   return kinds;
 }

@@ -163,6 +163,7 @@ instantiation, which the C++ standard exempts from access checks.
 | `std::vector<sfs::Entity>` | A list of them (a component only) |
 | `std::vector<std::string>` | Not shown unless an attribute says how; saved as a JSON array |
 | `nlohmann::json` | Not shown; saved as-is (free-form data, such as a script component's per-entity field values) |
+| `std::vector<sfs::ShaderParameter>` | A list of named values (a name and four numbers each), added and removed by row; saved as an array of `{"name", "value"}` (the scene's [global shader parameters](../../runtime/rendering/light-and-sky/index.md#global-shader-parameters)) |
 
 A field of any other type, including pointers, references and containers, is
 skipped. The build prints a warning that names the field and its type.

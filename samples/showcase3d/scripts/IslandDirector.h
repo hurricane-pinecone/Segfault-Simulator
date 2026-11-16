@@ -127,12 +127,11 @@ private:
     m_messageClock = seconds;
   }
 
-  // The sun goes round; the sky, the light and the lamps follow it.
+  // The sun goes round; the sky, the light and the lamps follow it: a cool
+  // moonlight by night, in the sun's place. The director is the scene's
+  // DirectionalLighting's and AmbientLighting's one writer.
   void lightTheDay()
   {
-    auto* render = scene().tryGetSystem<sfs::RenderSystem>();
-    if (!render)
-      return;
     const float angle = (m_time - 0.25f) * 6.2831853f; // 0 at dawn
     const float height = std::sin(angle);              // above the horizon
     const glm::vec3 sun = glm::normalize(
@@ -141,20 +140,23 @@ private:
     m_darkness = 1.0f - day;
     // Low sun: warm; high: white; night: a cool moonlight.
     const float low = 1.0f - glm::smoothstep(0.0f, 0.45f, std::abs(height));
-    sfs::SceneLighting lighting = render->lighting();
-    lighting.sun.direction =
-        height > -0.05f ? sun : glm::normalize(glm::vec3(-0.3f, 0.6f, 0.75f));
-    lighting.sun.color = height > -0.05f
-                             ? glm::mix(glm::vec3(1.0f, 0.96f, 0.88f),
-                                        glm::vec3(1.0f, 0.62f, 0.35f),
-                                        low)
-                             : glm::vec3(0.55f, 0.65f, 1.0f);
-    lighting.sun.diffuseStrength = height > -0.05f ? 0.85f * day + 0.1f : 0.22f;
-    lighting.ambient = glm::mix(0.16f, 0.45f, day);
-    const glm::vec3 noon(0.45f, 0.66f, 0.92f), dusk(0.95f, 0.55f, 0.4f),
-        night(0.02f, 0.03f, 0.09f);
-    lighting.skyColor = glm::mix(night, glm::mix(noon, dusk, low), day);
-    render->setLighting(lighting);
+    if (auto* light = scene().sceneData<sfs::DirectionalLighting>())
+    {
+      light->direction =
+          height > -0.05f ? sun : glm::normalize(glm::vec3(-0.3f, 0.6f, 0.75f));
+      light->color = height > -0.05f ? glm::mix(glm::vec3(1.0f, 0.96f, 0.88f),
+                                                glm::vec3(1.0f, 0.62f, 0.35f),
+                                                low)
+                                     : glm::vec3(0.55f, 0.65f, 1.0f);
+      light->intensity = height > -0.05f ? 0.85f * day + 0.1f : 0.22f;
+    }
+    if (auto* ambient = scene().sceneData<sfs::AmbientLighting>())
+    {
+      ambient->intensity = glm::mix(0.16f, 0.45f, day);
+      const glm::vec3 noon(0.45f, 0.66f, 0.92f), dusk(0.95f, 0.55f, 0.4f),
+          night(0.02f, 0.03f, 0.09f);
+      ambient->skyColor = glm::mix(night, glm::mix(noon, dusk, low), day);
+    }
 
     for (auto [lantern, pointLight] :
          scene().query<Lantern, sfs::PointLightComponent>().components())

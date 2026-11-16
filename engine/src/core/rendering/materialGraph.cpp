@@ -192,6 +192,8 @@ nlohmann::json Graph::toJson() const
         json["texture"] = node.texture;
         json["dataTexture"] = node.dataTexture;
       }
+      if (type->property == Property::Global)
+        json["global"] = node.global;
     }
     jsonNodes.push_back(std::move(json));
   }
@@ -260,6 +262,9 @@ std::optional<Graph> Graph::fromJson(const nlohmann::json& json)
         if (const auto data = entry.find("dataTexture");
             data != entry.end() && data->is_boolean())
           node.dataTexture = data->get<bool>();
+        if (const auto global = entry.find("global");
+            global != entry.end() && global->is_string())
+          node.global = global->get<std::string>();
       }
       graph.nextId = std::max(graph.nextId, node.id + 1);
       graph.nodes.push_back(std::move(node));

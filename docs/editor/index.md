@@ -76,7 +76,7 @@ of one.
 | Viewport | The scene, with a gizmo on the selection (see below). |
 | Hierarchy | The scene's entities, as a tree of parents and children (see below). Click to select; **Ctrl**+click adds or removes a row, **Shift**+click selects every row from the selected one to it (see [Editing several at once](#editing-several-at-once)); double-click, the row's crosshair button or right-click → Focus frames it in the viewport (as F does there), and a double-click also opens or closes a row with children. To rename, click the selected row's name again, press **F2**, or right-click → **Rename**: a box opens over the row (Enter or clicking away keeps it, Esc cancels). New objects open it straight away, so you can type their name. Use the **+** button or right-click empty space to create entities. The filter box narrows the tree to a flat list of matching names, and picking in the viewport opens the selection's parents and scrolls to it. |
 | Inspector | The selected entity's name, its tags (as chips, with **+ Add Tag**) and its components, with **Add Component** (with several selected: what they share, edited on all of them). Each field's label is on the left and its value on the right. Settings that don't apply are hidden, such as a Mesh Renderer's emission light settings when none of its materials can glow. |
-| Scene Settings | The scene's systems (yours, and the engine's optional ones such as physics) and services, its **Scene Data** ([scene data](../core/ecs/index.md#scene-data): each the scene holds, its fields edited as the Inspector edits a component's, with **x** to remove it, and **Add Scene Data** for the types it hasn't got), its **Style** (3D, Flat 2D or Isometric 2D), its **Look** (a [visual style](#visual-styles), or its own tone mapping and colour grading), its **Sky & Shadows** (a flat or [physical sky](../runtime/rendering/visual-styles/index.md#physical-sky-and-image-based-lighting), whose atmosphere settings show only when it's physical; and the sun's shadow cascades, whose reach and split show only with more than one), the game camera, sun, sky colour (hidden under a physical sky, which works it out), ambient light, shadows, the viewport's projection and render stats. |
+| Scene Settings | The scene's systems (yours, and the engine's optional ones such as physics) and services, its **Scene Data** ([scene data](../core/ecs/index.md#scene-data): each the scene holds, its fields edited as the Inspector edits a component's, with **x** to remove it, and **Add Scene Data** for the types it hasn't got), its **Style** (3D, Flat 2D or Isometric 2D), its **Look** (a [visual style](#visual-styles), or its own tone mapping and colour grading), its **Sky & Shadows** (a flat or [physical sky](../runtime/rendering/visual-styles/index.md#physical-sky-and-image-based-lighting), whose atmosphere settings show only when it's physical; and the sun's shadow cascades, whose reach and split show only with more than one), its **Rain** (how rain looks; how hard it rains is the scene's Rain scene data), the game camera, shadows, the viewport's projection and render stats. The scene's light, sky, rain and wind are under Scene Data, each optional: its **Directional Lighting** (the sun by day, the moon by night), **Ambient Lighting** (and the sky colour), a physical sky's **Celestial Bodies** (its sun and moon), **Clouds**, **Rain**, **Wind** and **Shader Globals** (see [Light, sky, wind and global shader parameters](../runtime/rendering/light-and-sky/index.md)); a new scene has a Directional Lighting and an Ambient Lighting, and in 3D a Wind. Celestial Bodies, Clouds and Rain are a 3D scene's: a 2D scene shows them but draws none. |
 | Assets | The project's `scenes/`, `scripts/`, `prefabs/` and `assets/` folders: a folder tree, and the open folder's contents (see below). Double-click a scene to open it, a script or other text file to edit it in the Code panel, or anything else to open it in its default app; right-click `scripts` for **New Script**. |
 | Code | Neovim, embedded, for editing scripts (see below). |
 | Console | The engine log; errors are highlighted. |
@@ -130,8 +130,8 @@ In a 2D scene:
   Sphere...) and the grass brush are a 3D scene's, so they're hidden.
 - A **Box Collider 2D** added to a sprite fits itself to the sprite (flat
   scenes); **Fit to Sprite** fits it again.
-- Scene Settings hides what only a 3D world has (wind, haze, the grass count),
-  and the sun's direction is in the game's own space (see
+- Scene Settings hides what only a 3D world has (haze, rain, the grass count),
+  and the DirectionalLighting's direction is in the game's own space (see
   [Styles](../runtime/rendering/styles/index.md#lighting-in-2d)).
 
 ## Viewport
@@ -736,8 +736,9 @@ They sway in the scene's wind, and flatten where things move through them.
 | Casts Shadows | Whether blades near the camera cast the sun's shadow (on by default). Only the two nearest shadow cascades get them, up to about 30 units, where a blade's shadow is big enough to see. With one shadow map, the first 8. |
 | Self Shadow | How much darker the grass gets down toward its roots, where the blades around shut out the sky and some of the sun. It makes a field look deep at any distance, well past where blades cast shadows. 0 turns it off (0.5) |
 
-**Wind** is the scene's, in Scene Settings: its direction (degrees), strength
-and gustiness. Gusts roll across the grass the way the wind blows. Long grass
+**Wind** is the scene's `Wind`, in Scene Settings > Scene Data: its direction
+(degrees), speed (m/s: grass sways harder the faster it blows) and gustiness.
+Gusts roll across the grass the way the wind blows. Long grass
 waves in it, and grass mown short (painted with **Length**) hardly moves.
 
 The grass's colour also tints the ground under it, so the gaps between blades

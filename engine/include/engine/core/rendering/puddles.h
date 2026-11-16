@@ -38,7 +38,7 @@ struct TextureData;
  * What the shader reads is a texture of it (the puddle map, RGBA8): red how
  * far up its hollow's water line a texel is (0 its bottom, 254/255 the line,
  * 1 where water never stands), green the hollow's whole depth of water over
- * kPuddleDepthRange. As the weather's puddles go from 0 to 1 the water
+ * kPuddleDepthRange. As the `puddles` parameter goes from 0 to 1 the water
  * spreads out from each hollow's bottom to its line.
  *
  * It's worked out again when the window moves, the ground's pressed in (at
@@ -103,10 +103,10 @@ std::vector<glm::vec4> puddleGround(const GroundSurface& surface,
  *
  * `fillRate` (PuddleModule::setFillRate()) is over the mesh's UVs, read as
  * data: its red how fast water rises in the puddles there, 0 (none stands:
- * loose soil soaks it all up) to 1 (as fast as the weather's puddles; the
+ * loose soil soaks it all up) to 1 (as fast as the `puddles` parameter; the
  * default). It scales how far up its hollow the water line has risen, so
  * where it's low, water only stands in the deepest part of a hollow, if at
- * all, until the weather's puddles are nearly full. The puddle map keeps it
+ * all, until the `puddles` parameter is nearly full. The puddle map keeps it
  * in its blue for the terrain.
  */
 struct TerrainPuddles

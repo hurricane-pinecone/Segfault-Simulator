@@ -411,24 +411,13 @@ void sceneAtmosphere(sfs::RenderSystem& render, EditorHistory& history)
   ImGui::PopID();
 }
 
-// The weather (a 3D scene's): clouds, wind, rain. A game usually drives it
-// each frame; set here, it's what the scene starts with (or keeps, if the
-// game leaves it).
-void sceneWeather(sfs::RenderSystem& render, EditorHistory& history)
+// How rain looks (a 3D scene's). How hard it rains is the scene's Rain,
+// under Scene Data.
+void sceneRain(sfs::RenderSystem& render, EditorHistory& history)
 {
   if (render.space2D() ||
-      !ImGui::CollapsingHeader("Weather", ImGuiTreeNodeFlags_DefaultOpen))
+      !ImGui::CollapsingHeader("Rain", ImGuiTreeNodeFlags_DefaultOpen))
     return;
-  ImGui::PushID("weather");
-  sfs::SceneWeather weather = render.weather();
-  sfs::SceneLighting lighting = render.lighting();
-  if (lookWidgets::weather(&history, weather, lighting.cloudCover))
-  {
-    render.setWeather(weather);
-    render.setLighting(lighting);
-  }
-  ImGui::PopID();
-
   ImGui::PushID("rain");
   sfs::RainSettings rain = render.rainSettings();
   if (lookWidgets::rain(&history, rain))
@@ -585,7 +574,7 @@ void SceneSettingsPanel::drawContents(EditorContext& context)
   sceneLook(context, render, history);
   sceneSkyAndShadows(render, history);
   sceneAtmosphere(render, history);
-  sceneWeather(render, history);
+  sceneRain(render, history);
   sceneDebug(
       *context.scene, render, history, m_eventStats, m_eventConsumers);
   ImGui::Separator();
@@ -603,49 +592,6 @@ void SceneSettingsPanel::drawContents(EditorContext& context)
         "view as last saved. Add one with + > Camera.");
   }
   ImGui::Separator();
-
-  // Sun direction and colours aren't ModuleSettings (they're vectors), so they
-  // get their own widgets; the rest comes from the descriptors.
-  sfs::SceneLighting lighting = render.lighting();
-  bool lightingChanged = false;
-  lightingChanged |= widgets::undoable(
-      &history,
-      lighting.sun.direction,
-      [](glm::vec3& v)
-      { return ImGui::DragFloat3("Sun Direction", &v.x, 0.01f); });
-  if (render.space2D())
-    ImGui::SetItemTooltip("Where the sun shines from, in the game's space: x and y across\n"
-                          "its plane, z up from it (toward the viewer, in a flat game)");
-  // The moon is a 3D world's.
-  if (!render.space2D())
-  {
-    lightingChanged |= widgets::undoable(
-        &history,
-        lighting.moon.direction,
-        [](glm::vec3& v)
-        { return ImGui::DragFloat3("Moon Direction", &v.x, 0.01f); });
-    ImGui::SetItemTooltip("Where the moon is (z up). Once the sun has set, it lights the\n"
-                          "scene and casts shadows; z below 0: no moon");
-  }
-  // A physical sky works the sun's colour and the sky's out itself.
-  if (!render.effectiveSky().physical() || render.space2D())
-  {
-    lightingChanged |= widgets::undoable(
-        &history,
-        lighting.sun.color,
-        [](glm::vec3& v) { return widgets::colorEdit3("Sun Color", &v.x); });
-    if (!render.space2D())
-      lightingChanged |= widgets::undoable(
-          &history,
-          lighting.moon.color,
-          [](glm::vec3& v) { return widgets::colorEdit3("Moon Color", &v.x); });
-    lightingChanged |= widgets::undoable(
-        &history,
-        lighting.skyColor,
-        [](glm::vec3& v) { return widgets::colorEdit3("Sky Color", &v.x); });
-  }
-  if (lightingChanged)
-    render.setLighting(lighting);
 
   // The descriptor widgets apply their values themselves, so they can't edit a
   // copy. Instead, on a click frame each one speculatively snapshots before it
