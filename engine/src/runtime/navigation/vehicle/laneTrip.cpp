@@ -1,16 +1,33 @@
 #include "engine/runtime/navigation/vehicle/laneTrip.h"
 
+#include "engine/runtime/navigation/geometry.h"
+#include "engine/runtime/navigation/laneGraph.h"
+#include "engine/runtime/navigation/planState.h"
+#include "engine/runtime/navigation/vehicle/planner.h"
 #include "engine/runtime/navigation/vehicle/steering.h"
+#include "engine/runtime/navigation/vehicle/vehicleModel.h"
+#include "engine/runtime/navigation/vehicle/vehiclePath.h"
+
+#include <glm/glm/geometric.hpp>
 
 #include <algorithm>
 #include <chrono>
+#include <cstddef>
 #include <deque>
+#include <optional>
+#include <ratio>
+#include <utility>
+#include <vector>
 
 namespace sfs::nav::vehicle
 {
 
 namespace
 {
+// (Rounds one stretch may take at most: past that, the rest of it is left to
+// the next window.)
+constexpr int MOST_ROUNDS = 16;
+
 double msSince(std::chrono::steady_clock::time_point t0)
 {
   return std::chrono::duration<double, std::milli>(
@@ -24,9 +41,11 @@ double msSince(std::chrono::steady_clock::time_point t0)
 std::vector<Segment> stepsOf(const std::vector<Pose2>& poses)
 {
   std::vector<float> along{0.0f};
+
   for (std::size_t k = 1; k < poses.size(); ++k)
     along.push_back(along.back() +
                     glm::distance(poses[k].position, poses[k - 1].position));
+
   return drivenSteps(poses, along, std::vector<int>(poses.size(), 1));
 }
 
@@ -38,11 +57,13 @@ float swungAlong(const VehicleModel& v,
 {
   if (!v.trailer)
     return 0.0f;
+
   for (std::size_t k = 0; k < std::min(count, steps.size()); ++k)
     hitch = hitchStep(*v.trailer,
                       hitch,
                       static_cast<float>(steps[k].gear) * steps[k].length,
                       steps[k].k0);
+
   return hitch;
 }
 
@@ -65,15 +86,13 @@ slice(const LaneGraph::Stretch& s, std::size_t a, std::size_t b)
 std::vector<float> alongOf(const LaneGraph::Stretch& s)
 {
   std::vector<float> out{0.0f};
+
   for (std::size_t k = 1; k < s.poses.size(); ++k)
     out.push_back(out.back() +
                   glm::distance(s.poses[k].position, s.poses[k - 1].position));
+
   return out;
 }
-
-// (Rounds one stretch may take at most: past that, the rest of it is left to
-// the next window.)
-constexpr int kMostRounds = 16;
 } // namespace
 
 std::optional<LaneTrip> planLaneTrip(const LaneGraph& graph,
@@ -81,15 +100,19 @@ std::optional<LaneTrip> planLaneTrip(const LaneGraph& graph,
 {
   using Window = LaneTripRequest::Window;
   const PlanRequest& q = request.plan;
+
   if (q.goals.empty())
     return std::nullopt;
+
   const auto t0 = std::chrono::steady_clock::now();
   const std::optional<std::vector<LaneGraph::Stretch>> way = graph.route(
       q.from.position, q.goals.front().pose.position, request.lanes);
   LaneTrip trip;
   trip.graphMs = msSince(t0);
+
   if (!way)
     return std::nullopt;
+
   const auto search = [&](const PlanRequest& r, Window w)
   {
     const auto started = std::chrono::steady_clock::now();
@@ -114,11 +137,13 @@ std::optional<LaneTrip> planLaneTrip(const LaneGraph& graph,
     part.to = r.goals.front().pose;
     part.found = search(r, kind);
     const bool found = part.found.state == PlanState::Found;
+
     if (found && !part.found.path.empty())
     {
       at = part.found.path.end();
       hitch = part.found.path.points.back().hitch;
     }
+
     part.hitch = hitch;
     trip.state = part.found.state;
     trip.parts.push_back(std::move(part));
@@ -137,19 +162,23 @@ std::optional<LaneTrip> planLaneTrip(const LaneGraph& graph,
     trip.parts.push_back(std::move(part));
     ++trip.stretches;
   };
+
   for (std::size_t s = 0; s < way->size(); ++s)
   {
     std::deque<LaneGraph::Stretch> pieces{(*way)[s]};
     Window kind = s == 0 ? Window::On : Window::Corner;
     int rounds = 0;
+
     while (!pieces.empty())
     {
       LaneGraph::Stretch piece = std::move(pieces.front());
       pieces.pop_front();
+
       if (!window({Goal{piece.poses.front()}},
                   kind == Window::On && request.reverseOn,
                   kind))
         return trip;
+
       kind = Window::Round;
       // The stretch as it's driven, checked whole by THE check of a laid way
       // (its trailer swung from where the window left it).
@@ -157,26 +186,33 @@ std::optional<LaneTrip> planLaneTrip(const LaneGraph& graph,
       const std::optional<float> touch =
           q.space ? touchesAlong(q, piece.poses.front(), hitch, steps)
                   : std::nullopt;
+
       if (!touch)
       {
         const float swung = swungAlong(q.vehicle, hitch, steps, steps.size());
         drive(std::move(piece), swung);
         continue;
       }
+
       // It touches `touch` m on: driven up to a lead short of it, a window
       // round it back onto the lane a lead past it (where the rig stands
       // clear), the rest checked the same.
       const std::vector<float> along = alongOf(piece);
       const float lead = std::max(request.lanes.lead, 1.0f);
       std::size_t keep = 0;
+
       while (keep + 1 < along.size() && along[keep + 1] <= *touch - lead)
         ++keep;
+
       std::size_t resume = 0;
+
       for (std::size_t k = 0; k < along.size() && !resume; ++k)
         if (along[k] >= *touch + lead && k > keep &&
             !touches(q, piece.poses[k], 0.0f))
           resume = k;
+
       ++trip.rounds;
+
       if (keep > 0 && along[keep] >= request.lanes.least)
       {
         // (A step per pose after the first: a lane's poses are evenly
@@ -184,11 +220,13 @@ std::optional<LaneTrip> planLaneTrip(const LaneGraph& graph,
         const float swung = swungAlong(q.vehicle, hitch, steps, keep);
         drive(slice(piece, 0, keep), swung);
       }
+
       if (resume > 0 && along.back() - along[resume] >= request.lanes.least &&
-          ++rounds <= kMostRounds)
+          ++rounds <= MOST_ROUNDS)
         pieces.push_front(slice(piece, resume, piece.poses.size() - 1));
     }
   }
+
   window(q.goals, request.reverseOff, Window::Off);
   return trip;
 }

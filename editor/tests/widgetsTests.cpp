@@ -1,9 +1,8 @@
 #include "../../engine/tests/testHarness.h"
-
 #include "widgets/widgets.h"
 
-#include "imgui.h"
-#include "imgui_internal.h" // DockBuilder: two panels docked together
+#include <imgui.h>
+#include <imgui_internal.h> // DockBuilder: two panels docked together
 
 #include <functional>
 #include <string>
@@ -99,12 +98,16 @@ int main()
         ImGui::DockBuilderDockWindow("B", dock);
         ImGui::DockBuilderFinish(dock);
       }
+
       if (focus)
         ImGui::SetWindowFocus(focus);
+
       ImGui::Begin("A");
       ImGui::BeginChild("inside", ImVec2(100.0f, 100.0f));
+
       if (focusChild)
         ImGui::SetWindowFocus();
+
       ImGui::EndChild();
       widgets::trackFocus(ownsA);
       ImGui::End();
@@ -164,12 +167,14 @@ int main()
     gui.frame(field);
     io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
     gui.frame(field);
+
     for (const char c : std::string("ness"))
     {
       io.AddInputCharacter(static_cast<unsigned int>(c));
       gui.frame(field);
       CHECK(name == "wet");
     }
+
     CHECK(changes == 0);
     io.AddKeyEvent(ImGuiKey_Enter, true);
     gui.frame(field);

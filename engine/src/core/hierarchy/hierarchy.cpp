@@ -4,34 +4,34 @@
 #include "engine/core/components/restPoseComponent.h"
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/components/worldTransformComponent.h"
-#include "engine/core/ecs/ecs.h" // IWYU pragma: keep (Entity templates)
+#include "engine/core/ecs/ecs.h"
 #include "engine/core/ecs/expect.h"
+#include "engine/core/ecs/hierarchyLinks.h"
 #include "engine/core/logger/logger.h"
-#include "engine/core/util/debugFeatures.h"
 #include "engine/core/util/hash.h"
-#include "glm/glm/ext/matrix_float3x3.hpp"
-#include "glm/glm/ext/vector_float4.hpp"
-#include "glm/glm/gtc/quaternion.hpp"
-#include "glm/glm/matrix.hpp"
 
+#include <glm/glm/ext/matrix_float3x3.hpp>
+#include <glm/glm/ext/matrix_float4x3.hpp>
+#include <glm/glm/ext/matrix_float4x4.hpp>
+#include <glm/glm/ext/vector_float4.hpp>
+#include <glm/glm/gtc/quaternion.hpp>
+#include <glm/glm/matrix.hpp>
+
+#include <cstdint>
 #include <cstring>
 #include <string>
+#include <vector>
 
 namespace sfs::hierarchy
 {
 
 namespace
 {
-constexpr Entity::EntityId kNone = HierarchyLinks::kNone;
-
-Registry* registryOf(const Entity& entity)
-{
-  return detail::EntityAccess::registry(entity);
-}
+constexpr Entity::EntityId NONE = HierarchyLinks::kNone;
 
 // How many levels a world walk keeps on the stack; a deeper chain is walked
 // in parts of this many.
-constexpr int kChainLevels = 32;
+constexpr int CHAIN_LEVELS = 32;
 
 // One level of a world walk: an entity with a transform, and its world cache
 // once it's been looked at. Plain data, so a walk's array costs nothing to
@@ -50,9 +50,14 @@ struct Level
 struct Composed
 {
   glm::mat4x3 world;
-  Entity::EntityId holder = kNone;
+  Entity::EntityId holder = NONE;
   bool clean = true;
 };
+
+Registry* registryOf(const Entity& entity)
+{
+  return detail::EntityAccess::registry(entity);
+}
 
 // The world matrix of the living entity `id`, composed from the top down.
 // A level is clean when its cache was made under the same nearest ancestor
@@ -60,7 +65,7 @@ struct Composed
 // highest level that isn't, every cache is what the last transform pass
 // composed from the transforms as they are now, so composing starts from the
 // cache of the clean level just above it. Caches are looked at from the top
-// down only as far as that level. The walk keeps up to kChainLevels levels on
+// down only as far as that level. The walk keeps up to CHAIN_LEVELS levels on
 // the stack and composes the part above those first.
 void composeChain(Registry& registry,
                   Entity::EntityId id,
@@ -70,32 +75,40 @@ void composeChain(Registry& registry,
   const std::vector<HierarchyNode>& nodes = registry.links().nodes;
   // The links hold living ids only.
   const auto transforms = registry.finder<TransformComponent>();
-  Level chain[kChainLevels];
+  Level chain[CHAIN_LEVELS];
   int levels = 0;
   Entity::EntityId at = id;
-  for (; at != kNone && levels < kChainLevels; at = nodes[at].parent)
+
+  for (; at != NONE && levels < CHAIN_LEVELS; at = nodes[at].parent)
     if (const TransformComponent* local = transforms(at))
       chain[levels++] = {at, local, nullptr};
-  if (at != kNone)
+
+  if (at != NONE)
     composeChain(registry, at, useCaches, out);
   else
     out = {};
+
   if (levels == 0)
     return;
 
   int top = levels - 1;
+
   if (out.clean && useCaches)
   {
     const auto caches = registry.finder<WorldTransformComponent>();
+
     for (Entity::EntityId above = out.holder; top >= 0; --top)
     {
       Level& level = chain[top];
       level.cache = caches(level.id);
+
       if (!level.cache ||
           !cacheCurrent(*level.cache, transformHash(*level.local), above))
         break;
+
       above = level.id;
     }
+
     if (top < 0)
     {
       out.world = chain[0].cache->world;
@@ -103,12 +116,15 @@ void composeChain(Registry& registry,
       return;
     }
   }
-  const glm::mat4x3* base = top + 1 < levels      ? &chain[top + 1].cache->world
-                            : out.holder != kNone ? &out.world
-                                                  : nullptr;
+
+  const glm::mat4x3* base = top + 1 < levels     ? &chain[top + 1].cache->world
+                            : out.holder != NONE ? &out.world
+                                                 : nullptr;
   glm::mat4x3 world = composeWorld(base, *chain[top].local);
+
   for (int level = top - 1; level >= 0; --level)
     world = composeWorld(&world, *chain[level].local);
+
   out.world = world;
   out.holder = chain[0].id;
   out.clean = false;
@@ -118,8 +134,10 @@ void composeChain(Registry& registry,
 Composed composedOf(const Entity& entity, bool useCaches)
 {
   Composed composed;
+
   if (entity.isValid())
     composeChain(*registryOf(entity), entity.getId(), useCaches, composed);
+
   return composed;
 }
 
@@ -129,10 +147,13 @@ template <typename WorldOf>
 TransformComponent worldTransformOf(const Entity& entity, WorldOf world)
 {
   const TransformComponent* local = entity.getComponent<TransformComponent>();
+
   if (!expect(local, entity))
     return {};
+
   if (!parentOf(entity).isValid())
     return *local;
+
   return TransformComponent::fromMatrix(world(entity));
 }
 
@@ -141,127 +162,42 @@ const HierarchyNode* nodeOf(const Entity& entity)
 {
   if (!entity.isValid())
     return nullptr;
+
   return &registryOf(entity)->links().nodes[entity.getId()];
 }
 } // namespace
-
-Entity parentOf(const Entity& entity)
-{
-  const HierarchyNode* node = nodeOf(entity);
-  if (!node || node->parent == kNone)
-    return {};
-  return registryOf(entity)->getEntity(node->parent);
-}
-
-Entity rootOf(const Entity& entity)
-{
-  if (!entity.isValid())
-    return {};
-  const std::vector<HierarchyNode>& nodes = registryOf(entity)->links().nodes;
-  Entity::EntityId at = entity.getId();
-  while (nodes[at].parent != kNone)
-    at = nodes[at].parent;
-  return at == entity.getId() ? entity : registryOf(entity)->getEntity(at);
-}
-
-bool isAncestor(const Entity& ancestor, const Entity& entity)
-{
-  if (!entity.isValid() || !ancestor.isValid() ||
-      registryOf(ancestor) != registryOf(entity))
-    return false;
-  const std::vector<HierarchyNode>& nodes = registryOf(entity)->links().nodes;
-  for (Entity::EntityId at = nodes[entity.getId()].parent; at != kNone;
-       at = nodes[at].parent)
-    if (at == ancestor.getId())
-      return true;
-  return false;
-}
-
-bool canParent(const Entity& child, const Entity& parent)
-{
-  // No parent at all (a default-made handle): a root, always.
-  if (!registryOf(parent) || parent.getId() == Entity::InvalidId)
-    return true;
-  if (!child.isValid() || registryOf(parent) != registryOf(child))
-    return false;
-  // A destroyed parent makes the child a root.
-  return !parent.isValid() || (parent != child && !isAncestor(child, parent));
-}
-
-bool setParent(Entity child, const Entity& parent)
-{
-  if (!canParent(child, parent))
-  {
-    const std::string which =
-        "hierarchy::setParent: entity " + std::to_string(child.getId());
-    if (!child.isValid())
-      LOG_ERROR(which + " was destroyed, so it can't be put under a parent");
-    else if (registryOf(parent) != registryOf(child))
-      LOG_ERROR(which + " and its new parent are in different registries");
-    return false;
-  }
-  if (!child.isValid())
-    return true; // made a root: there's nothing to take it out of
-  registryOf(child)->relink(
-      child.getId(), parent.isValid() ? parent.getId() : kNone);
-  return true;
-}
-
-bool setParentKeepWorld(Entity child, const Entity& parent)
-{
-  const glm::mat4 world = worldMatrix(child);
-  if (!setParent(child, parent))
-    return false;
-  if (child.hasComponent<TransformComponent>())
-    setWorldMatrix(child, world);
-  return true;
-}
-
-bool hasChildren(const Entity& entity)
-{
-  const HierarchyNode* node = nodeOf(entity);
-  return node && node->firstChild != kNone;
-}
-
-ChildRange childrenOf(const Entity& entity)
-{
-  const HierarchyNode* node = nodeOf(entity);
-  return node ? ChildRange(registryOf(entity), node->firstChild) : ChildRange();
-}
-
-DescendantRange::iterator& DescendantRange::iterator::operator++()
-{
-  const std::vector<HierarchyNode>& nodes = m_registry->links().nodes;
-  if (!m_skipChildren && nodes[m_id].firstChild != kNone)
-  {
-    m_id = nodes[m_id].firstChild;
-    return *this;
-  }
-  m_skipChildren = false;
-  // An entity reparented out of the walk, or removed, during it ends the
-  // climb at a root (kNone above it) instead of at m_root.
-  for (Entity::EntityId at = m_id; at != m_root && at != kNone;
-       at = nodes[at].parent)
-    if (nodes[at].nextSibling != kNone)
-    {
-      m_id = nodes[at].nextSibling;
-      return *this;
-    }
-  m_id = kNone;
-  return *this;
-}
 
 DescendantRange::iterator DescendantRange::begin() const
 {
   return {m_registry,
           m_root,
-          m_registry ? m_registry->links().nodes[m_root].firstChild : kNone};
+          m_registry ? m_registry->links().nodes[m_root].firstChild : NONE};
 }
 
-DescendantRange descendants(const Entity& root)
+DescendantRange::iterator& DescendantRange::iterator::operator++()
 {
-  return root.isValid() ? DescendantRange(registryOf(root), root.getId())
-                        : DescendantRange();
+  const std::vector<HierarchyNode>& nodes = m_registry->links().nodes;
+
+  if (!m_skipChildren && nodes[m_id].firstChild != NONE)
+  {
+    m_id = nodes[m_id].firstChild;
+    return *this;
+  }
+
+  m_skipChildren = false;
+
+  // An entity reparented out of the walk, or removed, during it ends the
+  // climb at a root (kNone above it) instead of at m_root.
+  for (Entity::EntityId at = m_id; at != m_root && at != NONE;
+       at = nodes[at].parent)
+    if (nodes[at].nextSibling != NONE)
+    {
+      m_id = nodes[at].nextSibling;
+      return *this;
+    }
+
+  m_id = NONE;
+  return *this;
 }
 
 RootRange::iterator::iterator(Registry* registry, Entity::EntityId id)
@@ -279,15 +215,125 @@ RootRange::iterator& RootRange::iterator::operator++()
 
 void RootRange::iterator::settle()
 {
-  if (m_id == kNone)
+  if (m_id == NONE)
     return;
+
   const std::vector<HierarchyNode>& nodes = m_registry->links().nodes;
+
   // A free id's node is all kNone too: getEntity() tells it isn't alive.
-  while (m_id < nodes.size() && (nodes[m_id].parent != kNone ||
-                                 !m_registry->getEntity(m_id).isValid()))
+  while (m_id < nodes.size() &&
+         (nodes[m_id].parent != NONE || !m_registry->getEntity(m_id).isValid()))
     ++m_id;
+
   if (m_id >= nodes.size())
-    m_id = kNone;
+    m_id = NONE;
+}
+
+Entity parentOf(const Entity& entity)
+{
+  const HierarchyNode* node = nodeOf(entity);
+
+  if (!node || node->parent == NONE)
+    return {};
+
+  return registryOf(entity)->getEntity(node->parent);
+}
+
+Entity rootOf(const Entity& entity)
+{
+  if (!entity.isValid())
+    return {};
+
+  const std::vector<HierarchyNode>& nodes = registryOf(entity)->links().nodes;
+  Entity::EntityId at = entity.getId();
+
+  while (nodes[at].parent != NONE)
+    at = nodes[at].parent;
+
+  return at == entity.getId() ? entity : registryOf(entity)->getEntity(at);
+}
+
+bool isAncestor(const Entity& ancestor, const Entity& entity)
+{
+  if (!entity.isValid() || !ancestor.isValid() ||
+      registryOf(ancestor) != registryOf(entity))
+    return false;
+
+  const std::vector<HierarchyNode>& nodes = registryOf(entity)->links().nodes;
+
+  for (Entity::EntityId at = nodes[entity.getId()].parent; at != NONE;
+       at = nodes[at].parent)
+    if (at == ancestor.getId())
+      return true;
+
+  return false;
+}
+
+bool canParent(const Entity& child, const Entity& parent)
+{
+  // No parent at all (a default-made handle): a root, always.
+  if (!registryOf(parent) || parent.getId() == Entity::InvalidId)
+    return true;
+
+  if (!child.isValid() || registryOf(parent) != registryOf(child))
+    return false;
+
+  // A destroyed parent makes the child a root.
+  return !parent.isValid() || (parent != child && !isAncestor(child, parent));
+}
+
+bool setParent(Entity child, const Entity& parent)
+{
+  if (!canParent(child, parent))
+  {
+    const std::string which =
+        "hierarchy::setParent: entity " + std::to_string(child.getId());
+
+    if (!child.isValid())
+      LOG_ERROR(which + " was destroyed, so it can't be put under a parent");
+    else if (registryOf(parent) != registryOf(child))
+      LOG_ERROR(which + " and its new parent are in different registries");
+
+    return false;
+  }
+
+  if (!child.isValid())
+    return true; // made a root: there's nothing to take it out of
+
+  registryOf(child)->relink(
+      child.getId(), parent.isValid() ? parent.getId() : NONE);
+  return true;
+}
+
+bool setParentKeepWorld(Entity child, const Entity& parent)
+{
+  const glm::mat4 world = worldMatrix(child);
+
+  if (!setParent(child, parent))
+    return false;
+
+  if (child.hasComponent<TransformComponent>())
+    setWorldMatrix(child, world);
+
+  return true;
+}
+
+bool hasChildren(const Entity& entity)
+{
+  const HierarchyNode* node = nodeOf(entity);
+  return node && node->firstChild != NONE;
+}
+
+ChildRange childrenOf(const Entity& entity)
+{
+  const HierarchyNode* node = nodeOf(entity);
+  return node ? ChildRange(registryOf(entity), node->firstChild) : ChildRange();
+}
+
+DescendantRange descendants(const Entity& root)
+{
+  return root.isValid() ? DescendantRange(registryOf(root), root.getId())
+                        : DescendantRange();
 }
 
 RootRange roots(Registry& registry) { return RootRange(registry); }
@@ -306,8 +352,10 @@ glm::mat4x3 composeWorld(const glm::mat4x3* parentWorld,
   axes[0] *= local.scale.x;
   axes[1] *= local.scale.y;
   axes[2] *= local.scale.z;
+
   if (!parentWorld)
     return glm::mat4x3(axes[0], axes[1], axes[2], local.position);
+
   // Four lanes wide, so each column is a vector multiply-add per axis.
   const glm::mat4x3& parent = *parentWorld;
   const glm::vec4 x(parent[0], 0.0f);
@@ -333,7 +381,7 @@ uint64_t transformHash(const TransformComponent& local)
 glm::mat4 worldMatrix(const Entity& entity)
 {
   const Composed composed = composedOf(entity, true);
-  return composed.holder == kNone ? glm::mat4(1.0f) : glm::mat4(composed.world);
+  return composed.holder == NONE ? glm::mat4(1.0f) : glm::mat4(composed.world);
 }
 
 glm::mat4 cachedWorldMatrix(const Entity& entity,
@@ -342,8 +390,10 @@ glm::mat4 cachedWorldMatrix(const Entity& entity,
 {
   if (cache.version == 0)
     return worldMatrix(entity);
+
   if (check)
     checkWorldCache(entity, cache, "read in the render phase");
+
   return cache.matrix();
 }
 
@@ -368,12 +418,16 @@ bool checkWorldCache(const Entity& entity,
 {
   if (!entity.isValid())
     return true;
+
   const Composed composed = composedOf(entity, false);
-  if (composed.holder != kNone &&
+
+  if (composed.holder != NONE &&
       std::memcmp(&composed.world, &cache.world, sizeof(cache.world)) == 0)
     return true;
+
   if (entity.hasComponent<TransformCheckWarned>())
     return false;
+
   const NameComponent* named = entity.getComponent<NameComponent>();
   const std::string name = named ? " '" + named->name + "'" : std::string();
   LOG_WARN("SFS_CHECK_TRANSFORMS: entity " + std::to_string(entity.getId()) +
@@ -398,8 +452,10 @@ glm::vec3 worldPosition(const Entity& entity)
 void setWorldMatrix(Entity entity, const glm::mat4& world)
 {
   TransformComponent* local = entity.getComponent<TransformComponent>();
+
   if (!expect(local, entity))
     return;
+
   *local = TransformComponent::fromMatrix(
       glm::inverse(parentWorldMatrix(entity)) * world);
 }
@@ -424,14 +480,18 @@ void recordRestPose(Entity entity)
 {
   const TransformComponent* transform =
       entity.getComponent<TransformComponent>();
+
   if (!transform)
     return;
+
   RestPoseComponent* rest = entity.getComponent<RestPoseComponent>();
+
   if (!rest)
   {
     entity.addComponent<RestPoseComponent>();
     rest = entity.getComponent<RestPoseComponent>();
   }
+
   rest->position = transform->position;
   rest->rotation = transform->rotation;
   rest->scale = transform->scale;

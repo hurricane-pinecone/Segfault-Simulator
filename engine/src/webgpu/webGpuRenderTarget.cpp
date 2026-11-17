@@ -2,6 +2,11 @@
 
 #include "engine/webgpu/webGpuContext.h"
 
+#include <glm/glm/ext/vector_int2.hpp>
+
+#include <cstdint>
+#include <webgpu.h>
+
 namespace sfs
 {
 
@@ -36,6 +41,7 @@ void WebGpuRenderTarget::resize(glm::ivec2 size)
   m_view.reset();
   m_texture.reset();
   m_size = size;
+
   if (size.x <= 0 || size.y <= 0)
     return;
 
@@ -48,6 +54,7 @@ void WebGpuRenderTarget::resize(glm::ivec2 size)
   desc.mipLevelCount = 1;
   desc.sampleCount = 1;
   const WGPUTextureFormat linear = withoutSrgb(desc.format);
+
   if (linear != desc.format)
   {
     desc.viewFormatCount = 1;
@@ -56,6 +63,7 @@ void WebGpuRenderTarget::resize(glm::ivec2 size)
 
   m_texture.reset(wgpuDeviceCreateTexture(m_context.device(), &desc));
   m_view.reset(wgpuTextureCreateView(m_texture.get(), nullptr));
+
   if (linear != desc.format)
   {
     WGPUTextureViewDescriptor viewDesc = {};

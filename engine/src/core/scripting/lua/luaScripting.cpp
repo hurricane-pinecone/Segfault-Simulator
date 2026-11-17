@@ -5,12 +5,16 @@
 #include "engine/core/scripting/iLuaApi.h"
 #include "engine/core/scripting/iLuaConfigurable.h"
 #include "engine/core/scripting/luaSchema.h"
-
-#include <lua.hpp>
+#include "luaC.h"
 
 #include <algorithm>
 #include <cstdlib>
 #include <exception>
+#include <functional>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
 
 namespace sfs
 {
@@ -24,18 +28,22 @@ int luaLog(lua_State* L)
 {
   const int n = lua_gettop(L);
   std::string line;
+
   for (int i = 1; i <= n; ++i)
   {
     if (i > 1)
       line += "\t";
+
     const char* s = luaL_tolstring(L, i, nullptr); // pushes the string form
     line += s ? s : "";
     lua_pop(L, 1);
   }
 
   auto* self = *static_cast<LuaScripting**>(lua_getextraspace(L));
+
   if (self)
     self->logLine(line);
+
   return 0;
 }
 
@@ -83,8 +91,10 @@ void* cappedAlloc(void* ud, void* ptr, size_t osize, size_t nsize)
     return nullptr; // over budget -> reported as out-of-memory
 
   void* block = std::realloc(ptr, nsize);
+
   if (block) // on failure realloc leaves the old block intact; used unchanged
     mem->used = mem->used - oldSize + nsize;
+
   return block;
 }
 
@@ -117,6 +127,7 @@ int callVoid(lua_State* L)
                  {
                    if (fn && *fn)
                      (*fn)();
+
                    return 0;
                  });
 }
@@ -130,6 +141,7 @@ int callNumber(lua_State* L)
                  {
                    if (fn && *fn)
                      (*fn)(luaL_optnumber(L, 1, 0.0));
+
                    return 0;
                  });
 }
@@ -144,6 +156,7 @@ int callNumber2(lua_State* L)
                    if (fn && *fn)
                      (*fn)(
                          luaL_optnumber(L, 1, 0.0), luaL_optnumber(L, 2, 0.0));
+
                    return 0;
                  });
 }
@@ -164,11 +177,13 @@ int configGet(lua_State* L)
                  [&]
                  {
                    ILuaConfigurable* config = configUpvalue(L);
+
                    if (config)
                      luaschema::pushValues(
                          L, config->luaConfigData(), config->luaConfigSchema());
                    else
                      lua_newtable(L);
+
                    return 1;
                  });
 }
@@ -180,8 +195,10 @@ int configSet(lua_State* L)
       [&]
       {
         ILuaConfigurable* config = configUpvalue(L);
+
         if (!config)
           return 0;
+
         luaL_checktype(L, 1, LUA_TTABLE);
         luaschema::readTable(
             L, 1, config->luaConfigData(), config->luaConfigSchema());
@@ -214,17 +231,20 @@ std::string valueToString(lua_State* L, int idx, int depth)
     const int table = lua_absindex(L, idx);
     std::string body;
     lua_pushnil(L);
+
     while (lua_next(L, table) != 0)
     {
       // key at -2, value at -1. Prefix "key = " for string keys only (printing
       // a numeric/array key via lua_tostring would corrupt the lua_next
       // iterator).
       body += indentOf(depth + 1);
+
       if (lua_type(L, -2) == LUA_TSTRING)
       {
         body += lua_tostring(L, -2);
         body += " = ";
       }
+
       body += valueToString(L, -1, depth + 1);
       body += ",\n";
       lua_pop(L, 1); // pop value, keep key for the next lua_next
@@ -232,6 +252,7 @@ std::string valueToString(lua_State* L, int idx, int depth)
 
     if (body.empty())
       return "{}";
+
     return "{\n" + body + indentOf(depth) + "}";
   }
 
@@ -245,17 +266,21 @@ std::vector<std::string> splitPath(const std::string& path)
 {
   std::vector<std::string> parts;
   std::size_t start = 0;
+
   while (start <= path.size())
   {
     const std::size_t dot = path.find('.', start);
+
     if (dot == std::string::npos)
     {
       parts.push_back(path.substr(start));
       break;
     }
+
     parts.push_back(path.substr(start, dot - start));
     start = dot + 1;
   }
+
   return parts;
 }
 
@@ -284,11 +309,155 @@ LuaScripting::~LuaScripting()
     lua_close(m_state);
 }
 
+void LuaScripting::armExecutionGuard()
+{
+  if (m_instructionLimit > 0)
+    lua_sethook(m_state, &instructionGuard, LUA_MASKCOUNT, m_instructionLimit);
+  else
+    lua_sethook(m_state, nullptr, 0, 0);
+}
+
+void LuaScripting::bind(const std::string& name, std::function<void()> fn)
+{
+  if (!m_state)
+    return;
+
+  m_voidCallbacks.push_back(
+      std::make_unique<std::function<void()>>(std::move(fn)));
+  lua_pushlightuserdata(m_state, m_voidCallbacks.back().get());
+  lua_pushcclosure(m_state, &callVoid, 1);
+  lua_setglobal(m_state, name.c_str());
+}
+
+void LuaScripting::bind(const std::string& name, std::function<void(double)> fn)
+{
+  if (!m_state)
+    return;
+
+  m_numberCallbacks.push_back(
+      std::make_unique<std::function<void(double)>>(std::move(fn)));
+  lua_pushlightuserdata(m_state, m_numberCallbacks.back().get());
+  lua_pushcclosure(m_state, &callNumber, 1);
+  lua_setglobal(m_state, name.c_str());
+}
+
+void LuaScripting::bind(const std::string& name,
+                        std::function<void(double, double)> fn)
+{
+  if (!m_state)
+    return;
+
+  m_number2Callbacks.push_back(
+      std::make_unique<std::function<void(double, double)>>(std::move(fn)));
+  lua_pushlightuserdata(m_state, m_number2Callbacks.back().get());
+  lua_pushcclosure(m_state, &callNumber2, 1);
+  lua_setglobal(m_state, name.c_str());
+}
+
+std::string LuaScripting::cappedOutput(std::string text)
+{
+  if (m_outputLimit > 0 && text.size() > m_outputLimit)
+  {
+    text.resize(m_outputLimit);
+    m_outputTruncated = true;
+  }
+
+  if (m_outputTruncated)
+    text += "\n...[output truncated]";
+
+  return text;
+}
+
+std::string LuaScripting::eval(const std::string& source)
+{
+  if (!m_state)
+    return "Lua VM not initialised";
+
+  armExecutionGuard();
+
+  if (luaL_loadstring(m_state, source.c_str()) != LUA_OK ||
+      lua_pcall(m_state, 0, 0, 0) != LUA_OK)
+  {
+    const char* err = lua_tostring(m_state, -1);
+    std::string message = err ? err : "unknown Lua error";
+    lua_pop(m_state, 1);
+    return message;
+  }
+
+  return {};
+}
+
+std::string LuaScripting::evalRepl(const std::string& source)
+{
+  if (!m_state)
+    return "error: Lua VM not initialised";
+
+  m_log.clear();
+  m_outputTruncated = false;
+  const int base = lua_gettop(m_state);
+
+  // Try the input as an expression first (so a bare value prints), else run it
+  // as statements.
+  const std::string asExpr = "return " + source;
+
+  if (luaL_loadstring(m_state, asExpr.c_str()) != LUA_OK)
+  {
+    lua_pop(m_state, 1); // discard the expression-form compile error
+
+    if (luaL_loadstring(m_state, source.c_str()) != LUA_OK)
+    {
+      const char* err = lua_tostring(m_state, -1);
+      std::string message =
+          std::string("error: ") + (err ? err : "compile error");
+      lua_pop(m_state, 1);
+      return message;
+    }
+  }
+
+  armExecutionGuard();
+
+  if (lua_pcall(m_state, 0, LUA_MULTRET, 0) != LUA_OK)
+  {
+    const char* err = lua_tostring(m_state, -1);
+    std::string message =
+        std::string("error: ") + (err ? err : "runtime error");
+    lua_pop(m_state, 1);
+    return cappedOutput(m_log +
+                        message); // show whatever printed before the error
+  }
+
+  std::string out;
+
+  for (int i = base + 1; i <= lua_gettop(m_state); ++i)
+  {
+    if (!out.empty())
+      out += "\t";
+
+    out += valueToString(m_state, i, 0);
+  }
+
+  lua_settop(m_state, base); // drop the results
+
+  // Captured print/log output first, then the expression's value (if any).
+  std::string result = m_log;
+
+  if (!out.empty())
+  {
+    if (!result.empty() && result.back() != '\n')
+      result += "\n";
+
+    result += out;
+  }
+
+  return cappedOutput(std::move(result));
+}
+
 bool LuaScripting::init()
 {
   // Custom allocator so the memory budget covers every allocation from
   // creation.
   m_state = lua_newstate(&cappedAlloc, &m_memory);
+
   if (!m_state)
     return false;
 
@@ -309,6 +478,7 @@ bool LuaScripting::init()
       {LUA_COLIBNAME, luaopen_coroutine},
       {LUA_UTF8LIBNAME, luaopen_utf8},
   };
+
   for (const luaL_Reg& lib : safeLibs)
   {
     luaL_requiref(m_state, lib.name, lib.func, 1);
@@ -365,98 +535,48 @@ bool LuaScripting::init()
   return true;
 }
 
-void LuaScripting::armExecutionGuard()
+std::vector<std::string> LuaScripting::keysOf(const std::string& path) const
 {
-  if (m_instructionLimit > 0)
-    lua_sethook(m_state, &instructionGuard, LUA_MASKCOUNT, m_instructionLimit);
-  else
-    lua_sethook(m_state, nullptr, 0, 0);
-}
+  std::vector<std::string> keys;
 
-std::string LuaScripting::eval(const std::string& source)
-{
-  if (!m_state)
-    return "Lua VM not initialised";
+  if (!m_state || path.empty())
+    return keys;
 
-  armExecutionGuard();
-  if (luaL_loadstring(m_state, source.c_str()) != LUA_OK ||
-      lua_pcall(m_state, 0, 0, 0) != LUA_OK)
+  const std::vector<std::string> parts = splitPath(path);
+
+  // Resolve the dotted path onto the stack, keeping only the current value.
+  lua_getglobal(m_state, parts[0].c_str());
+
+  for (std::size_t i = 1; i < parts.size(); ++i)
   {
-    const char* err = lua_tostring(m_state, -1);
-    std::string message = err ? err : "unknown Lua error";
-    lua_pop(m_state, 1);
-    return message;
+    if (!lua_istable(m_state, -1))
+    {
+      lua_pop(m_state, 1);
+      return keys;
+    }
+
+    lua_getfield(m_state, -1, parts[i].c_str());
+    lua_remove(m_state, -2); // drop the parent table
   }
 
-  return {};
-}
-
-std::string LuaScripting::evalRepl(const std::string& source)
-{
-  if (!m_state)
-    return "error: Lua VM not initialised";
-
-  m_log.clear();
-  m_outputTruncated = false;
-  const int base = lua_gettop(m_state);
-
-  // Try the input as an expression first (so a bare value prints), else run it
-  // as statements.
-  const std::string asExpr = "return " + source;
-  if (luaL_loadstring(m_state, asExpr.c_str()) != LUA_OK)
+  if (lua_istable(m_state, -1))
   {
-    lua_pop(m_state, 1); // discard the expression-form compile error
-    if (luaL_loadstring(m_state, source.c_str()) != LUA_OK)
+    lua_pushnil(m_state);
+
+    while (lua_next(m_state, -2) != 0)
     {
-      const char* err = lua_tostring(m_state, -1);
-      std::string message =
-          std::string("error: ") + (err ? err : "compile error");
-      lua_pop(m_state, 1);
-      return message;
+      // key at -2, value at -1. Only collect string keys (and don't run
+      // lua_tostring on non-strings -- that would corrupt the iterator key).
+      if (lua_type(m_state, -2) == LUA_TSTRING)
+        keys.emplace_back(lua_tostring(m_state, -2));
+
+      lua_pop(m_state, 1); // pop value, keep key for the next lua_next
     }
   }
 
-  armExecutionGuard();
-  if (lua_pcall(m_state, 0, LUA_MULTRET, 0) != LUA_OK)
-  {
-    const char* err = lua_tostring(m_state, -1);
-    std::string message =
-        std::string("error: ") + (err ? err : "runtime error");
-    lua_pop(m_state, 1);
-    return cappedOutput(m_log +
-                        message); // show whatever printed before the error
-  }
-
-  std::string out;
-  for (int i = base + 1; i <= lua_gettop(m_state); ++i)
-  {
-    if (!out.empty())
-      out += "\t";
-    out += valueToString(m_state, i, 0);
-  }
-  lua_settop(m_state, base); // drop the results
-
-  // Captured print/log output first, then the expression's value (if any).
-  std::string result = m_log;
-  if (!out.empty())
-  {
-    if (!result.empty() && result.back() != '\n')
-      result += "\n";
-    result += out;
-  }
-  return cappedOutput(std::move(result));
-}
-
-std::string LuaScripting::cappedOutput(std::string text)
-{
-  if (m_outputLimit > 0 && text.size() > m_outputLimit)
-  {
-    text.resize(m_outputLimit);
-    m_outputTruncated = true;
-  }
-  if (m_outputTruncated)
-    text += "\n...[output truncated]";
-  return text;
+  lua_pop(m_state, 1); // pop the resolved value
+  std::sort(keys.begin(), keys.end());
+  return keys;
 }
 
 void LuaScripting::logLine(const std::string& line)
@@ -470,45 +590,9 @@ void LuaScripting::logLine(const std::string& line)
     m_outputTruncated = true;
     return;
   }
+
   m_log += line;
   m_log += "\n";
-}
-
-void LuaScripting::bind(const std::string& name, std::function<void()> fn)
-{
-  if (!m_state)
-    return;
-
-  m_voidCallbacks.push_back(
-      std::make_unique<std::function<void()>>(std::move(fn)));
-  lua_pushlightuserdata(m_state, m_voidCallbacks.back().get());
-  lua_pushcclosure(m_state, &callVoid, 1);
-  lua_setglobal(m_state, name.c_str());
-}
-
-void LuaScripting::bind(const std::string& name, std::function<void(double)> fn)
-{
-  if (!m_state)
-    return;
-
-  m_numberCallbacks.push_back(
-      std::make_unique<std::function<void(double)>>(std::move(fn)));
-  lua_pushlightuserdata(m_state, m_numberCallbacks.back().get());
-  lua_pushcclosure(m_state, &callNumber, 1);
-  lua_setglobal(m_state, name.c_str());
-}
-
-void LuaScripting::bind(const std::string& name,
-                        std::function<void(double, double)> fn)
-{
-  if (!m_state)
-    return;
-
-  m_number2Callbacks.push_back(
-      std::make_unique<std::function<void(double, double)>>(std::move(fn)));
-  lua_pushlightuserdata(m_state, m_number2Callbacks.back().get());
-  lua_pushcclosure(m_state, &callNumber2, 1);
-  lua_setglobal(m_state, name.c_str());
 }
 
 void LuaScripting::registerApi(ILuaApi& api) { api.registerBindings(*this); }
@@ -553,45 +637,6 @@ void LuaScripting::unregisterConfig(ILuaConfigurable& config)
 
   lua_pushnil(m_state);
   lua_setglobal(m_state, config.luaConfigName().c_str());
-}
-
-std::vector<std::string> LuaScripting::keysOf(const std::string& path) const
-{
-  std::vector<std::string> keys;
-  if (!m_state || path.empty())
-    return keys;
-
-  const std::vector<std::string> parts = splitPath(path);
-
-  // Resolve the dotted path onto the stack, keeping only the current value.
-  lua_getglobal(m_state, parts[0].c_str());
-  for (std::size_t i = 1; i < parts.size(); ++i)
-  {
-    if (!lua_istable(m_state, -1))
-    {
-      lua_pop(m_state, 1);
-      return keys;
-    }
-    lua_getfield(m_state, -1, parts[i].c_str());
-    lua_remove(m_state, -2); // drop the parent table
-  }
-
-  if (lua_istable(m_state, -1))
-  {
-    lua_pushnil(m_state);
-    while (lua_next(m_state, -2) != 0)
-    {
-      // key at -2, value at -1. Only collect string keys (and don't run
-      // lua_tostring on non-strings -- that would corrupt the iterator key).
-      if (lua_type(m_state, -2) == LUA_TSTRING)
-        keys.emplace_back(lua_tostring(m_state, -2));
-      lua_pop(m_state, 1); // pop value, keep key for the next lua_next
-    }
-  }
-
-  lua_pop(m_state, 1); // pop the resolved value
-  std::sort(keys.begin(), keys.end());
-  return keys;
 }
 
 } // namespace sfs

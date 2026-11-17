@@ -1,6 +1,8 @@
 #pragma once
 
-#include "engine/core/ecs/entity.h"
+#include "engine/core/ecs/entityDeclaration.h"
+#include "engine/core/events/eventInbox.h"
+#include "engine/core/events/eventQueue.h"
 #include "engine/core/events/eventRules.h"
 #include "engine/core/events/events.h"
 #include "engine/core/events/keyed.h"
@@ -46,11 +48,6 @@ class EventRange;
 template <typename TRequest>
 class Responder
 {
-  static_assert(detail::checkEvent<TRequest>());
-  static_assert(detail::kRequest<TRequest>,
-                "A Responder responds to a request "
-                "([[sfs::event_request(...)]])");
-
 public:
   /** A responder to nothing: superseded, and every response fails. */
   Responder() = default;
@@ -90,6 +87,7 @@ public:
       m_generation = other.m_generation;
       m_ticket = other.m_ticket;
     }
+
     return *this;
   }
 
@@ -106,7 +104,24 @@ public:
       other.m_generation = 0;
       other.m_ticket = 0;
     }
+
     return *this;
+  }
+
+  /**
+   * Sends the request's failure response, its final answer, if it declares
+   * one (`failure = F`): the request closes once it's taken in, as
+   * respond()'s does, and the first final taken in wins.
+   * @param value the request's failure response
+   * @return false if the request was superseded or closed, or the events
+   *         are gone; true from a worker may still lose to an earlier final
+   *         taken in
+   */
+  template <typename TResponse>
+  bool fail(TResponse&& value) const
+  {
+    return sendRole<detail::ResponseRole::Failure>(
+        std::forward<TResponse>(value));
   }
 
   /**
@@ -116,20 +131,19 @@ public:
   const Entity& key() const { return m_key; }
 
   /**
-   * Whether a newer request from the same requester about the key, a
-   * cancel, or the key entity's or the requester's going has superseded
-   * this request, or its events are gone (three relaxed loads). Any thread.
-   * A request already closed by a final response (answered by entity before
-   * this responder's row was read, say) isn't superseded, but its responses
-   * are refused.
-   * @return whether responses to it are now dropped
+   * Sends a progress response, with more to come (a long path's next leg),
+   * if the request declares one (`progress = P`). Any number, until a final.
+   * From a worker it's taken in at the next step, and dropped if a final was
+   * taken in first.
+   * @param value the request's progress response
+   * @return false if the request was superseded or closed, or the events
+   *         are gone
    */
-  bool superseded() const
+  template <typename TResponse>
+  bool progress(TResponse&& value) const
   {
-    // A closed channel's owner is 0: its events are gone.
-    return !m_channel ||
-           m_channel->owner.load(std::memory_order_relaxed) == 0 ||
-           !m_channel->tickets->current(m_ticket, m_generation);
+    return sendRole<detail::ResponseRole::Progress>(
+        std::forward<TResponse>(value));
   }
 
   /**
@@ -151,38 +165,27 @@ public:
   }
 
   /**
-   * Sends a progress response, with more to come (a long path's next leg),
-   * if the request declares one (`progress = P`). Any number, until a final.
-   * From a worker it's taken in at the next step, and dropped if a final was
-   * taken in first.
-   * @param value the request's progress response
-   * @return false if the request was superseded or closed, or the events
-   *         are gone
+   * Whether a newer request from the same requester about the key, a
+   * cancel, or the key entity's or the requester's going has superseded
+   * this request, or its events are gone (three relaxed loads). Any thread.
+   * A request already closed by a final response (answered by entity before
+   * this responder's row was read, say) isn't superseded, but its responses
+   * are refused.
+   * @return whether responses to it are now dropped
    */
-  template <typename TResponse>
-  bool progress(TResponse&& value) const
+  bool superseded() const
   {
-    return sendRole<detail::ResponseRole::Progress>(
-        std::forward<TResponse>(value));
-  }
-
-  /**
-   * Sends the request's failure response, its final answer, if it declares
-   * one (`failure = F`): the request closes once it's taken in, as
-   * respond()'s does, and the first final taken in wins.
-   * @param value the request's failure response
-   * @return false if the request was superseded or closed, or the events
-   *         are gone; true from a worker may still lose to an earlier final
-   *         taken in
-   */
-  template <typename TResponse>
-  bool fail(TResponse&& value) const
-  {
-    return sendRole<detail::ResponseRole::Failure>(
-        std::forward<TResponse>(value));
+    // A closed channel's owner is 0: its events are gone.
+    return !m_channel ||
+           m_channel->owner.load(std::memory_order_relaxed) == 0 ||
+           !m_channel->tickets->current(m_ticket, m_generation);
   }
 
 private:
+  static_assert(detail::checkEvent<TRequest>());
+  static_assert(detail::kRequest<TRequest>,
+                "A Responder responds to a request "
+                "([[sfs::event_request(...)]])");
   template <typename TEvent, typename TPick, bool kResponders>
   friend class EventRange;
 
@@ -198,12 +201,90 @@ private:
   {
   }
 
+  // Sends a response as its queue holds it: on the owning thread straight to
+  // the queue, from a worker to the response inbox.
+  template <typename A>
+  bool deliver(A&& response, bool last) const
+  {
+    if (!m_channel)
+      return false;
+
+    detail::KeyedChannel& channel = *m_channel;
+    // A closed channel's owner is 0. The owning thread's queue checks the
+    // request is current itself; a worker checks here.
+    const std::uintptr_t owner = channel.owner.load(std::memory_order_relaxed);
+
+    if (owner == 0)
+      return false;
+
+    if (owner == detail::currentThreadId())
+    {
+      Events* events = channel.events;
+      return events &&
+             events->template queue<A>().respond(
+                 std::move(response), m_key, m_generation, last, m_ticket);
+    }
+
+    if (!channel.tickets->current(m_ticket, m_generation))
+      return false;
+
+    std::shared_ptr<detail::EventInbox<A>> inbox;
+    {
+      const std::lock_guard lock(channel.mutex);
+
+      if (!channel.open)
+        return false;
+
+      inbox = channel.template responseInbox<A>(
+          detail::moduleTypeId<A, &detail::eventTypeId>(),
+          &Events::template adopt<A>);
+    }
+
+    if (!inbox)
+      return false;
+
+    const std::lock_guard lock(inbox->mutex);
+
+    if (!inbox->open)
+      return false;
+
+    inbox->staged.events.push_back(std::move(response));
+    inbox->staged.keys.push_back(m_key);
+    inbox->staged.stamps.push_back(m_generation |
+                                   (last ? detail::kLastResponse : 0u));
+    inbox->staged.tickets.push_back(m_ticket);
+    inbox->count.store(static_cast<uint32_t>(inbox->staged.events.size()),
+                       std::memory_order_relaxed);
+
+    if (inbox->log) [[unlikely]]
+      detail::logWorkerSend(inbox->name);
+
+    return true;
+  }
+
   // A hold on the channel: this one's, or a new one for a borrowed responder.
   std::shared_ptr<detail::KeyedChannel> held() const
   {
     if (!m_channel || m_channel.use_count() != 0)
       return m_channel;
+
     return m_channel->shared_from_this();
+  }
+
+  // A response in a role the request declares (checked as it compiles):
+  // the success and the failure are final.
+  template <detail::ResponseRole kRole, typename TResponse>
+  bool sendRole(TResponse&& value) const
+  {
+    using Value = std::remove_cvref_t<TResponse>;
+    static_assert(detail::checkRoleSent<TRequest, kRole, Value>());
+
+    if constexpr (std::is_same_v<detail::RoleType<TRequest, kRole>, Value>)
+      return deliver(
+          detail::ResponseTo<TRequest, Value>{std::forward<TResponse>(value)},
+          kRole != detail::ResponseRole::Progress);
+    else
+      return false;
   }
 
   // held(), leaving this responder empty.
@@ -214,69 +295,6 @@ private:
                                                  : held();
     m_channel.reset();
     return out;
-  }
-
-  // A response in a role the request declares (checked as it compiles):
-  // the success and the failure are final.
-  template <detail::ResponseRole kRole, typename TResponse>
-  bool sendRole(TResponse&& value) const
-  {
-    using Value = std::remove_cvref_t<TResponse>;
-    static_assert(detail::checkRoleSent<TRequest, kRole, Value>());
-    if constexpr (std::is_same_v<detail::RoleType<TRequest, kRole>, Value>)
-      return deliver(
-          detail::ResponseTo<TRequest, Value>{std::forward<TResponse>(value)},
-          kRole != detail::ResponseRole::Progress);
-    else
-      return false;
-  }
-
-  // Sends a response as its queue holds it: on the owning thread straight to
-  // the queue, from a worker to the response inbox.
-  template <typename A>
-  bool deliver(A&& response, bool last) const
-  {
-    if (!m_channel)
-      return false;
-    detail::KeyedChannel& channel = *m_channel;
-    // A closed channel's owner is 0. The owning thread's queue checks the
-    // request is current itself; a worker checks here.
-    const std::uintptr_t owner = channel.owner.load(std::memory_order_relaxed);
-    if (owner == 0)
-      return false;
-    if (owner == detail::currentThreadId())
-    {
-      Events* events = channel.events;
-      return events &&
-             events->template queue<A>().respond(
-                 std::move(response), m_key, m_generation, last, m_ticket);
-    }
-    if (!channel.tickets->current(m_ticket, m_generation))
-      return false;
-    std::shared_ptr<detail::EventInbox<A>> inbox;
-    {
-      const std::lock_guard lock(channel.mutex);
-      if (!channel.open)
-        return false;
-      inbox = channel.template responseInbox<A>(
-          detail::moduleTypeId<A, &detail::eventTypeId>(),
-          &Events::template adopt<A>);
-    }
-    if (!inbox)
-      return false;
-    const std::lock_guard lock(inbox->mutex);
-    if (!inbox->open)
-      return false;
-    inbox->staged.events.push_back(std::move(response));
-    inbox->staged.keys.push_back(m_key);
-    inbox->staged.stamps.push_back(m_generation |
-                                   (last ? detail::kLastResponse : 0u));
-    inbox->staged.tickets.push_back(m_ticket);
-    inbox->count.store(static_cast<uint32_t>(inbox->staged.events.size()),
-                       std::memory_order_relaxed);
-    if (inbox->log) [[unlikely]]
-      detail::logWorkerSend(inbox->name);
-    return true;
   }
 
   // The request type's channel: held, or borrowed from a row (no hold:

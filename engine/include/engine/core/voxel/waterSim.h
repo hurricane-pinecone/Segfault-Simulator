@@ -1,6 +1,7 @@
 #pragma once
 
-#include "glm/glm/ext/vector_int3.hpp"
+#include <glm/glm/ext/vector_int3.hpp>
+
 #include <vector>
 
 namespace sfs
@@ -12,10 +13,10 @@ class IWaterGrid
 {
 public:
   virtual ~IWaterGrid() = default;
-  virtual int water(const glm::ivec3& cell) const = 0;
   virtual int capacity(const glm::ivec3& cell) const = 0; // 0 = solid, no water
-  virtual float surface(const glm::ivec3& cell) const = 0; // height in levels
   virtual void setWater(const glm::ivec3& cell, int amount) = 0;
+  virtual float surface(const glm::ivec3& cell) const = 0; // height in levels
+  virtual int water(const glm::ivec3& cell) const = 0;
 };
 
 // One volume-conserving fluid tick over the active cells: water flows DOWN,

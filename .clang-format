@@ -13,3 +13,29 @@ PenaltyBreakBeforeFirstCallParameter: 0
 BreakBeforeBraces: Allman
 
 ColumnLimit: 80
+
+# Includes: the file's own header; then SFS's and the game's (the engine's <engine/...> and <sfs/...> first, then the
+# rest); then third-party packages; then the standard library and the OS. Each group is alphabetical, with a blank
+# line between groups. A package's prelude leads its group: Jolt/Jolt.h before the other Jolt headers, windows.h
+# before the other Windows headers.
+SortIncludes: CaseInsensitive
+IncludeBlocks: Regroup
+IncludeCategories:
+  - Regex: '^<Jolt/Jolt\.h>$'
+    Priority: 2
+    SortPriority: 3
+  - Regex: '^<windows\.h>$'
+    Priority: 3
+    SortPriority: 5
+  - Regex: '^[<"](SDL|clipper2/|glm/|imgui|imguizmo/|nlohmann/|tracy/|FastNoiseLite|Jolt/|cgltf|lua\.h|lua\.hpp|lauxlib\.h|lualib\.h|sdl2webgpu|tree_sitter/|webgpu/|doctest|stb_)'
+    Priority: 2
+    SortPriority: 4
+  - Regex: '^<([^/]*|sys/.*|emscripten/.*)>$'
+    Priority: 3
+    SortPriority: 6
+  - Regex: '^<(engine|sfs)/'
+    Priority: 1
+    SortPriority: 1
+  - Regex: '.*'
+    Priority: 1
+    SortPriority: 2

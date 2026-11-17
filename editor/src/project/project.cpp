@@ -2,12 +2,18 @@
 
 #include "engine/core/logger/logger.h"
 #include "engine/core/util/atomicFile.h"
-#include "nlohmann/json.hpp"
+
+#include <nlohmann/json.hpp>
 
 #include <cctype>
+#include <filesystem>
 #include <fstream>
+#include <ios>
 #include <iterator>
+#include <optional>
+#include <string>
 #include <system_error>
+#include <utility>
 
 namespace fs = std::filesystem;
 
@@ -15,7 +21,7 @@ namespace
 {
 // Bumped when the project file's layout changes, so an older editor can refuse
 // a project it doesn't understand.
-constexpr int kFormatVersion = 1;
+constexpr int FORMAT_VERSION = 1;
 
 // Anchor a relative folder at the working directory; leave anything rooted
 // (a drive, a UNC share, or a leading slash) alone. MinGW's libstdc++ neither
@@ -25,14 +31,29 @@ fs::path resolveFolder(const fs::path& folder)
 {
   if (folder.has_root_name() || folder.has_root_directory())
     return folder;
+
   return fs::current_path() / folder;
 }
 } // namespace
+
+std::string Project::moduleName() const
+{
+  std::string name;
+
+  for (const char c : m_name)
+    name += std::isalnum(static_cast<unsigned char>(c)) ? c : '_';
+
+  if (name.empty() || std::isdigit(static_cast<unsigned char>(name.front())))
+    name.insert(0, "Game");
+
+  return name;
+}
 
 std::optional<Project> Project::open(const fs::path& folder)
 {
   const fs::path file = folder / kFileName;
   std::ifstream in(file);
+
   if (!in)
   {
     LOG_ERROR("No project file at " + file.string());
@@ -40,13 +61,14 @@ std::optional<Project> Project::open(const fs::path& folder)
   }
 
   const nlohmann::json json = nlohmann::json::parse(in, nullptr, false);
+
   if (json.is_discarded() || !json.is_object())
   {
     LOG_ERROR("Project file is not valid JSON: " + file.string());
     return std::nullopt;
   }
 
-  if (json.value("formatVersion", 0) > kFormatVersion)
+  if (json.value("formatVersion", 0) > FORMAT_VERSION)
   {
     LOG_ERROR("Project " + file.string() + " needs a newer editor");
     return std::nullopt;
@@ -66,6 +88,7 @@ bool Project::setStartScene(const fs::path& scene)
   fs::path relative = scene;
   const std::string root = m_root.string();
   const std::string path = scene.string();
+
   if (path.size() > root.size() && path.compare(0, root.size(), root) == 0 &&
       (path[root.size()] == '/' || path[root.size()] == '\\'))
     relative = fs::path(path.substr(root.size() + 1));
@@ -73,41 +96,45 @@ bool Project::setStartScene(const fs::path& scene)
   // Read-modify-write, so fields this editor doesn't know survive.
   const fs::path file = m_root / kFileName;
   nlohmann::json json = nlohmann::json::object();
+
   if (std::ifstream in(file); in)
   {
     json = nlohmann::json::parse(in, nullptr, false);
+
     if (json.is_discarded() || !json.is_object())
       json = nlohmann::json::object();
   }
-  json["formatVersion"] = kFormatVersion;
+
+  json["formatVersion"] = FORMAT_VERSION;
   json["name"] = m_name;
   json["startScene"] = relative.generic_string();
 
   if (!sfs::writeFileAtomically(file, json.dump(2) + '\n'))
     return false;
+
   m_startScene = relative;
   LOG_INFO("Start scene: " + relative.generic_string());
   return true;
 }
 
-std::string Project::moduleName() const
-{
-  std::string name;
-  for (const char c : m_name)
-    name += std::isalnum(static_cast<unsigned char>(c)) ? c : '_';
-  if (name.empty() || std::isdigit(static_cast<unsigned char>(name.front())))
-    name.insert(0, "Game");
-  return name;
-}
-
 namespace
 {
+// The .clangd editors before sfs-lsp wrote.
+const std::string kPreviousClangd =
+    "# clangd (the editor's Code panel, and most editors): the game module's\n"
+    "# compile database, linked into .sfs/ by every build.\n"
+    "CompileFlags:\n"
+    "  CompilationDatabase: .sfs\n"
+    "  Remove: [-fno-keep-inline-dllexport] # GCC-only (MinGW builds)\n";
+
 bool writeIfMissing(const fs::path& path, const std::string& contents)
 {
   if (fs::exists(path))
     return true;
+
   if (!sfs::writeFileAtomically(path, contents))
     return false;
+
   LOG_INFO("Created " + path.filename().string());
   return true;
 }
@@ -120,26 +147,66 @@ bool writeOrUpdate(const fs::path& path,
 {
   if (!fs::exists(path))
     return writeIfMissing(path, contents);
+
   std::ifstream in(path, std::ios::binary);
   const std::string current{
       std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+
   if (current != previous)
     return true;
+
   in.close();
+
   if (!sfs::writeFileAtomically(path, contents))
     return false;
+
   LOG_INFO("Updated " + path.filename().string());
   return true;
 }
-
-// The .clangd editors before sfs-lsp wrote.
-const std::string kPreviousClangd =
-    "# clangd (the editor's Code panel, and most editors): the game module's\n"
-    "# compile database, linked into .sfs/ by every build.\n"
-    "CompileFlags:\n"
-    "  CompilationDatabase: .sfs\n"
-    "  Remove: [-fno-keep-inline-dllexport] # GCC-only (MinGW builds)\n";
 } // namespace
+
+std::optional<Project> Project::create(const fs::path& folder,
+                                       const std::string& name)
+{
+  const fs::path file = folder / kFileName;
+
+  if (fs::exists(file))
+  {
+    LOG_ERROR("A project already exists at " + folder.string());
+    return std::nullopt;
+  }
+
+  Project project(resolveFolder(folder), name);
+
+  std::error_code error;
+
+  for (const fs::path& sub : {project.scenesFolder(),
+                              project.assetsFolder(),
+                              project.prefabsFolder(),
+                              project.scriptsFolder()})
+  {
+    fs::create_directories(sub, error);
+
+    if (error)
+    {
+      LOG_ERROR("Can't create " + sub.string() + ": " + error.message());
+      return std::nullopt;
+    }
+  }
+
+  if (!sfs::writeFileAtomically(
+          file,
+          nlohmann::json{{"formatVersion", FORMAT_VERSION}, {"name", name}}
+                  .dump(2) +
+              '\n'))
+    return std::nullopt;
+
+  if (!project.ensureBuildFiles())
+    return std::nullopt;
+
+  LOG_INFO("Created project '" + name + "' at " + folder.string());
+  return project;
+}
 
 bool Project::ensureBuildFiles() const
 {
@@ -148,20 +215,22 @@ bool Project::ensureBuildFiles() const
       "# library the editor loads to play the game. Open the folder in any\n"
       "# CMake-aware IDE to work on scripts outside the editor too.\n"
       "cmake_minimum_required(VERSION 3.24)\n"
-      "project(" + moduleName() + " LANGUAGES C CXX)\n\n"
+      "project(" +
+      moduleName() +
+      " LANGUAGES C CXX)\n\n"
       "set(CMAKE_CXX_STANDARD 23)\n"
       "set(CMAKE_CXX_STANDARD_REQUIRED ON)\n"
       "set(CMAKE_CXX_EXTENSIONS OFF)\n"
       "set(CMAKE_EXPORT_COMPILE_COMMANDS ON)\n\n"
       "find_package(engine REQUIRED)\n\n"
-      "sfs_add_game_module(" + moduleName() + ")\n";
+      "sfs_add_game_module(" +
+      moduleName() + ")\n";
 
-  const std::string gitignore =
-      "# Editor build output and caches\n"
-      ".sfs/\n"
-      "builds/\n"
-      "compile_commands.json\n"
-      "imgui.ini\n";
+  const std::string gitignore = "# Editor build output and caches\n"
+                                ".sfs/\n"
+                                "builds/\n"
+                                "compile_commands.json\n"
+                                "imgui.ini\n";
 
   const std::string clangd = kPreviousClangd +
                              "# [[sfs::...]] attributes are the engine's: "
@@ -177,40 +246,4 @@ bool Project::ensureBuildFiles() const
   return writeIfMissing(m_root / "CMakeLists.txt", cmake) &&
          writeIfMissing(m_root / ".gitignore", gitignore) &&
          writeOrUpdate(m_root / ".clangd", clangd, kPreviousClangd);
-}
-
-std::optional<Project> Project::create(const fs::path& folder,
-                                       const std::string& name)
-{
-  const fs::path file = folder / kFileName;
-  if (fs::exists(file))
-  {
-    LOG_ERROR("A project already exists at " + folder.string());
-    return std::nullopt;
-  }
-
-  Project project(resolveFolder(folder), name);
-
-  std::error_code error;
-  for (const fs::path& sub : {project.scenesFolder(),
-                              project.assetsFolder(),
-                              project.prefabsFolder(),
-                              project.scriptsFolder()})
-  {
-    fs::create_directories(sub, error);
-    if (error)
-    {
-      LOG_ERROR("Can't create " + sub.string() + ": " + error.message());
-      return std::nullopt;
-    }
-  }
-
-  if (!sfs::writeFileAtomically(
-          file, nlohmann::json{{"formatVersion", kFormatVersion}, {"name", name}}.dump(2) + '\n'))
-    return std::nullopt;
-  if (!project.ensureBuildFiles())
-    return std::nullopt;
-
-  LOG_INFO("Created project '" + name + "' at " + folder.string());
-  return project;
 }

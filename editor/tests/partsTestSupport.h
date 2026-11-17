@@ -3,18 +3,21 @@
 // Shared by the editor's reference tests: a component with part fields,
 // registered as sfs-codegen would, and prefab files to load.
 
-#include "scene/entityLabel.h"
-
-#include "engine/core/components/nameComponent.h"
 #include "engine/core/ecs/ecs.h"
 #include "engine/core/hierarchy/hierarchy.h"
+#include "engine/core/reflection/reflection.h"
 #include "engine/core/reflection/registration.h"
 #include "engine/runtime/serialization/sceneSerializer.h"
+#include "scene/entityLabel.h"
+
+#include <nlohmann/json.hpp>
 
 #include <filesystem>
 #include <fstream>
+#include <ios>
 #include <iterator>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace partsTests
@@ -37,6 +40,7 @@ inline void registerParts()
 {
   if (sfs::reflect::types().find("PartsComponent"))
     return;
+
   sfs::reflect::TypeInfo type = sfs::reflect::componentType<PartsComponent>(
       "PartsComponent", "Parts", "tests");
   sfs::reflect::FieldInfo arm;
@@ -79,6 +83,7 @@ inline Entity childNamed(const Entity& parent, const std::string& name)
   for (const Entity& child : sfs::hierarchy::childrenOf(parent))
     if (entityLabel(child) == name)
       return child;
+
   return {};
 }
 

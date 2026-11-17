@@ -2,7 +2,7 @@
 
 #include "history/historySteps.h"
 
-#include "nlohmann/json.hpp"
+#include <nlohmann/json.hpp>
 
 #include <cstddef>
 #include <cstdint>
@@ -26,11 +26,19 @@ class EditorHistory
 public:
   explicit EditorHistory(EditorContext& context) : m_context(context) {}
 
+  /**
+   * Fold what's changed since into the last step (its "after"): for edits
+   * that follow on from one just recorded, as one undo step (an Inspector
+   * edit copied to every selected entity).
+   */
+  void amendLast();
+
   /** Start an edit, if one isn't already in progress. */
   void beginChange();
 
-  /** Finish the edit in progress, recording it if the scene changed. */
-  void endChange();
+  bool canRedo() const { return m_steps.canRedo(); }
+
+  bool canUndo() const { return m_steps.canUndo(); }
 
   /** Run `action` as one edit. */
   template <typename Action>
@@ -44,12 +52,11 @@ public:
   /** Whether a change has begun (beginChange) and not yet ended. */
   bool changing() const { return m_pendingBefore.has_value(); }
 
-  /**
-   * Fold what's changed since into the last step (its "after"): for edits
-   * that follow on from one just recorded, as one undo step (an Inspector
-   * edit copied to every selected entity).
-   */
-  void amendLast();
+  /** Forget everything (a different scene was opened). */
+  void clear();
+
+  /** Finish the edit in progress, recording it if the scene changed. */
+  void endChange();
 
   /**
    * Record an edit outside the scene, already made (see
@@ -59,6 +66,8 @@ public:
                      std::function<void()> redo,
                      std::size_t bytes);
 
+  void redo();
+
   /**
    * Which state the history is at (HistorySteps::state()): every edit makes
    * a new one, and undo and redo return to the one that point had. Equal to
@@ -66,14 +75,6 @@ public:
    * tab compares it with the value it was saved (or applied) at.
    */
   uint64_t revision() const { return m_steps.state(); }
-
-  bool canUndo() const { return m_steps.canUndo(); }
-  bool canRedo() const { return m_steps.canRedo(); }
-  void undo();
-  void redo();
-
-  /** Forget everything (a different scene was opened). */
-  void clear();
 
   /**
    * Change every recorded scene the same way (e.g. a field renamed in the
@@ -87,6 +88,8 @@ public:
    */
   void setEnabled(bool enabled);
 
+  void undo();
+
 private:
   // A selected entity by its position in save order (parents first), or none.
   // A restore recreates entities in that order, so the position names the
@@ -94,10 +97,10 @@ private:
   // which reparenting doesn't change until the scene is reloaded).
   using Selection = HistorySteps::Selection;
 
-  Selection currentSelection() const;
-
   // Restore a snapshot and selection, keeping the camera.
   void apply(const nlohmann::json& snapshot, Selection selection);
+
+  Selection currentSelection() const;
 
   EditorContext& m_context;
   HistorySteps m_steps;

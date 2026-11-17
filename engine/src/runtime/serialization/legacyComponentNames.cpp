@@ -1,5 +1,7 @@
 #include "engine/runtime/serialization/legacyComponentNames.h"
 
+#include <nlohmann/json.hpp>
+
 #include <string>
 #include <string_view>
 #include <utility>
@@ -10,7 +12,7 @@ namespace sfs
 namespace
 {
 // Retired component name -> current name.
-constexpr std::pair<std::string_view, std::string_view> kRenamed[] = {
+constexpr std::pair<std::string_view, std::string_view> RENAMED[] = {
     {"Transform3DComponent", "TransformComponent"},
     {"Camera3DComponent", "CameraComponent"},
     {"PointLight3DComponent", "PointLightComponent"},
@@ -21,27 +23,35 @@ constexpr std::pair<std::string_view, std::string_view> kRenamed[] = {
 void foldIntoSprite(nlohmann::json& components)
 {
   const auto tint = components.find("SpriteTint");
+
   if (tint != components.end())
   {
     const auto sprite = components.find("SpriteComponent");
+
     if (sprite != components.end() && sprite->is_object() &&
         !sprite->contains("tint") && tint->is_object())
     {
       nlohmann::json color = tint->value("color", nlohmann::json::array());
+
       if (!color.is_array() || color.size() != 3)
         color = {1.0, 1.0, 1.0};
+
       color.push_back(tint->value("alpha", 1.0));
       (*sprite)["tint"] = std::move(color);
     }
+
     components.erase(tint);
   }
 
   const auto shadow = components.find("ShadowCasterComponent");
+
   if (shadow != components.end())
   {
     const auto sprite = components.find("SpriteComponent");
+
     if (sprite != components.end() && sprite->is_object())
       (*sprite)["castsShadow"] = true;
+
     components.erase(shadow);
   }
 }
@@ -53,24 +63,32 @@ void upgradeComponentNames(nlohmann::json& file)
   {
     for (nlohmann::json& item : file)
       upgradeComponentNames(item);
+
     return;
   }
+
   if (!file.is_object())
     return;
 
-  for (const auto& [from, to] : kRenamed)
+  for (const auto& [from, to] : RENAMED)
   {
     const std::string oldName(from);
     const auto it = file.find(oldName);
+
     if (it == file.end())
       continue;
+
     // A file holding both keeps the current one.
     const std::string newName(to);
+
     if (!file.contains(newName))
       file[newName] = std::move(*it);
+
     file.erase(oldName);
   }
+
   foldIntoSprite(file);
+
   for (auto& [key, value] : file.items())
     upgradeComponentNames(value);
 }

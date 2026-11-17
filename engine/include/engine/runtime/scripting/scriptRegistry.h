@@ -63,10 +63,10 @@ public:
   /** Add a script type (replacing any with the same name). */
   void add(ScriptType type);
 
+  const ScriptType* find(std::string_view name) const;
+
   /** Drop every script type a module registered, e.g. before unloading it. */
   void removeModule(std::string_view module);
-
-  const ScriptType* find(std::string_view name) const;
 
   const std::vector<ScriptType>& types() const { return m_types; }
 

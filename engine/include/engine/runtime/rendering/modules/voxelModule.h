@@ -1,10 +1,14 @@
 #pragma once
 
+#include "engine/core/rendering/mesh.h"
+#include "engine/runtime/rendering/commands.h"
 #include "engine/runtime/rendering/modules/renderModule.h"
 #include "engine/runtime/rendering/renderContext.h"
 
-#include "glm/glm/ext/vector_int3.hpp"
+#include <glm/glm/ext/vector_float4.hpp>
+#include <glm/glm/ext/vector_int3.hpp>
 
+#include <cstddef>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -31,10 +35,10 @@ public:
               VoxelWorld& world,
               const IBlockRegistry& blocks);
 
+  void computeCommands(const RenderContext& context) override;
+
   /** Water's colour, and how see-through it is (alpha). */
   void setWaterColor(const glm::vec4& color) { m_waterColor = color; }
-
-  void computeCommands(const RenderContext& context) override;
 
 protected:
   bool rebuildsEveryFrame() const override { return true; }
@@ -54,9 +58,9 @@ private:
     }
   };
 
-  void remesh(const glm::ivec3& chunk, const RenderContext& context);
-  void forget(const glm::ivec3& chunk, MeshLibrary& meshes);
   MaterialHandle blockMaterial(const std::string& sheet, MeshLibrary& meshes);
+  void forget(const glm::ivec3& chunk, MeshLibrary& meshes);
+  void remesh(const glm::ivec3& chunk, const RenderContext& context);
 
   AssetStore& m_assets;
   VoxelWorld& m_world;

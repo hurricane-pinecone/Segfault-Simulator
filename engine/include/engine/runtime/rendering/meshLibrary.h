@@ -4,9 +4,13 @@
 #include "engine/core/rendering/camera.h"
 #include "engine/core/rendering/emissionLights.h"
 #include "engine/core/rendering/mesh.h"
-#include "glm/glm/ext/matrix_float4x4.hpp"
+
+#include <glm/glm/ext/matrix_float4x4.hpp>
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
 
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <map>
 #include <memory>
@@ -394,6 +398,7 @@ private:
   struct NameHash
   {
     using is_transparent = void;
+
     std::size_t operator()(std::string_view name) const
     {
       return std::hash<std::string_view>()(name);

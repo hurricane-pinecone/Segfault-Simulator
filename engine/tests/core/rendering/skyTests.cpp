@@ -1,14 +1,20 @@
 #include "../../testHarness.h"
+#include "engine/core/rendering/lighting.h"
+#include "engine/core/rendering/sky.h"
+#include "engine/core/rendering/sunShadow.h"
 
-#include <engine/core/rendering/lighting.h>
-#include <engine/core/rendering/sky.h>
-#include <engine/core/rendering/sunShadow.h>
-
-#include "glm/glm/geometric.hpp"
-#include "glm/glm/trigonometric.hpp"
+#include <glm/glm/ext/matrix_float4x4.hpp>
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
+#include <glm/glm/ext/vector_float4.hpp>
+#include <glm/glm/geometric.hpp>
+#include <glm/glm/trigonometric.hpp>
 
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
 #include <limits>
+#include <vector>
 
 using namespace sfs;
 
@@ -307,6 +313,7 @@ int main()
     CHECK(roughFaceOn.x < smoothFaceOn.x);
     // Grazing: more of the Fresnel bias.
     CHECK(table[0].y > smoothFaceOn.y);
+
     for (const glm::vec2& texel : table)
       CHECK(texel.x >= 0.0f && texel.y >= 0.0f && texel.x + texel.y <= 1.05f);
   }
@@ -317,8 +324,10 @@ int main()
     const auto splits = cascadeSplits(4, 0.1f, 200.0f, 0.75f);
     CHECK(testing::approx(splits[0], 0.1f));
     CHECK(testing::approx(splits[4], 200.0f));
+
     for (int i = 0; i < 4; ++i)
       CHECK(splits[i] < splits[i + 1]);
+
     CHECK(splits[1] - splits[0] < splits[2] - splits[1]);
     CHECK(splits[3] - splits[2] < splits[4] - splits[3]);
     // Lambda 0: even; 1: logarithmic.
@@ -348,9 +357,11 @@ int main()
     const glm::vec3 right =
         glm::normalize(glm::cross(view.forward, glm::vec3(0, 0, 1)));
     const glm::vec3 up = glm::cross(right, view.forward);
+
     for (uint32_t i = 0; i < cascades.count; ++i)
     {
       const SunCascade& cascade = cascades.cascades[i];
+
       // The slice's corners, near and far, inside its box (and depth).
       for (const float d : {cascade.splitNear, cascade.splitFar})
         for (const float sx : {-1.0f, 1.0f})
@@ -363,10 +374,12 @@ int main()
             CHECK(std::abs(ndc.x) <= 1.001f && std::abs(ndc.y) <= 1.001f);
             CHECK(ndc.z > 0.0f && ndc.z < 1.0f);
           }
+
       // Farther cascades are bigger.
       if (i > 0)
         CHECK(cascade.radius > cascades.cascades[i - 1].radius);
     }
+
     // A caster well toward the sun from the nearest still casts into it.
     const glm::vec3 caster = cascades.cascades[0].center + sun * 60.0f;
     const glm::vec3 ndc = project(cascades.cascades[0].viewProjection, caster);
@@ -374,6 +387,7 @@ int main()
 
     // One view-projection around them all.
     const glm::mat4 bounds = cascadeBounds(sun, cascades);
+
     for (uint32_t i = 0; i < cascades.count; ++i)
     {
       const glm::vec3 center = project(bounds, cascades.cascades[i].center);
@@ -390,12 +404,14 @@ int main()
     CascadeView turned = view;
     turned.forward = glm::normalize(glm::vec3(-0.8f, 0.2f, -0.3f));
     const SunCascades b = fitSunCascades(sun, turned, 4, 200.0f, 0.75f, 2048);
+
     for (uint32_t i = 0; i < 4; ++i)
       CHECK(a.cascades[i].radius == b.cascades[i].radius);
 
     CascadeView moved = view;
     moved.position += glm::vec3(0.0137f, -0.0213f, 0.002f);
     const SunCascades c = fitSunCascades(sun, moved, 4, 200.0f, 0.75f, 2048);
+
     for (uint32_t i = 0; i < 4; ++i)
     {
       // A fixed world point shifts across each cascade by whole texels.
@@ -445,8 +461,10 @@ int main()
     CHECK(std::abs(past.y - 2.0f) < 1e-4f);
     // Days of it: still within.
     glm::vec2 far{0.0f};
+
     for (int i = 0; i < 1000; ++i)
       far = driftClouds(far, {37.0f, -23.0f}, 600.0f);
+
     CHECK(far.x >= 0.0f);
     CHECK(far.x < kCloudPeriod);
     CHECK(far.y >= 0.0f);

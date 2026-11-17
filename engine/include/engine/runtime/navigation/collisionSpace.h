@@ -1,12 +1,20 @@
 #pragma once
 
+#include "engine/runtime/navigation/geometry.h"
 #include "engine/runtime/navigation/space.h"
 #include "engine/runtime/systems/collisionWorld3D.h"
 
+#include <glm/glm/ext/quaternion_float.hpp>
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
+
 #include <atomic>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
+#include <span>
 #include <vector>
 
 namespace sfs::nav
@@ -85,29 +93,33 @@ public:
     float rasterLow = 0.05f, rasterHigh = 4.5f; // what the 2D heuristic counts
     bool broadPhase = true; // (off: every query exact, for tests)
   };
+  /** (The broad phase's: one world's clearance, collisionSpace.cpp's.) */
+  class Clearance;
+
   CollisionSpace(std::vector<std::shared_ptr<const CollisionWorld3D>> worlds,
                  Options options);
-
+  Rect bounds() const override { return m_bounds; }
+  bool fits(const void* prepared, Pose2 pose) const override;
+  /** Its colliders' footprints (sfs::nav::footprints() of every world, by
+   * its layers, ignored ids and ground). */
+  std::vector<BoxSpace::Solid> footprints() const;
+  std::optional<Hit> hit(const void* prepared, Pose2 pose) const override;
   std::shared_ptr<const void> prepare(std::span<const Box3> boxes,
                                       float grow,
                                       float extend,
                                       float widen) const override;
-  bool fits(const void* prepared, Pose2 pose) const override;
-  std::optional<Hit> hit(const void* prepared, Pose2 pose) const override;
   void raster(glm::vec2 origin,
               float cell,
               int width,
               int height,
               float inflate,
               std::vector<uint8_t>& out) const override;
-  Rect bounds() const override { return m_bounds; }
-  /** Its colliders' footprints (sfs::nav::footprints() of every world, by
-   * its layers, ignored ids and ground). */
-  std::vector<BoxSpace::Solid> footprints() const;
-  /** (The broad phase's: one world's clearance, collisionSpace.cpp's.) */
-  class Clearance;
 
 private:
+  // The broad phase: each world's clearance (by world, made the first time
+  // it's asked; a static world's kept and shared while it lives).
+  const std::vector<std::shared_ptr<const Clearance>>& clearances() const;
+
   std::vector<std::shared_ptr<const CollisionWorld3D>> m_worlds;
   Options m_options;
   // (Worked out once, the first time they're asked for: its worlds never
@@ -115,9 +127,6 @@ private:
   mutable std::once_flag m_footOnce;
   mutable std::vector<BoxSpace::Solid> m_foot;
   Rect m_bounds;
-  // The broad phase: each world's clearance (by world, made the first time
-  // it's asked; a static world's kept and shared while it lives).
-  const std::vector<std::shared_ptr<const Clearance>>& clearances() const;
   mutable std::once_flag m_clearOnce;
   mutable std::atomic<bool> m_clearMade{false};
   mutable std::vector<std::shared_ptr<const Clearance>> m_clear;

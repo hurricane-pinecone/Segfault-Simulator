@@ -1,29 +1,38 @@
 #include "../../testHarness.h"
 #include "../rendering/mockRenderer.h"
+#include "engine/core/assets/assetDatabase.h"
+#include "engine/core/components/animatorComponent.h"
+#include "engine/core/components/inputContextComponent.h"
+#include "engine/core/components/nameComponent.h"
+#include "engine/core/components/transformComponent.h"
+#include "engine/core/ecs/entity.h"
+#include "engine/core/ecs/registry.h"
+#include "engine/core/ecs/service.h"
+#include "engine/core/ecs/system.h"
+#include "engine/core/events/eventConsumer.h"
+#include "engine/core/hierarchy/hierarchy.h"
+#include "engine/core/particles/particleEffect.h"
+#include "engine/core/particles/particleEngine.h"
+#include "engine/core/reflection/reflection.h"
+#include "engine/core/util/fatalError.h"
+#include "engine/runtime/assetStore/assetStore.h"
+#include "engine/runtime/game/gameObject.h"
+#include "engine/runtime/input/input.h"
+#include "engine/runtime/input/keyboardInput.h"
+#include "engine/runtime/rendering/modules/particleModule.h"
+#include "engine/runtime/rendering/renderSystem.h"
+#include "engine/runtime/rendering/standardScene.h"
+#include "engine/runtime/sceneManager/scene.h"
+#include "engine/runtime/sceneManager/sceneManager.h"
 
-#include <engine/core/assets/assetDatabase.h>
-#include <engine/core/components/animatorComponent.h>
-#include <engine/core/components/inputContextComponent.h>
-#include <engine/core/components/nameComponent.h>
-#include <engine/core/components/transformComponent.h>
-#include <engine/core/hierarchy/hierarchy.h>
-#include <engine/core/particles/particleEffect.h>
-#include <engine/core/reflection/reflection.h>
-#include <engine/core/util/fatalError.h>
-#include <engine/runtime/assetStore/assetStore.h>
-#include <engine/runtime/game/gameObject.h>
-#include <engine/runtime/input/input.h>
-#include <engine/runtime/rendering/modules/particleModule.h>
-#include <engine/runtime/rendering/renderSystem.h>
-#include <engine/runtime/rendering/standardScene.h>
-#include <engine/runtime/sceneManager/scene.h>
-#include <engine/runtime/sceneManager/sceneManager.h>
-
-#include <filesystem>
-#include <fstream>
+#include <glm/glm/ext/vector_float2.hpp>
+#include <SDL_scancode.h>
 
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <thread>
 #include <type_traits>
@@ -52,8 +61,10 @@ struct World
   {
     Entity entity = scene.createEntity();
     entity.addComponent<NameComponent>(name);
+
     if (parent.isValid())
       hierarchy::setParent(entity, parent);
+
     return entity;
   }
 };
@@ -82,10 +93,13 @@ protected:
   {
     if (updates)
       ++*updates;
+
     for (int i = 0; i < spawn; ++i)
       scene().createObject<Actor>().updates = updates;
+
     if (victim)
       scene().destroyObject(std::exchange(victim, nullptr));
+
     if (destroySelf)
       scene().destroyObject(this);
   }
@@ -163,6 +177,7 @@ protected:
   void update(double) override
   {
     std::vector<int>& now = seen.emplace_back();
+
     for (const BeatEvent& beat : m_beats.read())
       now.push_back(beat.number);
   }
@@ -246,6 +261,7 @@ protected:
   {
     seen.push_back(std::move(m_told));
     m_told.clear();
+
     if (seen.size() == 1)
       m_asks.request(asking, AskRequest{});
   }
@@ -397,6 +413,7 @@ std::string base64(const std::vector<uint8_t>& bytes)
   static const char* digits =
       "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
   std::string out;
+
   for (std::size_t i = 0; i < bytes.size(); i += 3)
   {
     const uint32_t n = (bytes[i] << 16) |
@@ -407,6 +424,7 @@ std::string base64(const std::vector<uint8_t>& bytes)
     out += i + 1 < bytes.size() ? digits[(n >> 6) & 63] : '=';
     out += i + 2 < bytes.size() ? digits[n & 63] : '=';
   }
+
   return out;
 }
 
@@ -458,9 +476,11 @@ std::vector<glm::vec2> particlePlaces(const ParticleEngine& particles)
   std::vector<ParticleSpriteBatch> batches;
   particles.sprites(batches);
   std::vector<glm::vec2> places;
+
   for (const ParticleSpriteBatch& batch : batches)
     for (const ParticleSprite& sprite : batch.sprites)
       places.push_back(sprite.position);
+
   return places;
 }
 } // namespace
@@ -520,11 +540,13 @@ int main()
 
     const reflect::TypeInfo* name = reflect::types().find("NameComponent");
     CHECK(name != nullptr);
+
     if (name)
     {
       const std::vector<Entity>& holders = world.scene.holdersOf(*name);
       CHECK(holders.size() == 2u && holders[0] == town && holders[1] == gate);
     }
+
     const reflect::TypeInfo notComponent{
         .name = "Settings", .kind = reflect::TypeKind::ScriptableObject};
     CHECK(world.scene.holdersOf(notComponent).empty());
@@ -723,8 +745,10 @@ int main()
       registry.setTimeScale(scale);
       registry.setMaxTimeStep(1.0 / 30.0);
       CHECK(registry.gameTime() == 0.0);
+
       for (int i = 0; i < 10; ++i)
         world.scene.update(1.0 / 60.0);
+
       CHECK(stepped.agreed);
       CHECK(frame.agreed);
       CHECK(frame.seen.size() == 10u);
@@ -765,8 +789,10 @@ int main()
     rig.addComponent<AnimatorComponent>();
     AnimatorComponent* animator = rig.getComponent<AnimatorComponent>();
     animator->clip = "Move";
+
     if (record)
       animator->source = "asset:" + record->id.toString();
+
     Entity box = scene.createEntity();
     box.addComponent<NameComponent>("Box");
     box.addComponent<TransformComponent>();
@@ -774,8 +800,10 @@ int main()
 
     ParticleModule* particles = scene.renderSystem().module<ParticleModule>();
     CHECK(particles != nullptr);
+
     if (!particles)
       continue;
+
     ParticleEffectDesc spark;
     spark.burstCount = 3;
     spark.lifetime = {10.0f, 10.0f};
@@ -882,15 +910,19 @@ int main()
     world.scene.update(1.0 / 60.0);
     CHECK(writer.sent == 6);
     CHECK(frame.seen.size() == 2u);
+
     if (frame.seen.size() == 2u)
     {
       CHECK((frame.seen[0] == std::vector<int>{1, 2, 3}));
       CHECK((frame.seen[1] == std::vector<int>{4, 5, 6}));
     }
+
     CHECK(early.seen.size() == 6u);
+
     if (early.seen.size() == 6u)
     {
       CHECK(early.seen[0].empty());
+
       for (int step = 1; step < 6; ++step)
         CHECK((early.seen[step] == std::vector<int>{step}));
     }
@@ -908,6 +940,7 @@ int main()
     writer.world().setMaxTimeStep(1.0 / 180.0);
     world.scene.update(1.0 / 60.0);
     CHECK(asker.seen.size() == 3u);
+
     if (asker.seen.size() == 3u)
     {
       CHECK(asker.seen[0].empty());
@@ -928,8 +961,10 @@ int main()
     // The flush that starts this frame destroys the object, which sends.
     world.scene.update(0.1);
     CHECK(reader.seen.size() == 2u);
+
     if (reader.seen.size() == 2u)
       CHECK((reader.seen[1] == std::vector<int>{7}));
+
     // Its one consumer read it, so the next boundary drops it, and a new
     // consumer finds nothing.
     world.scene.update(0.1);
@@ -979,6 +1014,7 @@ int main()
     world.scene.update(0.1);
     CHECK(writer.sent == 2);
     CHECK(reader.seen.size() == 2u);
+
     if (reader.seen.size() == 2u)
     {
       CHECK((reader.seen[0] == std::vector<int>{1}));

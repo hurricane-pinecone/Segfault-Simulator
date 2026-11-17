@@ -30,6 +30,13 @@ public:
   explicit PrefabSystem(StandardScene& scene);
 
   /**
+   * Destroy a spawned copy: `root` and everything below it, their game
+   * objects with them (at the scene's next flush). An invalid or dead root is
+   * ignored.
+   */
+  void despawn(const Entity& root);
+
+  /**
    * Make a copy of a prefab ("asset:<id>": a .prefab, or a model's node
    * tree) under `parent` (none: a root), its root placed at `transform`
    * (relative to the parent, as every TransformComponent is; it replaces the
@@ -41,13 +48,6 @@ public:
   Entity spawn(std::string_view prefab,
                const TransformComponent& transform,
                const Entity& parent = {});
-
-  /**
-   * Destroy a spawned copy: `root` and everything below it, their game
-   * objects with them (at the scene's next flush). An invalid or dead root is
-   * ignored.
-   */
-  void despawn(const Entity& root);
 
 private:
   StandardScene& m_scene;

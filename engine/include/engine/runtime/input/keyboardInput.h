@@ -1,6 +1,7 @@
 #pragma once
 
 #include <SDL_scancode.h>
+
 #include <array>
 #include <optional>
 #include <string_view>
@@ -112,11 +113,12 @@ std::optional<Key> keyFromName(std::string_view name);
 class KeyboardInput
 {
 public:
-  /** Poll the keyboard state (once per frame, after events are processed). */
-  void update();
-
   /** Start a frame: forget last frame's key-down events. */
   void beginFrame();
+
+  bool keyHeld(Key key) const;
+  bool keyPressed(Key key) const;
+  bool keyReleased(Key key) const;
 
   /**
    * A key-down event this frame. keyPressed() reports it even if the key was
@@ -124,9 +126,8 @@ public:
    */
   void pressKey(SDL_Scancode key);
 
-  bool keyHeld(Key key) const;
-  bool keyPressed(Key key) const;
-  bool keyReleased(Key key) const;
+  /** Poll the keyboard state (once per frame, after events are processed). */
+  void update();
 
   /**
    * Makes a key read as untouched from now on in this copy of the keyboard:

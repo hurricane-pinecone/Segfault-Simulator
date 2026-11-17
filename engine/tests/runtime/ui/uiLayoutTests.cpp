@@ -1,18 +1,30 @@
 #include "../../testHarness.h"
+#include "engine/runtime/rendering/frame.h"
+#include "engine/runtime/rendering/framePlan.h"
+#include "engine/runtime/rendering/renderTexture.h"
+#include "engine/runtime/rendering/uiDraw.h"
+#include "engine/runtime/ui/fontAtlas.h"
+#include "engine/runtime/ui/imageAtlas.h"
+#include "engine/runtime/ui/layout.h"
+#include "engine/runtime/ui/picture.h"
+#include "engine/runtime/ui/placeholder.h"
+#include "engine/runtime/ui/preview.h"
+#include "engine/runtime/ui/ui.h"
 
-#include <engine/runtime/rendering/framePlan.h>
-#include <engine/runtime/ui/fontAtlas.h>
-#include <engine/runtime/ui/imageAtlas.h>
-#include <engine/runtime/ui/layout.h>
-#include <engine/runtime/ui/placeholder.h>
-#include <engine/runtime/ui/preview.h>
-
-#include <filesystem>
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_float4.hpp>
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <filesystem>
 #include <functional>
+#include <memory>
+#include <optional>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -73,6 +85,7 @@ public:
     iconImage.level[0].size = icon.size;
     lampImage.texture = &page;
     lampImage.levels = 4;
+
     for (int i = 0; i < 4; ++i)
       lampImage.level[i] = {
           glm::vec4(0.1f * static_cast<float>(i)), glm::ivec2(64 >> i)};
@@ -81,6 +94,7 @@ public:
   {
     if (mesh)
       return &iconImage;
+
     return source == "crate.png"  ? &fileImage
            : source == "lamp.png" ? &lampImage
                                   : nullptr;
@@ -117,8 +131,10 @@ struct Board
   View body() const
   {
     std::vector<View> lines{Text(title)};
+
     for (const Row& row : rows)
       lines.push_back(HStack{row.icon, Text(row.what)});
+
     return VStack(std::move(lines));
   }
 };
@@ -192,8 +208,10 @@ const UiQuad* textQuad(const Laid& laid, const std::string& line)
     {
       if (glyph < laid.text.drawn.size() && laid.text.drawn[glyph] == line)
         return &laid.quads[i];
+
       ++glyph;
     }
+
   return nullptr;
 }
 
@@ -227,8 +245,10 @@ Laid layKept(const View& view,
 View tenLines()
 {
   std::vector<View> lines;
+
   for (int i = 0; i < 10; ++i)
     lines.push_back(Text("line" + std::to_string(i)));
+
   return VStack(std::move(lines), Alignment::Leading).spacing(0.0f);
 }
 
@@ -256,6 +276,7 @@ const Hit* clickable(const Laid& laid, Node::Kind kind)
   for (const Hit& hit : laid.hits)
     if (hit.action && sourceOf(laid, hit) && sourceOf(laid, hit)->kind == kind)
       return &hit;
+
   return nullptr;
 }
 
@@ -265,15 +286,18 @@ const Hit* barHit(const Laid& laid)
   for (const Hit& hit : laid.hits)
     if (hit.press)
       return &hit;
+
   return nullptr;
 }
 
 const Hit* scrollHit(const Laid& laid)
 {
   const Hit* found = nullptr;
+
   for (const Hit& hit : laid.hits)
     if (hit.scroll)
       found = &hit; // the innermost: the last
+
   return found;
 }
 
@@ -372,9 +396,11 @@ int main()
     Laid panel =
         lay(Text("x").padding().background(Panel()).cornerRadius(20.0f));
     bool rounded = false;
+
     for (const UiQuad& quad : panel.quads)
       rounded = rounded || (quad.kind == UiQuad::Box &&
                             near(quad.radius, 20.0f) && quad.border > 0.0f);
+
     CHECK(rounded);
   }
 
@@ -390,10 +416,13 @@ int main()
             .align(Alignment::TopLeading);
     Laid laid = lay(ui);
     std::vector<const Hit*> buttons;
+
     for (const Hit& hit : laid.hits)
       if (hit.action)
         buttons.push_back(&hit);
+
     CHECK(buttons.size() == 2u);
+
     if (buttons.size() == 2u)
     {
       CHECK(buttons[0]->enabled && !buttons[1]->enabled);
@@ -411,10 +440,12 @@ int main()
                                  Theme().buttonHovered.b,
                                  1.0f);
       bool found = false;
+
       for (const UiQuad& quad : hovered.quads)
         found = found ||
                 (quad.kind == UiQuad::Box && near(quad.color.r, hoverColor.r) &&
                  near(quad.color.g, hoverColor.g) && near(quad.color.a, 1.0f));
+
       CHECK(found);
     }
   }
@@ -429,12 +460,14 @@ int main()
                 })}.align(Alignment::TopLeading));
     int buttons = 0;
     bool named = false;
+
     for (const Hit& hit : laid.hits)
       if (hit.action)
       {
         ++buttons;
         named = named || sourceOf(laid, hit)->id == "two";
       }
+
     CHECK(buttons == 3 && named);
     CHECK(laid.text.drawn.size() == 3u);
   }
@@ -459,10 +492,13 @@ int main()
     Laid laid =
         lay(ProgressBar(0.25f).help("a quarter").align(Alignment::TopLeading));
     bool help = false;
+
     for (const Hit& hit : laid.hits)
       help = help || hit.help == "a quarter";
+
     CHECK(help);
     CHECK(laid.quads.size() == 2u); // the track, the fill
+
     if (laid.quads.size() == 2u)
       CHECK(near(laid.quads[1].rect.z, laid.quads[0].rect.z * 0.25f));
   }
@@ -478,6 +514,7 @@ int main()
                    {},
                    &images);
     CHECK(own.quads.size() == 1u);
+
     if (own.quads.size() == 1u)
     {
       CHECK(own.quads[0].kind == UiQuad::Image &&
@@ -485,6 +522,7 @@ int main()
       CHECK(near(own.quads[0].rect.z, 64.0f) &&
             near(own.quads[0].rect.w, 32.0f));
     }
+
     // Framed 32 x 32: 32 x 16, in the frame's middle (the frame placed by
     // its stack: a frame's own align() lines its content up too).
     Laid framed = lay(VStack{Image("crate.png").frame(32.0f, 32.0f)}.align(
@@ -512,8 +550,10 @@ int main()
         {},
         &images);
     int pictures = 0;
+
     for (const UiQuad& quad : button.quads)
       pictures += quad.kind == UiQuad::Image;
+
     CHECK(pictures == 1);
     // None to show: nothing drawn, no room taken (but the stack's spacing).
     Laid missing =
@@ -581,6 +621,7 @@ int main()
     std::vector<UiQuad> quads;
     atlas.draw("m6x11", 22.0f, "a b", {10.0f, 20.0f}, glm::vec4(1.0f), quads);
     CHECK(quads.size() == 2u); // no quad for the space
+
     if (quads.size() == 2u)
     {
       CHECK(quads[0].kind == UiQuad::Glyph && quads[0].texture != nullptr);
@@ -592,10 +633,13 @@ int main()
       // The glyph is there: some of its pixels covered.
       const UiTexture& texture = *quads[0].texture;
       bool covered = false;
+
       for (std::size_t i = 3; i < texture.pixels.size(); i += 4)
         covered = covered || texture.pixels[i] > 200;
+
       CHECK(covered);
     }
+
     // Another size: its own texture.
     std::vector<UiQuad> bigger;
     atlas.draw("m6x11", 44.0f, "a", {0.0f, 0.0f}, glm::vec4(1.0f), bigger);
@@ -613,6 +657,7 @@ int main()
         [&](const std::string&) { return font.string(); }, "fallback.ttf");
     // UI scaled smoothly: a new size every frame.
     std::vector<UiQuad> quads;
+
     for (int size = 10; size < 10 + 3 * int(FontAtlas::kMostFaces); ++size)
     {
       atlas.beginFrame();
@@ -620,6 +665,7 @@ int main()
       atlas.draw(
           "m6x11", float(size), "a", {0.0f, 0.0f}, glm::vec4(1.0f), quads);
     }
+
     CHECK(atlas.faceCount() <= FontAtlas::kMostFaces + 1);
     // This frame's text is still drawable: its texture wasn't dropped.
     CHECK(quads.size() == 1u && quads[0].texture != nullptr &&
@@ -655,9 +701,11 @@ int main()
     CHECK(textQuad(laid, "Jobs") && textQuad(laid, "What 2"));
     // The pictures: boxes 32 points square, with nothing to look up.
     int boxes = 0;
+
     for (const UiQuad& quad : laid.quads)
       boxes += quad.kind != UiQuad::Glyph && near(quad.rect.z, 32.0f) &&
                near(quad.rect.w, 32.0f);
+
     CHECK(boxes == 2);
 
     // An optional gets one; a variant fills what it holds (the first, made
@@ -712,14 +760,18 @@ int main()
     Laid laid = lay(ui);
     const Hit* slider = nullptr;
     const Hit* toggle = nullptr;
+
     for (const Hit& hit : laid.hits)
     {
       if (hit.drag)
         slider = &hit;
+
       if (hit.action)
         toggle = &hit;
     }
+
     CHECK(slider && toggle);
+
     if (slider && toggle)
     {
       CHECK(near(slider->rect.width, 160.0f) &&
@@ -747,6 +799,7 @@ int main()
 
     // Disabled: neither does anything.
     Laid off = lay(ui.disabled());
+
     for (const Hit& hit : off.hits)
       CHECK(!hit.drag && !hit.action);
   }
@@ -809,8 +862,10 @@ int main()
     Laid laid = layKept(ui, state);
     const Hit* view = scrollHit(laid);
     CHECK(view && view->scroll);
+
     if (!view || !view->scroll)
       break;
+
     CHECK(!view->scroll({0.0f, -10.0f})); // at the top already
     const uint64_t before = state.changes;
     CHECK(view->scroll({0.0f, 50.0f}));
@@ -848,6 +903,7 @@ int main()
     // Pressed on the track above the thumb: a page up.
     const Hit* bar = barHit(end);
     CHECK(bar && bar->press && bar->drag);
+
     if (bar && bar->press && bar->drag)
     {
       bar->press({bar->rect.x + 2.0f, bar->rect.y + 5.0f});
@@ -856,6 +912,7 @@ int main()
       Laid paged = layKept(ui, state, 1.0f);
       const Hit* top = barHit(paged);
       CHECK(top != nullptr);
+
       if (top)
       {
         // The track's 94 long (3 in from each end), the thumb 47 at the top.
@@ -874,24 +931,30 @@ int main()
   {
     State state;
     std::vector<View> buttons;
+
     for (int i = 0; i < 6; ++i)
       buttons.push_back(Button("b" + std::to_string(i), [] {}));
+
     const View ui = ScrollView(VStack(std::move(buttons)).spacing(0.0f))
                         .scrollOffset(17.0f)
                         .maxHeight(100.0f)
                         .align(Alignment::TopLeading);
     Laid laid = layKept(ui, state);
     std::vector<const Hit*> clickable;
+
     for (const Hit& hit : laid.hits)
       if (hit.action)
         clickable.push_back(&hit);
+
     // Buttons 34 high, scrolled 17: half the first, the second and third,
     // most of the fourth.
     CHECK(clickable.size() == 4u);
+
     if (!clickable.empty())
     {
       CHECK(near(clickable[0]->rect.y, 0.0f) &&
             near(clickable[0]->rect.height, 17.0f));
+
       for (const Hit* hit : clickable)
         CHECK(hit->rect.y >= 0.0f && hit->rect.y + hit->rect.height <= 100.01f);
     }
@@ -913,9 +976,11 @@ int main()
     CHECK(innermost && innermost->scroll({0.0f, 150.0f}));
     CHECK(innermost && !innermost->scroll({0.0f, 10.0f}));
     const Hit* outer = nullptr;
+
     for (const Hit& hit : laid.hits)
       if (hit.scroll && hit.rect.height > 60.0f)
         outer = &hit;
+
     CHECK(outer && outer->scroll({0.0f, 10.0f}));
   }
 
@@ -939,10 +1004,13 @@ int main()
     const Hit* header = clickable(closed, Node::Kind::Disclosure);
     CHECK(header && header->action && near(header->rect.width, 300.0f));
     bool chevron = false;
+
     for (const UiQuad& quad : closed.quads)
       chevron =
           chevron || (quad.kind == UiQuad::Chevron && near(quad.radius, 0.0f));
+
     CHECK(chevron);
+
     if (!header || !header->action)
       break;
 
@@ -963,8 +1031,10 @@ int main()
     // Closed again by its header, and remembered while it's laid out.
     const Hit* again = clickable(open, Node::Kind::Disclosure);
     CHECK(again && again->action);
+
     if (again && again->action)
       click(open, again);
+
     Laid shut = layKept(ui, state, 1.0f);
     CHECK(!textQuad(shut, "rain"));
     Laid still = layKept(ui, state, 1.0f);
@@ -999,20 +1069,27 @@ int main()
           !textQuad(laid, "c1"));
     // The accessory's in front of its header: it's what a click there hits.
     const Hit* reset = nullptr;
+
     for (const Hit& hit : laid.hits)
       if (hit.action && hit.rect.contains({290.0f, 10.0f}))
         reset = &hit;
+
     CHECK(reset && sourceOf(laid, *reset)->kind == Node::Kind::Button);
+
     if (reset)
       click(laid, reset);
+
     CHECK(resets == 1);
 
     // B opened: A closes.
     std::vector<const Hit*> headers;
+
     for (const Hit& hit : laid.hits)
       if (hit.action && sourceOf(laid, hit)->kind == Node::Kind::Disclosure)
         headers.push_back(&hit);
+
     CHECK(headers.size() == 3u);
+
     if (headers.size() == 3u)
     {
       click(laid, headers[1]);
@@ -1093,6 +1170,7 @@ int main()
         if (hit.action && nodeAt(*view.node(), hit.source)->kind == kind &&
             which-- == 0)
           return &hit;
+
       return nullptr;
     }
   };
@@ -1101,20 +1179,24 @@ int main()
   {
     Laid fresh = lay(kept.view, {1000.0f, 500.0f}, 1.0f, pointer);
     const std::vector<UiQuad>& quads = *kept.cache.quads();
+
     if (quads.size() != fresh.quads.size() ||
         kept.cache.hits().size() != fresh.hits.size())
       return false;
+
     for (std::size_t i = 0; i < quads.size(); ++i)
       if (quads[i].rect != fresh.quads[i].rect ||
           quads[i].color != fresh.quads[i].color ||
           quads[i].clip != fresh.quads[i].clip)
         return false;
+
     for (std::size_t i = 0; i < fresh.hits.size(); ++i)
       if (kept.cache.hits()[i].id != fresh.hits[i].id ||
           kept.cache.hits()[i].source != fresh.hits[i].source ||
           !near(kept.cache.hits()[i].rect.x, fresh.hits[i].rect.x) ||
           !near(kept.cache.hits()[i].rect.y, fresh.hits[i].rect.y))
         return false;
+
     return true;
   };
   // A HUD: a clock panel and a job board.
@@ -1175,8 +1257,10 @@ int main()
     CHECK(kept.cache.stats().kept);
     const Hit* pause = kept.clickable(Node::Kind::Button);
     CHECK(pause != nullptr);
+
     if (pause)
       pause->action(*nodeAt(*kept.view.node(), pause->source));
+
     CHECK(newer == 1 && clicks == 0);
   }
 
@@ -1188,6 +1272,7 @@ int main()
     kept.lay(hud("6:40 pm", "Patrol", &clicks));
     const Hit* eye = kept.clickable(Node::Kind::Button, 1);
     CHECK(eye != nullptr);
+
     if (!eye)
       break;
 
@@ -1217,17 +1302,21 @@ int main()
     scroller.lay(list);
     CHECK(scroller.lay(list).kept);
     const Hit* view = nullptr;
+
     for (const Hit& hit : scroller.cache.hits())
       if (hit.scroll)
         view = &hit;
+
     CHECK(view && view->scroll({0.0f, 40.0f}));
     CHECK(!scroller.lay(list, {}, 0.02f).kept);
     CHECK(!scroller.lay(list, {}, 1.0f).kept);
     CHECK(sameAsFresh(scroller) == false); // (fresh isn't scrolled)
     const UiQuad* line2 = nullptr;
+
     for (const UiQuad& quad : *scroller.cache.quads())
       if (quad.kind == UiQuad::Glyph && near(quad.rect.y, 0.0f))
         line2 = &quad;
+
     CHECK(line2 != nullptr); // line2 at the top, scrolled 40
     scroller.lay(list, {}, 1.0f);
     CHECK(scroller.lay(list, {}, 1.0f).kept);
@@ -1237,8 +1326,10 @@ int main()
     const auto lines = [](std::string last)
     {
       std::vector<View> each;
+
       for (int i = 0; i < 9; ++i)
         each.push_back(Text("line" + std::to_string(i)));
+
       each.push_back(Text(std::move(last)));
       return ScrollView(
                  VStack(std::move(each), Alignment::Leading).spacing(0.0f))
@@ -1265,8 +1356,10 @@ int main()
     const auto panel = [](bool note)
     {
       std::vector<View> rows;
+
       if (note)
         rows.push_back(Text("note"));
+
       rows.push_back(DisclosureGroup("Weather", Text("rain")));
       return VStack(std::move(rows), Alignment::Leading)
           .frame(300.0f)
@@ -1275,8 +1368,10 @@ int main()
     kept.lay(panel(false));
     const Hit* header = kept.clickable(Node::Kind::Disclosure);
     CHECK(header != nullptr);
+
     if (header)
       header->action(*nodeAt(*kept.view.node(), header->source));
+
     kept.lay(panel(false), {}, 1.0f);
     CHECK(std::find(kept.text.drawn.begin(), kept.text.drawn.end(), "rain") !=
           kept.text.drawn.end());
@@ -1301,6 +1396,7 @@ int main()
       if (quad.kind == UiQuad::Box && near(quad.color.r, color.r) &&
           near(quad.color.g, color.g) && near(quad.color.b, color.b))
         return true;
+
     return false;
   };
 
@@ -1314,8 +1410,10 @@ int main()
     Laid normal = lay(ui);
     const Hit* hit = clickable(normal, Node::Kind::Button);
     CHECK(hit != nullptr);
+
     if (!hit)
       break;
+
     CHECK(near(hit->rect.width, 80.0f) && near(hit->rect.height, 30.0f));
     CHECK(drewBox(normal.quads, Color::rgb(0, 0, 200)));
     CHECK(!drewBox(normal.quads, Theme().button));
@@ -1364,8 +1462,10 @@ int main()
     kept.lay(row(Color::white()));
     const Hit* a = kept.clickable(Node::Kind::Button);
     CHECK(a != nullptr);
+
     if (!a)
       break;
+
     CHECK(kept.lay(row(Color::white())).kept);
     Pointer pointer;
     pointer.hovered = a->id;
@@ -1388,6 +1488,7 @@ int main()
             .buttonStyle(ButtonStyle(faceOf));
     const Node& stack = *styled.node();
     CHECK(stack.children.size() == 2u);
+
     if (stack.children.size() == 2u)
     {
       CHECK(stack.children[0].node()->buttonStyle ==
@@ -1395,6 +1496,7 @@ int main()
             stack.children[0].node()->children.size() == 5u);
       CHECK(stack.children[1].node()->buttonStyle == ButtonStyle::Kind::Plain);
     }
+
     // A view with no buttons is itself, not a copy.
     const View text = Text("x");
     CHECK(text.buttonStyle(ButtonStyle(faceOf)).node() == text.node());
@@ -1406,8 +1508,10 @@ int main()
     CHECK(laid.quads.size() == 1u && laid.quads[0].kind == UiQuad::Glyph);
     const Hit* hit = clickable(laid, Node::Kind::Button);
     CHECK(hit && near(hit->rect.width, 20.0f) && near(hit->rect.height, 20.0f));
+
     if (!hit || laid.quads.empty())
       break;
+
     CHECK(near(laid.quads[0].color.r, 1.0f) &&
           near(laid.quads[0].color.a, 1.0f));
     Pointer pointer;
@@ -1439,6 +1543,7 @@ int main()
                    {},
                    &images);
     CHECK(lit.quads.size() == 1u);
+
     if (lit.quads.size() == 1u)
     {
       const UiQuad& quad = lit.quads[0];
@@ -1448,6 +1553,7 @@ int main()
       CHECK(near(quad.uv.x, 0.2f)); // the 16-pixel level
       CHECK(!quad.nearest);
     }
+
     // Tinted round it, in the colour it inherits.
     Laid inherited = lay(HStack{Image("lamp.png").frame(24.0f, 24.0f)}
                              .tint()
@@ -1504,14 +1610,18 @@ int main()
     ImageAtlas atlas;
     // 64 x 64: white, its left half clear.
     std::vector<uint8_t> icon(64 * 64 * 4, 255);
+
     for (int y = 0; y < 64; ++y)
       for (int x = 0; x < 32; ++x)
         icon[(std::size_t(y) * 64 + x) * 4 + 3] = 0;
+
     const SourceImage* first = atlas.add(icon, {64, 64});
     const SourceImage* second = atlas.add(icon, {64, 64});
     CHECK(first && second && atlas.pages() == 1u);
+
     if (!first || !second)
       break;
+
     CHECK(first->texture == second->texture);
     CHECK(first->levels == 4 && first->level[3].size == glm::ivec2(8, 8));
     CHECK(first->level[1].uv != second->level[1].uv);
@@ -1550,9 +1660,11 @@ int main()
     };
     kept.lay(ui());
     const UiQuad* quad = nullptr;
+
     for (const UiQuad& each : *kept.cache.quads())
       if (each.kind == UiQuad::Image)
         quad = &each;
+
     CHECK(quad && quad->texture == &picture->texture() &&
           near(quad->rect.z, 16.0f) && near(quad->rect.w, 8.0f));
     const uint32_t version = picture->version();
@@ -1566,9 +1678,11 @@ int main()
     const Cache::Stats& resized = kept.lay(ui());
     CHECK(!resized.kept && kept.text.drawn.empty());
     quad = nullptr;
+
     for (const UiQuad& each : *kept.cache.quads())
       if (each.kind == UiQuad::Image)
         quad = &each;
+
     CHECK(quad && near(quad->rect.z, 32.0f));
     // Another picture: another view.
     auto other = std::make_shared<Picture>(32, 16);
@@ -1587,9 +1701,11 @@ int main()
     };
     kept.lay(ui());
     const UiQuad* quad = nullptr;
+
     for (const UiQuad& each : *kept.cache.quads())
       if (each.kind == UiQuad::Image)
         quad = &each;
+
     CHECK(quad && quad->texture == &feed->texture() &&
           near(quad->rect.z, 32.0f) && near(quad->rect.w, 18.0f));
     // A new picture is the renderer's: the same views, kept.
@@ -1631,6 +1747,7 @@ int main()
     plan.finish({1000, 500}, 1024, 256, [](uint32_t) { return nullptr; });
     const auto& batches = plan.uiBatches();
     CHECK(batches.size() == 2u);
+
     if (batches.size() == 2u)
     {
       CHECK(batches[0].glyphs == &glyphs && batches[0].image == &page &&
@@ -1638,6 +1755,7 @@ int main()
       CHECK(batches[1].glyphs == &glyphs && batches[1].image == &other &&
             batches[1].count == 2u);
     }
+
     CHECK(plan.uiInstances().size() == 8u &&
           near(plan.uiInstances()[3].shape.w, 10.0f) &&
           near(plan.uiInstances()[1].shape.w, 4.0f));

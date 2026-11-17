@@ -1,7 +1,6 @@
 #include "build/headlessExport.h"
 #include "build/nodeIdUpgrade.h"
 #include "editorApp.h"
-
 #include "engine/core/logger/logger.h"
 #include "engine/core/util/cpuFeatures.h"
 
@@ -23,32 +22,45 @@ int main(int argc, char* argv[])
     // --development: a development build (its development keys work).
     const bool development = std::string_view(argv[2]) == "--development";
     const int first = development ? 3 : 2;
+
     if (argc <= first)
     {
-      LOG_ERROR("Usage: SfsEditor --export [--development] <project-folder> [output-folder]");
+      LOG_ERROR("Usage: SfsEditor --export [--development] <project-folder> "
+                "[output-folder]");
       return 1;
     }
+
     return exportHeadless(argv[first],
-                          argc > first + 1 ? std::filesystem::path(argv[first + 1]) : std::filesystem::path(),
+                          argc > first + 1
+                              ? std::filesystem::path(argv[first + 1])
+                              : std::filesystem::path(),
                           development);
   }
+
   if (argc >= 3 && std::string_view(argv[1]) == "--export-web")
-    return exportWebHeadless(argv[2], argc >= 4 ? std::filesystem::path(argv[3])
-                                                : std::filesystem::path());
+    return exportWebHeadless(
+        argv[2],
+        argc >= 4 ? std::filesystem::path(argv[3]) : std::filesystem::path());
+
   if (argc >= 3 && std::string_view(argv[1]) == "--upgrade-node-ids")
     return upgradeNodeIdsHeadless(
         argv[2], argc >= 4 && std::string_view(argv[3]) == "--check");
+
   if (argc >= 3 && std::string_view(argv[1]) == "--list-node-ids")
     return listNodeIdsHeadless(argv[2]);
+
   if (argc >= 2 && std::string_view(argv[1]) == "--fill-parts")
   {
     // Anything it doesn't know is refused: a misspelt --dry-run must not write.
     const bool dryRun = argc == 5 && std::string_view(argv[4]) == "--dry-run";
+
     if (argc < 4 || (argc > 4 && !dryRun))
     {
-      LOG_ERROR("Usage: SfsEditor --fill-parts <project-folder> <prefab|all> [--dry-run]");
+      LOG_ERROR("Usage: SfsEditor --fill-parts <project-folder> <prefab|all> "
+                "[--dry-run]");
       return 1;
     }
+
     return fillPartsHeadless(argv[2], argv[3], dryRun);
   }
 
@@ -61,14 +73,17 @@ int main(int argc, char* argv[])
         " support, which this computer's doesn't have (or its operating "
         "system doesn't enable).";
     LOG_ERROR(message);
-    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "SfsEditor", message.c_str(), nullptr);
+    SDL_ShowSimpleMessageBox(
+        SDL_MESSAGEBOX_ERROR, "SfsEditor", message.c_str(), nullptr);
     return 1;
   }
 
   EditorApp editor(argc > 1 ? std::filesystem::path(argv[1])
                             : std::filesystem::path());
+
   if (!editor.init(1600, 900))
     return 1;
+
   editor.setup();
   editor.run();
   return 0;

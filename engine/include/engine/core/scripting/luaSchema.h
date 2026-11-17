@@ -1,10 +1,12 @@
 #pragma once
 
-#include "glm/glm/ext/vector_float2.hpp"
-#include "glm/glm/ext/vector_float3.hpp"
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
+
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 // Forward-declared so this header pulls in no Lua headers -- the schema itself

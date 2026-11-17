@@ -102,7 +102,9 @@ void expectFailed(const std::source_location& where,
 {
   if (!firstFailure(where))
     return;
+
   std::string_view file = where.file_name();
+
   if (const std::size_t slash = file.find_last_of("/\\");
       slash != std::string_view::npos)
     file.remove_prefix(slash + 1);
@@ -112,21 +114,26 @@ void expectFailed(const std::source_location& where,
                               : "entity " + std::to_string(entity.getId());
   std::string message = std::string(file) + ":" + std::to_string(where.line()) +
                         ": " + who + " has no " + readableTypeName(type);
+
   if (!entity.isValid() && entity.getId() != Entity::InvalidId)
     message += " (the handle isn't a living entity)";
+
   LOG_ERROR(message);
 
   // Release: the log line and the fallback, nothing more.
   if (!debugFeatures::enabled())
     return;
+
   if (envSet("SFS_EXPECT_ABORT"))
   {
     Logger::flush();
     std::fprintf(stderr, "SFS_EXPECT_ABORT: %s\n", message.c_str());
     std::abort();
   }
+
   if (debuggerAttached())
     breakIntoDebugger();
+
   showErrorDialog(message +
                   "\n\nThe game carries on without it. The log has the "
                   "details.");

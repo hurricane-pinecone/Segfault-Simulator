@@ -5,12 +5,21 @@
 #include "engine/core/components/capsuleCollider3DComponent.h"
 #include "engine/core/components/sphereCollider3DComponent.h"
 #include "engine/core/components/transformComponent.h"
-#include "engine/core/ecs/ecs.h" // IWYU pragma: keep (Entity templates)
+#include "engine/core/ecs/ecs.h"
 #include "engine/core/hierarchy/hierarchy.h"
+#include "engine/core/rendering/debugLines.h"
+#include "engine/runtime/rendering/space2D.h"
 
-#include "glm/glm/geometric.hpp"
+#include <glm/glm/common.hpp>
+#include <glm/glm/ext/matrix_float4x4.hpp>
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
+#include <glm/glm/geometric.hpp>
 
 #include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <optional>
 
 namespace sfs::colliderLines
 {
@@ -31,12 +40,15 @@ Placement placementOf(const Entity& entity)
   const glm::mat4 world = hierarchy::worldMatrix(entity);
   Placement out;
   out.placed = world;
+
   for (int axis = 0; axis < 3; ++axis)
   {
     out.scale[axis] = glm::length(glm::vec3(world[axis]));
+
     if (out.scale[axis] > 0.0f)
       out.placed[axis] = world[axis] / out.scale[axis];
   }
+
   return out;
 }
 
@@ -96,6 +108,7 @@ void box2D(const Entity& entity,
                                centre + half,
                                {centre.x - half.x, centre.y + half.y}};
   const uint32_t color = colorOf(box.trigger);
+
   for (int i = 0; i < 4; ++i)
     out.line(space.place(corners[i], placed.position.z),
              space.place(corners[(i + 1) % 4], placed.position.z),
@@ -110,6 +123,7 @@ void append(const Entity& entity,
 {
   if (!entity.isValid() || !entity.hasComponent<TransformComponent>())
     return;
+
   if (const BoxCollider2D* box2 = entity.getComponent<BoxCollider2D>();
       space && box2)
     box2D(entity, *box2, *space, out);
@@ -117,13 +131,18 @@ void append(const Entity& entity,
   const auto* box = entity.getComponent<BoxCollider3DComponent>();
   const auto* sphere = entity.getComponent<SphereCollider3DComponent>();
   const auto* capsule = entity.getComponent<CapsuleCollider3DComponent>();
+
   if (!box && !sphere && !capsule)
     return;
+
   const Placement at = placementOf(entity);
+
   if (box)
     box3D(at, *box, out);
+
   if (sphere)
     sphere3D(at, *sphere, out);
+
   if (capsule)
     capsule3D(at, *capsule, out);
 }
@@ -133,24 +152,28 @@ std::size_t appendAll(Registry& registry,
                       DebugLines& out)
 {
   std::size_t drawn = 0;
+
   for (auto [entity, transform, boxCollider3D] :
        registry.query<TransformComponent, BoxCollider3DComponent>())
   {
     box3D(placementOf(entity), boxCollider3D, out);
     ++drawn;
   }
+
   for (auto [entity, transform, sphereCollider3D] :
        registry.query<TransformComponent, SphereCollider3DComponent>())
   {
     sphere3D(placementOf(entity), sphereCollider3D, out);
     ++drawn;
   }
+
   for (auto [entity, transform, capsuleCollider3D] :
        registry.query<TransformComponent, CapsuleCollider3DComponent>())
   {
     capsule3D(placementOf(entity), capsuleCollider3D, out);
     ++drawn;
   }
+
   if (space)
     for (auto [entity, transform, boxCollider2D] :
          registry.query<TransformComponent, BoxCollider2D>())
@@ -158,6 +181,7 @@ std::size_t appendAll(Registry& registry,
       box2D(entity, boxCollider2D, *space, out);
       ++drawn;
     }
+
   return drawn;
 }
 

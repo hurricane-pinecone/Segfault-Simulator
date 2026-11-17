@@ -1,9 +1,9 @@
 #include "../../engine/tests/testHarness.h"
-
 #include "project/project.h"
 
 #include <filesystem>
 #include <fstream>
+#include <ios>
 #include <iterator>
 #include <string>
 
@@ -11,12 +11,6 @@ namespace fs = std::filesystem;
 
 namespace
 {
-std::string read(const fs::path& path)
-{
-  std::ifstream in(path, std::ios::binary);
-  return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
-}
-
 // The .clangd editors wrote before sfs-lsp.
 const std::string kOldClangd =
     "# clangd (the editor's Code panel, and most editors): the game module's\n"
@@ -24,6 +18,12 @@ const std::string kOldClangd =
     "CompileFlags:\n"
     "  CompilationDatabase: .sfs\n"
     "  Remove: [-fno-keep-inline-dllexport] # GCC-only (MinGW builds)\n";
+
+std::string read(const fs::path& path)
+{
+  std::ifstream in(path, std::ios::binary);
+  return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+}
 } // namespace
 
 int main()
@@ -47,8 +47,10 @@ int main()
   {
     const auto project = Project::create(work / "Old", "Old");
     CHECK(project.has_value());
+
     if (!project)
       continue;
+
     std::ofstream(work / "Old/.clangd", std::ios::binary) << kOldClangd;
     CHECK(project->ensureBuildFiles());
     CHECK(read(work / "Old/.clangd").find("Suppress: [unknown-attributes]") !=
@@ -65,10 +67,11 @@ int main()
     const auto project = Project::create(work / "Tree", "Tree");
     CHECK(project.has_value());
     const std::string clangd = read(work / "Tree/.clangd");
-    // What a project's adds to the old default is the SFS tree's whole file.
+    // What a project's adds to the old default is how the SFS tree's file
+    // starts; the tree adds its own include checks after it.
     CHECK(clangd.size() > kOldClangd.size() &&
-          clangd.substr(kOldClangd.size()) ==
-              read(fs::path(SFS_SOURCE_DIR) / ".clangd"));
+          read(fs::path(SFS_SOURCE_DIR) / ".clangd")
+              .starts_with(clangd.substr(kOldClangd.size())));
   }
 
   fs::remove_all(work);

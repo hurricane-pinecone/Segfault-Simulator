@@ -1,8 +1,8 @@
 #pragma once
 
-#include "glm/glm/ext/matrix_float4x4.hpp"
-#include "glm/glm/ext/vector_float3.hpp"
-#include "glm/glm/ext/vector_float4.hpp"
+#include <glm/glm/ext/matrix_float4x4.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
+#include <glm/glm/ext/vector_float4.hpp>
 
 #include <limits>
 
@@ -15,18 +15,18 @@ namespace sfs
  */
 struct Aabb
 {
-  glm::vec3 min{std::numeric_limits<float>::max()};
-  glm::vec3 max{std::numeric_limits<float>::lowest()};
+  glm::vec3 center() const { return (min + max) * 0.5f; }
 
   bool empty() const { return min.x > max.x || min.y > max.y || min.z > max.z; }
 
-  glm::vec3 center() const { return (min + max) * 0.5f; }
+  void expand(const glm::vec3& point);
+  void expand(const Aabb& other);
 
   /** Half-size on each axis. */
   glm::vec3 extents() const { return (max - min) * 0.5f; }
 
-  void expand(const glm::vec3& point);
-  void expand(const Aabb& other);
+  /** Whether any of the box is within `radius` of `center`. */
+  bool intersectsSphere(const glm::vec3& center, float radius) const;
 
   /**
    * The box that encloses this box after an affine transform. Exact for
@@ -35,8 +35,8 @@ struct Aabb
    */
   Aabb transformed(const glm::mat4& transform) const;
 
-  /** Whether any of the box is within `radius` of `center`. */
-  bool intersectsSphere(const glm::vec3& center, float radius) const;
+  glm::vec3 min{std::numeric_limits<float>::max()};
+  glm::vec3 max{std::numeric_limits<float>::lowest()};
 };
 
 /**

@@ -4,6 +4,7 @@
 #include "engine/core/util/typeKey.h"
 
 #include <string>
+#include <string_view>
 
 namespace sfs
 {
@@ -17,6 +18,7 @@ void EventVerbs::madeOutsideCreate(std::string_view type, const char* kind)
 {
   if (m_warnedOutside)
     return;
+
   m_warnedOutside = true;
   LOG_ERROR("Events: " + detail::readableTypeName(typeid(*this)) + " made a " +
             kind + " of " + std::string(type) +
@@ -28,6 +30,7 @@ void EventVerbs::noEvents() const
 {
   if (m_warnedNoEvents)
     return;
+
   m_warnedNoEvents = true;
   LOG_ERROR("Events: " + detail::readableTypeName(typeid(*this)) +
             " used events before it had them (a system gets them as it's "

@@ -3,9 +3,9 @@
 // fails, which names the types (CMake builds one target per case and checks
 // the output). Case 0 holds the allowed uses and must compile.
 
-#include <engine/core/ecs/ecs.h>
-#include <engine/core/events/events.h>
-#include <engine/core/events/responder.h>
+#include "engine/core/ecs/ecs.h"
+#include "engine/core/events/events.h"
+#include "engine/core/events/responder.h"
 
 #include <memory>
 
@@ -103,6 +103,7 @@ protected:
            const sfs::Responder<SearchRequest>& responder)
         {
           responder.progress(StepResponse{});
+
           if (responder.superseded())
             responder.fail(FailedResponse{});
           else

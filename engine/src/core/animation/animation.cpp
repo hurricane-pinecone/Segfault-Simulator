@@ -1,34 +1,50 @@
 #include "engine/core/animation/animation.h"
 
-#include "glm/glm/common.hpp"
-#include "glm/glm/geometric.hpp"
-#include "glm/glm/gtc/quaternion.hpp"
-#include "glm/glm/matrix.hpp"
+#include "engine/core/rendering/aabb.h"
+#include "engine/core/rendering/mesh.h"
+
+#include <glm/glm/common.hpp>
+#include <glm/glm/ext/matrix_float4x4.hpp>
+#include <glm/glm/ext/quaternion_common.hpp>
+#include <glm/glm/ext/quaternion_float.hpp>
+#include <glm/glm/ext/quaternion_geometric.hpp>
+#include <glm/glm/ext/vector_float4.hpp>
+#include <glm/glm/geometric.hpp>
+#include <glm/glm/gtc/quaternion.hpp>
+#include <glm/glm/matrix.hpp>
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
+#include <span>
+#include <string>
+#include <string_view>
 #include <unordered_set>
+#include <vector>
 
 namespace sfs
 {
+
+std::vector<std::string> AnimationSet::animatedNodes() const
+{
+  std::vector<std::string> nodes;
+  std::unordered_set<std::string> seen;
+
+  for (const AnimationClip& clip : clips)
+    for (const AnimationChannel& channel : clip.channels)
+      if (seen.insert(channel.node).second)
+        nodes.push_back(channel.node);
+
+  return nodes;
+}
 
 const AnimationClip* AnimationSet::find(std::string_view name) const
 {
   for (const AnimationClip& clip : clips)
     if (clip.name == name)
       return &clip;
-  return nullptr;
-}
 
-std::vector<std::string> AnimationSet::animatedNodes() const
-{
-  std::vector<std::string> nodes;
-  std::unordered_set<std::string> seen;
-  for (const AnimationClip& clip : clips)
-    for (const AnimationChannel& channel : clip.channels)
-      if (seen.insert(channel.node).second)
-        nodes.push_back(channel.node);
-  return nodes;
+  return nullptr;
 }
 
 namespace
@@ -43,16 +59,122 @@ glm::vec4 normalisedRotation(glm::vec4 v)
 }
 } // namespace
 
+glm::mat4 JointPose::matrix() const
+{
+  glm::mat4 m = glm::mat4_cast(rotation);
+  m[0] *= scale.x;
+  m[1] *= scale.y;
+  m[2] *= scale.z;
+  m[3] = glm::vec4(translation, 1.0f);
+  return m;
+}
+
+void AnimationPlayback::clear()
+{
+  m_layers.clear();
+  m_fadeRate = 0.0f;
+}
+
+void AnimationPlayback::fade(float seconds)
+{
+  if (m_layers.empty())
+    return;
+
+  Layer& newest = m_layers.back();
+  newest.weight =
+      m_fadeRate > 0.0f
+          ? std::min(newest.weight + std::max(seconds, 0.0f) * m_fadeRate, 1.0f)
+          : 1.0f;
+
+  if (newest.weight >= 1.0f - 1e-4f)
+  {
+    newest.weight = 1.0f;
+    m_layers.erase(m_layers.begin(), m_layers.end() - 1);
+    m_fadeRate = 0.0f;
+    return;
+  }
+
+  float others = 0.0f;
+
+  for (std::size_t i = 0; i + 1 < m_layers.size(); ++i)
+    others += m_layers[i].weight;
+
+  const float left = 1.0f - newest.weight;
+
+  for (std::size_t i = 0; i + 1 < m_layers.size(); ++i)
+    m_layers[i].weight = others > 0.0f
+                             ? m_layers[i].weight * left / others
+                             : left / static_cast<float>(m_layers.size() - 1);
+
+  // Those faded all the way out go (never the newest).
+  for (std::size_t i = m_layers.size() - 1; i-- > 0;)
+    if (m_layers[i].weight < 1e-4f)
+      m_layers.erase(m_layers.begin() + static_cast<std::ptrdiff_t>(i));
+}
+
+void AnimationPlayback::play(std::string_view clip,
+                             float fadeSeconds,
+                             float time)
+{
+  if (!m_layers.empty() && m_layers.back().clip == clip)
+    return;
+
+  if (fadeSeconds <= 0.0f || m_layers.empty())
+  {
+    m_layers.clear();
+    m_layers.push_back({std::string(clip), std::max(time, 0.0f), 1.0f});
+    m_fadeRate = 0.0f;
+    return;
+  }
+
+  // A clip fading out that comes back picks up where it is.
+  float weight = 0.0f;
+  float at = std::max(time, 0.0f);
+
+  for (auto it = m_layers.begin(); it != m_layers.end(); ++it)
+    if (it->clip == clip)
+    {
+      weight = it->weight;
+      at = it->time;
+      m_layers.erase(it);
+      break;
+    }
+
+  if (m_layers.size() + 1 > kMostLayers)
+    m_layers.erase(m_layers.begin(),
+                   m_layers.begin() + static_cast<std::ptrdiff_t>(
+                                          m_layers.size() + 1 - kMostLayers));
+
+  m_layers.push_back({std::string(clip), at, weight});
+  m_fadeRate = 1.0f / fadeSeconds;
+  // The rest share what's left, in proportion.
+  fade(0.0f);
+}
+
+float AnimationPlayback::wrapTime(float seconds, float duration, bool loop)
+{
+  if (duration <= 0.0f)
+    return std::max(seconds, 0.0f);
+
+  if (!loop)
+    return std::clamp(seconds, 0.0f, duration);
+
+  const float wrapped = std::fmod(seconds, duration);
+  return wrapped < 0.0f ? wrapped + duration : wrapped;
+}
+
 glm::vec4 sampleChannel(const AnimationChannel& channel, float time)
 {
   const std::size_t keys = channel.times.size();
   const bool cubic =
       channel.interpolation == AnimationInterpolation::CubicSpline;
   const std::size_t stride = cubic ? 3 : 1;
+
   if (keys == 0 || channel.values.size() < keys * stride)
     return channel.path == AnimationPath::Rotation ? glm::vec4(0, 0, 0, 1)
            : channel.path == AnimationPath::Scale  ? glm::vec4(1, 1, 1, 0)
                                                    : glm::vec4(0.0f);
+
   const bool rotation = channel.path == AnimationPath::Rotation;
   // A key's value (the middle of a cubic key's three).
   const auto value = [&](std::size_t key)
@@ -62,6 +184,7 @@ glm::vec4 sampleChannel(const AnimationChannel& channel, float time)
 
   if (keys == 1 || time <= channel.times.front())
     return finish(value(0));
+
   if (time >= channel.times.back())
     return finish(value(keys - 1));
 
@@ -84,6 +207,7 @@ glm::vec4 sampleChannel(const AnimationChannel& channel, float time)
     if (rotation)
       return fromQuat(glm::normalize(
           glm::slerp(toQuat(value(previous)), toQuat(value(next)), t)));
+
     return glm::mix(value(previous), value(next), t);
   case AnimationInterpolation::CubicSpline:
   {
@@ -100,17 +224,8 @@ glm::vec4 sampleChannel(const AnimationChannel& channel, float time)
                   (t3 - t2) * m1);
   }
   }
-  return finish(value(previous));
-}
 
-glm::mat4 JointPose::matrix() const
-{
-  glm::mat4 m = glm::mat4_cast(rotation);
-  m[0] *= scale.x;
-  m[1] *= scale.y;
-  m[2] *= scale.z;
-  m[3] = glm::vec4(translation, 1.0f);
-  return m;
+  return finish(value(previous));
 }
 
 void applyClip(const AnimationClip& clip,
@@ -119,14 +234,18 @@ void applyClip(const AnimationClip& clip,
                std::span<JointPose> poses)
 {
   const std::size_t count = std::min(clip.channels.size(), targets.size());
+
   for (std::size_t i = 0; i < count; ++i)
   {
     const int target = targets[i];
+
     if (target < 0 || static_cast<std::size_t>(target) >= poses.size())
       continue;
+
     const AnimationChannel& channel = clip.channels[i];
     const glm::vec4 v = sampleChannel(channel, time);
     JointPose& pose = poses[static_cast<std::size_t>(target)];
+
     switch (channel.path)
     {
     case AnimationPath::Translation:
@@ -147,10 +266,13 @@ JointPose blendPoses(std::span<const JointPose> poses,
 {
   if (poses.empty())
     return {};
+
   const std::size_t count = std::min(poses.size(), weights.size());
   float total = 0.0f;
+
   for (std::size_t i = 0; i < count; ++i)
     total += std::max(weights[i], 0.0f);
+
   if (total <= 0.0f)
     return poses.front();
 
@@ -159,100 +281,26 @@ JointPose blendPoses(std::span<const JointPose> poses,
   out.scale = glm::vec3(0.0f);
   glm::vec4 rotation(0.0f);
   const glm::vec4 first = fromQuat(poses.front().rotation);
+
   for (std::size_t i = 0; i < count; ++i)
   {
     const float w = std::max(weights[i], 0.0f) / total;
+
     if (w <= 0.0f)
       continue;
+
     out.translation += poses[i].translation * w;
     out.scale += poses[i].scale * w;
     glm::vec4 q = fromQuat(poses[i].rotation);
+
     if (glm::dot(q, first) < 0.0f)
       q = -q; // the same turn the short way round
+
     rotation += q * w;
   }
+
   out.rotation = toQuat(normalisedRotation(rotation));
   return out;
-}
-
-float AnimationPlayback::wrapTime(float seconds, float duration, bool loop)
-{
-  if (duration <= 0.0f)
-    return std::max(seconds, 0.0f);
-  if (!loop)
-    return std::clamp(seconds, 0.0f, duration);
-  const float wrapped = std::fmod(seconds, duration);
-  return wrapped < 0.0f ? wrapped + duration : wrapped;
-}
-
-void AnimationPlayback::play(std::string_view clip,
-                             float fadeSeconds,
-                             float time)
-{
-  if (!m_layers.empty() && m_layers.back().clip == clip)
-    return;
-  if (fadeSeconds <= 0.0f || m_layers.empty())
-  {
-    m_layers.clear();
-    m_layers.push_back({std::string(clip), std::max(time, 0.0f), 1.0f});
-    m_fadeRate = 0.0f;
-    return;
-  }
-  // A clip fading out that comes back picks up where it is.
-  float weight = 0.0f;
-  float at = std::max(time, 0.0f);
-  for (auto it = m_layers.begin(); it != m_layers.end(); ++it)
-    if (it->clip == clip)
-    {
-      weight = it->weight;
-      at = it->time;
-      m_layers.erase(it);
-      break;
-    }
-  if (m_layers.size() + 1 > kMostLayers)
-    m_layers.erase(m_layers.begin(),
-                   m_layers.begin() + static_cast<std::ptrdiff_t>(
-                                          m_layers.size() + 1 - kMostLayers));
-  m_layers.push_back({std::string(clip), at, weight});
-  m_fadeRate = 1.0f / fadeSeconds;
-  // The rest share what's left, in proportion.
-  fade(0.0f);
-}
-
-void AnimationPlayback::clear()
-{
-  m_layers.clear();
-  m_fadeRate = 0.0f;
-}
-
-void AnimationPlayback::fade(float seconds)
-{
-  if (m_layers.empty())
-    return;
-  Layer& newest = m_layers.back();
-  newest.weight =
-      m_fadeRate > 0.0f
-          ? std::min(newest.weight + std::max(seconds, 0.0f) * m_fadeRate, 1.0f)
-          : 1.0f;
-  if (newest.weight >= 1.0f - 1e-4f)
-  {
-    newest.weight = 1.0f;
-    m_layers.erase(m_layers.begin(), m_layers.end() - 1);
-    m_fadeRate = 0.0f;
-    return;
-  }
-  float others = 0.0f;
-  for (std::size_t i = 0; i + 1 < m_layers.size(); ++i)
-    others += m_layers[i].weight;
-  const float left = 1.0f - newest.weight;
-  for (std::size_t i = 0; i + 1 < m_layers.size(); ++i)
-    m_layers[i].weight = others > 0.0f
-                             ? m_layers[i].weight * left / others
-                             : left / static_cast<float>(m_layers.size() - 1);
-  // Those faded all the way out go (never the newest).
-  for (std::size_t i = m_layers.size() - 1; i-- > 0;)
-    if (m_layers[i].weight < 1e-4f)
-      m_layers.erase(m_layers.begin() + static_cast<std::ptrdiff_t>(i));
 }
 
 void skinPalette(const MeshSkin& skin,
@@ -262,6 +310,7 @@ void skinPalette(const MeshSkin& skin,
 {
   const glm::mat4 toMesh = glm::inverse(meshModel);
   out.resize(skin.joints.size());
+
   for (std::size_t j = 0; j < out.size(); ++j)
   {
     const glm::mat4 joint = j < jointModels.size() ? jointModels[j] : meshModel;
@@ -275,9 +324,11 @@ Aabb skinnedBounds(const MeshSkin& skin, std::span<const glm::mat4> palette)
 {
   Aabb bounds;
   const std::size_t count = std::min(skin.jointBounds.size(), palette.size());
+
   for (std::size_t j = 0; j < count; ++j)
     if (!skin.jointBounds[j].empty())
       bounds.expand(skin.jointBounds[j].transformed(palette[j]));
+
   return bounds;
 }
 
@@ -287,6 +338,7 @@ void skinPositions(std::span<const glm::vec3> positions,
                    std::vector<glm::vec3>& out)
 {
   out.resize(positions.size());
+
   for (std::size_t v = 0; v < positions.size(); ++v)
   {
     if (v >= weights.size())
@@ -294,18 +346,23 @@ void skinPositions(std::span<const glm::vec3> positions,
       out[v] = positions[v];
       continue;
     }
+
     const SkinWeights& skin = weights[v];
     glm::vec3 sum(0.0f);
     float total = 0.0f;
+
     for (int i = 0; i < 4; ++i)
     {
       const float w = skin.weights[i];
+
       if (w <= 0.0f || skin.joints[i] >= palette.size())
         continue;
+
       sum += w *
              glm::vec3(palette[skin.joints[i]] * glm::vec4(positions[v], 1.0f));
       total += w;
     }
+
     out[v] = total > 1e-6f ? sum / total : positions[v];
   }
 }
@@ -316,6 +373,7 @@ void computeJointBounds(MeshSkin& skin,
 {
   skin.jointBounds.assign(skin.joints.size(), Aabb{});
   const std::size_t count = std::min(vertices.size(), weights.size());
+
   for (std::size_t v = 0; v < count; ++v)
     for (int i = 0; i < 4; ++i)
       if (weights[v].weights[i] > 0.0f &&

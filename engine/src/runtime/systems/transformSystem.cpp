@@ -2,9 +2,14 @@
 
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/components/worldTransformComponent.h"
-#include "engine/core/ecs/ecs.h" // IWYU pragma: keep (Entity templates)
+#include "engine/core/ecs/ecs.h"
+#include "engine/core/ecs/hierarchyLinks.h"
 #include "engine/core/hierarchy/hierarchy.h"
 #include "engine/core/util/debugFeatures.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <vector>
 
 namespace sfs
 {
@@ -27,7 +32,7 @@ void TransformSystem::onEntityRemoved(const Entity& entity)
 
 void TransformSystem::render()
 {
-  constexpr Entity::EntityId kNone = HierarchyLinks::kNone;
+  constexpr Entity::EntityId NONE = HierarchyLinks::kNone;
   const std::vector<HierarchyLinks::Placed>& order =
       hierarchy::preorder(*registry);
   m_above.resize(order.size());
@@ -35,29 +40,35 @@ void TransformSystem::render()
   // The preorder lists living entities only.
   const auto transforms = registry->finder<TransformComponent>();
   const auto caches = registry->finder<WorldTransformComponent>();
+
   for (std::size_t pos = 0; pos < order.size(); ++pos)
   {
     const HierarchyLinks::Placed& placed = order[pos];
     const Above above =
-        placed.parentPos == kNone ? Above{} : m_above[placed.parentPos];
+        placed.parentPos == NONE ? Above{} : m_above[placed.parentPos];
     const TransformComponent* local = transforms(placed.id);
+
     if (!local)
     {
       m_above[pos] = above; // it only groups
       continue;
     }
+
     // Under an entity with no cache yet, or without one itself: not made
     // until both have one, so it's read fresh.
     WorldTransformComponent* cache = caches(placed.id);
-    if (!cache || (!above.cache && above.id != kNone))
+
+    if (!cache || (!above.cache && above.id != NONE))
     {
       if (cache)
         cache->version = 0;
+
       m_above[pos] = {nullptr, placed.id};
       continue;
     }
 
     const uint64_t hash = hierarchy::transformHash(*local);
+
     if (!hierarchy::cacheCurrent(*cache, hash, above.id) ||
         (above.cache && above.cache->version == pass))
     {
@@ -67,8 +78,10 @@ void TransformSystem::render()
       cache->parent = above.id;
       cache->version = pass;
     }
+
     m_above[pos] = {cache, placed.id};
   }
+
   if (++m_pass == 0)
     m_pass = 1;
 
@@ -79,6 +92,7 @@ void TransformSystem::render()
 void TransformSystem::checkCaches()
 {
   const auto caches = registry->finder<WorldTransformComponent>();
+
   for (const Entity& entity : getEntities())
     if (const WorldTransformComponent* cache = caches(entity.getId());
         cache && cache->version != 0)

@@ -2,6 +2,8 @@
 
 #include "lints.h"
 
+#include <tree_sitter/api.h>
+
 #include <cstdint>
 #include <filesystem>
 #include <string>

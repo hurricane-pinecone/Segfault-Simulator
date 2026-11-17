@@ -4,6 +4,8 @@
 #include "engine/core/rendering/aabb.h"
 #include "engine/core/rendering/camera.h"
 
+#include <glm/glm/ext/vector_float3.hpp>
+
 #include <cstddef>
 #include <optional>
 

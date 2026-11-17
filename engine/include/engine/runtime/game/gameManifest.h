@@ -14,6 +14,12 @@ namespace sfs
  */
 struct GameManifest
 {
+  /** Read `folder/game.json`; nothing (logged) if missing or invalid. */
+  static std::optional<GameManifest> read(const std::filesystem::path& folder);
+
+  /** Write `folder/game.json`. */
+  bool write(const std::filesystem::path& folder) const;
+
   static constexpr const char* kFileName = "game.json";
   static constexpr int kFormatVersion = 1;
 
@@ -37,12 +43,6 @@ struct GameManifest
   // (Game::setDevKeys; e.g. F8 switches visual styles). Off for a game to
   // ship.
   bool development = false;
-
-  /** Read `folder/game.json`; nothing (logged) if missing or invalid. */
-  static std::optional<GameManifest> read(const std::filesystem::path& folder);
-
-  /** Write `folder/game.json`. */
-  bool write(const std::filesystem::path& folder) const;
 };
 
 } // namespace sfs

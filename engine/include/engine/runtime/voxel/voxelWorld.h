@@ -3,17 +3,21 @@
 #include "engine/core/ecs/system.h"
 #include "engine/core/rendering/iTerrainSurfaceSource.h"
 #include "engine/core/rendering/iWaterSurfaceSource.h"
+#include "engine/core/voxel/blockType.h"
 #include "engine/core/voxel/voxelChunk.h"
 #include "engine/core/voxel/voxelView.h"
-#include "engine/core/voxel/waterCell.h"
 #include "engine/core/voxel/waterChunk.h"
 #include "engine/core/voxel/waterSim.h"
-#include "glm/glm/ext/vector_int2.hpp"
-#include "glm/glm/ext/vector_int3.hpp"
+
+#include <glm/glm/ext/vector_int2.hpp>
+#include <glm/glm/ext/vector_int3.hpp>
+
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 namespace sfs
 {

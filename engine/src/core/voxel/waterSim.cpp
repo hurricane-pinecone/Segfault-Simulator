@@ -1,11 +1,16 @@
 #include "engine/core/voxel/waterSim.h"
 
+#include "engine/core/voxel/blockType.h"
 #include "engine/core/voxel/waterChunk.h"
-#include "glm/glm/common.hpp"
+
+#include <glm/glm/common.hpp>
+#include <glm/glm/ext/vector_int3.hpp>
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <unordered_set>
+#include <vector>
 
 namespace sfs
 {
@@ -26,7 +31,7 @@ struct IVec3Hash
 
 // A surface difference below this (in levels) doesn't move water -- lets a near
 // flat pool settle instead of churning one unit forever.
-constexpr float kSettleEps = 0.02f;
+constexpr float SETTLE_EPS = 0.02f;
 } // namespace
 
 void stepWater(const std::vector<glm::ivec3>& active,
@@ -55,9 +60,11 @@ void stepWater(const std::vector<glm::ivec3>& active,
   {
     std::unordered_set<glm::ivec3, IVec3Hash> seen;
     cells.reserve(active.size());
+
     for (const glm::ivec3& c : active)
       if (seen.insert(c).second)
         cells.push_back(c);
+
     std::sort(cells.begin(),
               cells.end(),
               [](const glm::ivec3& a, const glm::ivec3& b)
@@ -67,12 +74,14 @@ void stepWater(const std::vector<glm::ivec3>& active,
   for (const glm::ivec3& c : cells)
   {
     int w = grid.water(c);
+
     if (w <= 0)
       continue;
 
     // Flow down.
     const glm::ivec3 below{c.x, c.y, c.z - 1};
     const int roomBelow = grid.capacity(below) - grid.water(below);
+
     if (roomBelow > 0)
     {
       const int move = glm::min(w, roomBelow);
@@ -82,6 +91,7 @@ void stepWater(const std::vector<glm::ivec3>& active,
       touch(c);
       touch(below);
     }
+
     if (w <= 0)
       continue;
 
@@ -90,20 +100,26 @@ void stepWater(const std::vector<glm::ivec3>& active,
                                  {c.x - 1, c.y, c.z},
                                  {c.x, c.y + 1, c.z},
                                  {c.x, c.y - 1, c.z}};
+
     for (const glm::ivec3& n : horiz)
     {
       if (grid.capacity(n) <= 0)
         continue;
+
       const float diff = grid.surface(c) - grid.surface(n);
-      if (diff <= kSettleEps)
+
+      if (diff <= SETTLE_EPS)
         continue;
+
       const int room = grid.capacity(n) - grid.water(n);
+
       if (room <= 0)
         continue;
 
       int move =
           static_cast<int>(diff * static_cast<float>(unitsPerLevel) * 0.5f);
       move = glm::min(glm::min(move, w), room);
+
       if (move <= 0)
         continue;
 
@@ -112,6 +128,7 @@ void stepWater(const std::vector<glm::ivec3>& active,
       grid.setWater(c, w);
       touch(c);
       touch(n);
+
       if (w <= 0)
         break;
     }

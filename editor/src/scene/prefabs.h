@@ -1,10 +1,10 @@
 #pragma once
 
-#include "scene/unusedOverrides.h"
-
 #include "engine/core/assets/assetDatabase.h"
 #include "engine/core/ecs/entity.h"
-#include "glm/glm/ext/vector_float3.hpp"
+#include "scene/unusedOverrides.h"
+
+#include <glm/glm/ext/vector_float3.hpp>
 
 #include <filesystem>
 #include <map>
@@ -25,19 +25,22 @@ namespace prefabs
 std::string nameOf(const sfs::AssetId& id);
 
 /** The prefab asset a name means; nothing if it isn't one in the database. */
-const sfs::AssetRecord* recordOf(const EditorContext& context, const std::string& name);
+const sfs::AssetRecord* recordOf(const EditorContext& context,
+                                 const std::string& name);
 
 /** A prefab's name for people: its path in assets/, or the name itself. */
 std::string label(const EditorContext& context, const std::string& name);
 
 /**
  * Save an entity and everything below it as a new prefab in `folder`
- * (relative to the project, e.g. "prefabs"), named after the entity; the entity becomes an
- * instance of it.
+ * (relative to the project, e.g. "prefabs"), named after the entity; the entity
+ * becomes an instance of it.
  *
  * @return the prefab's id, or nothing (logged)
  */
-std::optional<sfs::AssetId> create(EditorContext& context, sfs::Entity entity, const std::filesystem::path& folder);
+std::optional<sfs::AssetId> create(EditorContext& context,
+                                   sfs::Entity entity,
+                                   const std::filesystem::path& folder);
 
 /**
  * Place an instance under `parent` (none: a root), at `position` if given
@@ -59,15 +62,20 @@ void apply(EditorContext& context, const sfs::Entity& root);
 /** Drop an instance's changes, except where it's placed. */
 void revert(EditorContext& context, const sfs::Entity& root);
 
-/** Drop one overridden field (or, with field empty, a whole added component). */
-void revertField(EditorContext& context, const sfs::Entity& entity, const std::string& component, const std::string& field);
+/** Drop one overridden field (or, with field empty, a whole added component).
+ */
+void revertField(EditorContext& context,
+                 const sfs::Entity& entity,
+                 const std::string& component,
+                 const std::string& field);
 
 /**
  * What an instance overrides on one of its entities: component -> field
  * names (an empty set: the whole component is the instance's own). Empty if
  * the entity isn't part of an instance.
  */
-std::map<std::string, std::set<std::string>> overridesOf(EditorContext& context, const sfs::Entity& entity);
+std::map<std::string, std::set<std::string>>
+overridesOf(EditorContext& context, const sfs::Entity& entity);
 
 /**
  * Point unused parts of an instance's saved entry (unusedOverrides::of()) at
@@ -79,7 +87,9 @@ std::map<std::string, std::set<std::string>> overridesOf(EditorContext& context,
  * @param root    the instance's root
  * @param moves   old path -> new path, relative to the instance
  */
-void reattachUnused(EditorContext& context, const sfs::Entity& root, const std::map<std::string, std::string>& moves);
+void reattachUnused(EditorContext& context,
+                    const sfs::Entity& root,
+                    const std::map<std::string, std::string>& moves);
 
 /**
  * Drop one unused part of an instance's saved entry, as one undoable edit (the
@@ -89,6 +99,8 @@ void reattachUnused(EditorContext& context, const sfs::Entity& root, const std::
  * @param root    the instance's root
  * @param item    the part to drop, as unusedOverrides::of() gave it
  */
-void removeUnused(EditorContext& context, const sfs::Entity& root, const unusedOverrides::Unused& item);
+void removeUnused(EditorContext& context,
+                  const sfs::Entity& root,
+                  const unusedOverrides::Unused& item);
 
 } // namespace prefabs

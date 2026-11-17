@@ -1,6 +1,6 @@
 #pragma once
 
-#include "nlohmann/json.hpp"
+#include <nlohmann/json.hpp>
 
 #include <string>
 #include <utility>
@@ -21,11 +21,11 @@ namespace sfs
  */
 struct ScriptComponent
 {
-  [[sfs::script]] std::string script;
-  nlohmann::json fields = nlohmann::json::object();
-
   ScriptComponent() = default;
   explicit ScriptComponent(std::string script) : script(std::move(script)) {}
+
+  [[sfs::script]] std::string script;
+  nlohmann::json fields = nlohmann::json::object();
 };
 
 } // namespace sfs

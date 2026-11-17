@@ -36,6 +36,7 @@ inline static std::string prettyTypeName(const char* mangled)
   #endif
 
   const std::string prefix = "sfs::";
+
   if (name.rfind(prefix, 0) == 0)
     name = name.substr(prefix.size());
 
@@ -89,36 +90,44 @@ inline static void renderModuleSetting(const ModuleSetting& setting)
   case ModuleSetting::Type::Float:
   {
     float value = setting.getFloat();
+
     if (ImGui::SliderFloat(
             setting.label.c_str(), &value, setting.min, setting.max))
       setting.setFloat(value);
+
     break;
   }
   case ModuleSetting::Type::Bool:
   {
     bool value = setting.getBool();
+
     if (ImGui::Checkbox(setting.label.c_str(), &value))
       setting.setBool(value);
+
     break;
   }
   case ModuleSetting::Type::Enum:
   {
     std::vector<const char*> options;
     options.reserve(setting.options.size());
+
     for (const auto& option : setting.options)
       options.push_back(option.c_str());
 
     int index = setting.getEnum();
+
     if (ImGui::Combo(setting.label.c_str(),
                      &index,
                      options.data(),
                      static_cast<int>(options.size())))
       setting.setEnum(index);
+
     break;
   }
   case ModuleSetting::Type::Action:
     if (ImGui::Button(setting.label.c_str()))
       setting.onInvoke();
+
     break;
   case ModuleSetting::Type::Text:
     ImGui::Text("%s: %s", setting.label.c_str(), setting.getText().c_str());
@@ -147,16 +156,20 @@ inline static void renderDebugControls(Scene* scene)
     const std::string name = prettyTypeName(typeid(owner));
 
     bool enabled = owner.enabled();
+
     if (ImGui::Checkbox(name.c_str(), &enabled))
       owner.setEnabled(enabled);
 
     const std::vector<ModuleSetting> ownerSettings = owner.settings();
+
     if (!ownerSettings.empty())
     {
       ImGui::PushID(name.c_str());
       ImGui::Indent();
+
       for (const ModuleSetting& setting : ownerSettings)
         renderModuleSetting(setting);
+
       ImGui::Unindent();
       ImGui::PopID();
     }
@@ -173,11 +186,13 @@ inline static void renderDebugControls(Scene* scene)
         if (typeid(system) == typeid(RenderSystem) ||
             typeid(system) == typeid(TransformSystem))
           return;
+
         toggle(system);
       });
 
   bool anyService = false;
   scene->forEachService([&anyService](Service&) { anyService = true; });
+
   if (anyService)
   {
     ImGui::SeparatorText("Services");
@@ -192,6 +207,7 @@ inline static void renderDebugControls(Scene* scene)
     ImGui::Text("Point lights: %zu (%zu shadowed)",
                 stats.pointLights,
                 stats.shadowedLights);
+
     for (const ModuleSetting& setting : render->settings())
       renderModuleSetting(setting);
 
@@ -204,10 +220,12 @@ inline static void renderDebugControls(Scene* scene)
         {
           const std::vector<ModuleSetting> moduleSettings =
               module.settings(context);
+
           if (moduleSettings.empty())
             return;
 
           ImGui::SeparatorText(prettyTypeName(type.name()).c_str());
+
           for (const ModuleSetting& setting : moduleSettings)
             renderModuleSetting(setting);
         });

@@ -1,10 +1,11 @@
 #pragma once
 
 #include "engine/core/rendering/aabb.h"
-#include "glm/glm/ext/matrix_float4x4.hpp"
-#include "glm/glm/ext/vector_float2.hpp"
-#include "glm/glm/ext/vector_float3.hpp"
-#include "glm/glm/ext/vector_float4.hpp"
+
+#include <glm/glm/ext/matrix_float4x4.hpp>
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
+#include <glm/glm/ext/vector_float4.hpp>
 
 #include <array>
 #include <cstdint>
@@ -44,13 +45,13 @@ struct MeshVertex
  */
 struct TextureData
 {
+  bool empty() const { return width == 0 || height == 0; }
+
   uint32_t width = 0;
   uint32_t height = 0;
   std::vector<uint8_t> rgba; // width * height * 4 bytes
   bool nearest = false;      // sample without smoothing (pixel art)
   bool linear = false;       // data, not colour: no sRGB conversion
-
-  bool empty() const { return width == 0 || height == 0; }
 };
 
 /** How a material's alpha is used (glTF's alphaMode). */
@@ -93,13 +94,13 @@ inline bool isSeeThrough(AlphaMode mode)
  */
 struct FoliageSettings
 {
+  bool operator==(const FoliageSettings&) const = default;
+
   bool enabled = false;
   float translucency = 0.5f;
   float bend = 1.0f;
   float sway = 1.0f;
   float flutter = 1.0f;
-
-  bool operator==(const FoliageSettings&) const = default;
 };
 
 /**
@@ -113,6 +114,8 @@ struct FoliageSettings
  */
 struct MeshMaterial
 {
+  bool operator==(const MeshMaterial&) const = default;
+
   glm::vec4 baseColor{1.0f}; // linear RGB, and alpha
   std::shared_ptr<const TextureData> baseTexture;
   // Metalness in blue and roughness in green (glTF's layout), multiplying the
@@ -170,8 +173,6 @@ struct MeshMaterial
   // style with the tag is active: (tag, material) pairs (see
   // MaterialAsset::variants, MeshLibrary::setMaterialVariant).
   std::vector<std::pair<std::string, std::string>> variants;
-
-  bool operator==(const MeshMaterial&) const = default;
 };
 
 /**
@@ -222,13 +223,8 @@ struct MeshSkin
  */
 struct MeshData
 {
-  std::vector<MeshVertex> vertices;
-  std::vector<uint32_t> indices;
-  std::vector<MeshSection> sections;
-  // A skinned mesh's skeleton, and each vertex's weights (as many as
-  // vertices); null and empty for a mesh that doesn't deform.
-  std::shared_ptr<const MeshSkin> skin;
-  std::vector<SkinWeights> skinWeights;
+  /** Bounds of every vertex position. */
+  Aabb bounds() const;
 
   bool empty() const { return indices.empty(); }
   bool skinned() const
@@ -237,8 +233,13 @@ struct MeshData
            skinWeights.size() == vertices.size();
   }
 
-  /** Bounds of every vertex position. */
-  Aabb bounds() const;
+  std::vector<MeshVertex> vertices;
+  std::vector<uint32_t> indices;
+  std::vector<MeshSection> sections;
+  // A skinned mesh's skeleton, and each vertex's weights (as many as
+  // vertices); null and empty for a mesh that doesn't deform.
+  std::shared_ptr<const MeshSkin> skin;
+  std::vector<SkinWeights> skinWeights;
 };
 
 /**
@@ -247,11 +248,11 @@ struct MeshData
  */
 struct MeshHandle
 {
-  uint32_t id = 0;
+  bool operator==(const MeshHandle&) const = default;
 
   bool valid() const { return id != 0; }
 
-  bool operator==(const MeshHandle&) const = default;
+  uint32_t id = 0;
 };
 
 /**
@@ -260,11 +261,11 @@ struct MeshHandle
  */
 struct MaterialHandle
 {
-  uint32_t id = 0;
+  bool operator==(const MaterialHandle&) const = default;
 
   bool valid() const { return id != 0; }
 
-  bool operator==(const MaterialHandle&) const = default;
+  uint32_t id = 0;
 };
 
 } // namespace sfs

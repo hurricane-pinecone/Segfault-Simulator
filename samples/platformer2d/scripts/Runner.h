@@ -1,6 +1,5 @@
 #pragma once
 #include <sfs/sfs.h>
-
 #include "RunDirector.h"
 
 #include <algorithm>
@@ -43,6 +42,7 @@ protected:
   void onCreate(sfs::Scene& scene) override
   {
     m_director = scene.tryFindObject<RunDirector>();
+
     // The camera follows, looking a little ahead.
     if (auto* follow = scene.findEntity("Camera")
                            .getComponent<sfs::CameraFollowComponent>())
@@ -60,9 +60,12 @@ protected:
     const bool jump = keys.keyHeld(sfs::Key::Space) ||
                       keys.keyHeld(sfs::Key::W) || keys.keyHeld(sfs::Key::Up) ||
                       keys.keyHeld(sfs::Key::K);
+
     if (jump && !m_jumpHeld)
       m_jumpQueued = jumpBuffer;
+
     m_jumpHeld = jump;
+
     if (keys.keyPressed(sfs::Key::LeftShift) ||
         keys.keyPressed(sfs::Key::RightShift) || keys.keyPressed(sfs::Key::J) ||
         keys.keyPressed(sfs::Key::X))
@@ -76,17 +79,22 @@ protected:
       if (m_director && m_director->over() &&
           entity().hasComponent<sfs::SpriteComponent>())
         entity().removeComponent<sfs::SpriteComponent>(); // in pieces
+
       return;
     }
+
     const float dt = std::min(static_cast<float>(deltaTime), 1.0f / 30.0f) *
                      m_director->timeScale();
     auto* transform = entity().getComponent<sfs::TransformComponent>();
+
     if (!sfs::expect(transform, entity()))
       return;
+
     glm::vec2 at = transform->position2D();
 
     m_coyote -= dt;
     m_jumpQueued -= dt;
+
     if (m_grounded)
     {
       m_coyote = coyoteTime;
@@ -102,17 +110,20 @@ protected:
       m_velocity = {m_facing * dashSpeed, 0.0f};
       m_director->shake(0.2f, 0.1f);
     }
+
     m_dashQueued = false;
 
     if (m_dashClock > 0.0f)
     {
       m_dashClock -= dt;
       m_trailClock -= dt;
+
       if (m_trailClock <= 0.0f)
       {
         m_director->puff("trail", at - glm::vec2(0.0f, size.y * 0.5f));
         m_trailClock = 0.03f;
       }
+
       if (m_dashClock <= 0.0f)
         m_velocity.x = m_facing * runSpeed;
     }
@@ -123,6 +134,7 @@ protected:
       const float accel = m_grounded ? groundAcceleration : airAcceleration;
       m_velocity.x +=
           std::clamp(target - m_velocity.x, -accel * dt, accel * dt);
+
       if (m_move != 0.0f)
         m_facing = m_move;
 
@@ -152,6 +164,7 @@ protected:
       const float pull =
           gravity * (rising && m_jumpHeld ? 1.0f : fallGravityScale);
       m_velocity.y = std::min(m_velocity.y + pull * dt, maxFallSpeed);
+
       // Sliding down a wall it's pushing into.
       if (m_wall != 0 && m_move == static_cast<float>(m_wall) &&
           m_velocity.y > wallSlideSpeed)
@@ -162,6 +175,7 @@ protected:
     const float fallSpeed = m_velocity.y;
     at = moveAndCollide(at, dt);
     transform->setPosition2D(at);
+
     if (m_grounded && !wasGrounded && fallSpeed > 900.0f)
     {
       m_director->puff("dust", at);
@@ -169,12 +183,59 @@ protected:
     }
 
     touch(at);
+
     if (at.y > m_director->fallLine())
       m_director->end(at);
+
     animate(dt);
   }
 
 private:
+  struct Box
+  {
+    glm::vec2 min;
+    glm::vec2 max;
+  };
+
+  // The frame for what it's doing: 0-1 idle, 2-5 run, 6 jump, 7 fall, 8 dash,
+  // 9 wall.
+  void animate(float dt)
+  {
+    auto* sprite = entity().getComponent<sfs::SpriteComponent>();
+
+    if (!sprite)
+      return;
+
+    auto* transform = entity().getComponent<sfs::TransformComponent>();
+
+    if (!sfs::expect(transform, entity()))
+      return;
+
+    m_animClock += dt;
+    int frame = 0;
+
+    if (m_dashClock > 0.0f)
+      frame = 8;
+    else if (!m_grounded && m_wall != 0)
+      frame = 9;
+    else if (!m_grounded)
+      frame = m_velocity.y < 0.0f ? 6 : 7;
+    else if (std::abs(m_velocity.x) > 40.0f)
+      frame = 2 + static_cast<int>(m_animClock * 14.0f) % 4;
+    else
+      frame = static_cast<int>(m_animClock * 2.5f) % 2;
+
+    sprite->frame = frame;
+    // Facing: the sprite turns round (scale x).
+    transform->scale.x =
+        std::abs(transform->scale.x) * (m_facing < 0.0f ? -1.0f : 1.0f);
+  }
+
+  Box box(glm::vec2 at) const
+  {
+    return {at - glm::vec2(size.x, size.y), at + glm::vec2(size.x, 0.0f)};
+  }
+
   void jump(float speed, glm::vec2 at)
   {
     m_velocity.y = -speed;
@@ -184,28 +245,12 @@ private:
     m_director->puff("dust", at);
   }
 
-  struct Box
-  {
-    glm::vec2 min;
-    glm::vec2 max;
-  };
-
-  Box box(glm::vec2 at) const
-  {
-    return {at - glm::vec2(size.x, size.y), at + glm::vec2(size.x, 0.0f)};
-  }
-
-  static bool overlaps(const Box& a, const Box& b)
-  {
-    return a.min.x < b.max.x && a.max.x > b.min.x && a.min.y < b.max.y &&
-           a.max.y > b.min.y;
-  }
-
   // Move along x, then y, stopping at solids; note the ground and walls.
   glm::vec2 moveAndCollide(glm::vec2 at, float dt)
   {
     std::vector<Box> solids;
     const Box near{at - glm::vec2(900.0f), at + glm::vec2(900.0f)};
+
     for (auto [solidObject, collider, transform] :
          scene()
              .query<sfs::SolidObject,
@@ -215,12 +260,14 @@ private:
     {
       const glm::vec2 centre = transform.position2D() + collider.offset;
       const Box b{centre - collider.half, centre + collider.half};
+
       if (overlaps(b, near))
         solids.push_back(b);
     }
 
     at.x += m_velocity.x * dt;
     m_wall = 0;
+
     for (const Box& solid : solids)
       if (overlaps(box(at), solid))
       {
@@ -228,14 +275,18 @@ private:
           at.x = solid.min.x - size.x;
         else if (m_velocity.x < 0.0f)
           at.x = solid.max.x + size.x;
+
         if (m_dashClock > 0.0f)
           m_dashClock = 0.0f;
+
         m_velocity.x = 0.0f;
       }
+
     // Touching a wall at either side (for sliding and wall jumps).
     for (const Box& solid : solids)
     {
       const Box body = box(at);
+
       if (body.max.y - 8.0f > solid.min.y && body.min.y + 8.0f < solid.max.y)
       {
         if (std::abs(body.max.x - solid.min.x) < 2.0f)
@@ -247,6 +298,7 @@ private:
 
     at.y += m_velocity.y * dt;
     m_grounded = false;
+
     for (const Box& solid : solids)
       if (overlaps(box(at), solid))
       {
@@ -257,17 +309,27 @@ private:
         }
         else
           at.y = solid.max.y + size.y;
+
         m_velocity.y = 0.0f;
       }
+
     if (m_grounded)
       m_wall = 0;
+
     return at;
+  }
+
+  static bool overlaps(const Box& a, const Box& b)
+  {
+    return a.min.x < b.max.x && a.max.x > b.min.x && a.min.y < b.max.y &&
+           a.max.y > b.min.y;
   }
 
   // Orbs, spikes, drones and pads it's touching.
   void touch(glm::vec2 at)
   {
     const Box body = box(at);
+
     for (auto [orb, value, transform] :
          scene().query<Orb, sfs::TransformComponent>())
       if (glm::distance(transform.position2D(),
@@ -278,6 +340,7 @@ private:
          scene().query<Hazard, sfs::TransformComponent>().components())
     {
       const glm::vec2 centre = transform.position2D() + hurt.offset;
+
       if (overlaps(body, {centre - hurt.half, centre + hurt.half}))
       {
         m_director->end(at);
@@ -289,10 +352,12 @@ private:
          scene().query<Drone, sfs::TransformComponent>())
     {
       const glm::vec2 centre = transform.position2D();
+
       if (!overlaps(body,
                     {centre - glm::vec2(30.0f, 22.0f),
                      centre + glm::vec2(30.0f, 22.0f)}))
         continue;
+
       if (m_dashClock > 0.0f)
         m_director->destroyDrone(drone);
       else if (m_velocity.y > 0.0f && at.y < centre.y)
@@ -315,6 +380,7 @@ private:
            scene().query<JumpPad, sfs::TransformComponent>().components())
       {
         const glm::vec2 centre = transform.position2D();
+
         if (std::abs(centre.x - at.x) < 40.0f &&
             std::abs(centre.y + 32.0f - at.y) < 40.0f)
         {
@@ -325,34 +391,6 @@ private:
           m_director->bounce(at);
         }
       }
-  }
-
-  // The frame for what it's doing: 0-1 idle, 2-5 run, 6 jump, 7 fall, 8 dash,
-  // 9 wall.
-  void animate(float dt)
-  {
-    auto* sprite = entity().getComponent<sfs::SpriteComponent>();
-    if (!sprite)
-      return;
-    auto* transform = entity().getComponent<sfs::TransformComponent>();
-    if (!sfs::expect(transform, entity()))
-      return;
-    m_animClock += dt;
-    int frame = 0;
-    if (m_dashClock > 0.0f)
-      frame = 8;
-    else if (!m_grounded && m_wall != 0)
-      frame = 9;
-    else if (!m_grounded)
-      frame = m_velocity.y < 0.0f ? 6 : 7;
-    else if (std::abs(m_velocity.x) > 40.0f)
-      frame = 2 + static_cast<int>(m_animClock * 14.0f) % 4;
-    else
-      frame = static_cast<int>(m_animClock * 2.5f) % 2;
-    sprite->frame = frame;
-    // Facing: the sprite turns round (scale x).
-    transform->scale.x =
-        std::abs(transform->scale.x) * (m_facing < 0.0f ? -1.0f : 1.0f);
   }
 
   RunDirector* m_director = nullptr;

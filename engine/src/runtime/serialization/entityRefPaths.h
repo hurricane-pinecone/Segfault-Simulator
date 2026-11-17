@@ -3,14 +3,16 @@
 // Entity reference paths, shared by SceneSerializer's halves (the forms are
 // described in sceneSerializer.h).
 
-#include "nlohmann/json.hpp"
+#include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <charconv>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <system_error>
 
 namespace sfs::entityRefs
 {
@@ -38,9 +40,11 @@ bool forEachSegment(std::string_view path, Visit&& visit)
     const std::size_t slash = std::min(path.find('/', start), path.size());
     const std::string_view segment = path.substr(start, slash - start);
     start = slash + 1;
+
     if (!segment.empty() && !visit(segment))
       return false;
   }
+
   return true;
 }
 
@@ -54,9 +58,11 @@ inline std::optional<uint32_t> segmentId(std::string_view segment)
   uint32_t id = 0;
   const auto [end, error] =
       std::from_chars(segment.data(), segment.data() + segment.size(), id);
+
   if (segment.empty() || error != std::errc() ||
       end != segment.data() + segment.size())
     return std::nullopt;
+
   return id;
 }
 
@@ -90,11 +96,15 @@ std::string relativePath(std::string_view to, std::string_view from);
 inline std::optional<uint32_t> idOf(const nlohmann::json& entry)
 {
   const auto it = entry.find("$id");
+
   if (it == entry.end() || !it->is_number_integer())
     return std::nullopt;
+
   const int64_t id = it->get<int64_t>();
+
   if (id < 0 || id > int64_t{UINT32_MAX})
     return std::nullopt;
+
   return static_cast<uint32_t>(id);
 }
 
@@ -113,11 +123,15 @@ inline constexpr const char* kSceneIdKey = "$sceneId";
 inline std::optional<uint32_t> sceneIdOf(const nlohmann::json& entry)
 {
   const auto it = entry.find(kSceneIdKey);
+
   if (it == entry.end() || !it->is_number_integer())
     return std::nullopt;
+
   const int64_t id = it->get<int64_t>();
+
   if (id < 1 || id > int64_t{UINT32_MAX})
     return std::nullopt;
+
   return static_cast<uint32_t>(id);
 }
 

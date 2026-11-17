@@ -1,11 +1,12 @@
 #include "../../engine/tests/testHarness.h"
-
 #include "assets/gltfFiles.h"
+#include "engine/core/assets/assetDatabase.h"
 
-#include "nlohmann/json.hpp"
+#include <nlohmann/json.hpp>
 
 #include <filesystem>
 #include <fstream>
+#include <string>
 
 namespace fs = std::filesystem;
 using nlohmann::json;
@@ -40,7 +41,9 @@ void writeModel(const fs::path& root)
 {
   write(root / "assets/models/a.gltf",
         json({{"buffers", json::array({{{"uri", "a.bin"}, {"byteLength", 4}}})},
-              {"images", json::array({{{"uri", "tex.png"}}, {{"uri", "data:image/png;base64,AAAA"}}})}})
+              {"images",
+               json::array({{{"uri", "tex.png"}},
+                            {{"uri", "data:image/png;base64,AAAA"}}})}})
             .dump());
   write(root / "assets/models/a.bin", "data");
   write(root / "assets/models/tex.png", "png");
@@ -53,7 +56,9 @@ int main()
   {
     TempFolder root("sfs_gltf_companion");
     writeModel(root.path);
-    sfs::AssetDatabase assets(root.path, sfs::AssetDatabase::Mode::ReadWrite, sfs::AssetDatabase::projectFolders());
+    sfs::AssetDatabase assets(root.path,
+                              sfs::AssetDatabase::Mode::ReadWrite,
+                              sfs::AssetDatabase::projectFolders());
     const sfs::AssetRecord* model = assets.findByPath("assets/models/a.gltf");
     const sfs::AssetRecord* data = assets.findByPath("assets/models/a.bin");
     CHECK(model && data);
@@ -66,28 +71,39 @@ int main()
   {
     TempFolder root("sfs_gltf_move");
     writeModel(root.path);
-    sfs::AssetDatabase assets(root.path, sfs::AssetDatabase::Mode::ReadWrite, sfs::AssetDatabase::projectFolders());
+    sfs::AssetDatabase assets(root.path,
+                              sfs::AssetDatabase::Mode::ReadWrite,
+                              sfs::AssetDatabase::projectFolders());
     const sfs::AssetId model = assets.findByPath("assets/models/a.gltf")->id;
     const sfs::AssetId data = assets.findByPath("assets/models/a.bin")->id;
 
     CHECK(gltfFiles::move(assets, model, "assets/props/crate.gltf"));
     CHECK(assets.find(model)->path == fs::path("assets/props/crate.gltf"));
-    CHECK(assets.find(data)->path == fs::path("assets/props/crate.bin")); // same id, renamed to match
+    CHECK(assets.find(data)->path ==
+          fs::path("assets/props/crate.bin")); // same id, renamed to match
     CHECK(fs::exists(root.path / "assets/props/crate.bin"));
     CHECK(!fs::exists(root.path / "assets/models/a.bin"));
     const json gltf = readJson(root.path / "assets/props/crate.gltf");
     CHECK(gltf["buffers"][0]["uri"] == "crate.bin");
-    CHECK(gltf["images"][0]["uri"] == "../models/tex.png"); // still there, found from here
+    CHECK(gltf["images"][0]["uri"] ==
+          "../models/tex.png"); // still there, found from here
     CHECK(gltf["images"][1]["uri"] == "data:image/png;base64,AAAA");
-    CHECK(fs::exists((root.path / "assets/props" / gltf["images"][0]["uri"].get<std::string>()).lexically_normal()));
+    CHECK(fs::exists((root.path / "assets/props" /
+                      gltf["images"][0]["uri"].get<std::string>())
+                         .lexically_normal()));
   }
 
-  TEST("renaming a .gltf in place should rename its .bin and leave its textures alone")
+  TEST("renaming a .gltf in place should rename its .bin and leave its "
+       "textures alone")
   {
     TempFolder root("sfs_gltf_rename");
     writeModel(root.path);
-    sfs::AssetDatabase assets(root.path, sfs::AssetDatabase::Mode::ReadWrite, sfs::AssetDatabase::projectFolders());
-    CHECK(gltfFiles::move(assets, assets.findByPath("assets/models/a.gltf")->id, "assets/models/house.gltf"));
+    sfs::AssetDatabase assets(root.path,
+                              sfs::AssetDatabase::Mode::ReadWrite,
+                              sfs::AssetDatabase::projectFolders());
+    CHECK(gltfFiles::move(assets,
+                          assets.findByPath("assets/models/a.gltf")->id,
+                          "assets/models/house.gltf"));
     const json gltf = readJson(root.path / "assets/models/house.gltf");
     CHECK(gltf["buffers"][0]["uri"] == "house.bin");
     CHECK(gltf["images"][0]["uri"] == "tex.png");
@@ -98,8 +114,11 @@ int main()
   {
     TempFolder root("sfs_gltf_delete");
     writeModel(root.path);
-    sfs::AssetDatabase assets(root.path, sfs::AssetDatabase::Mode::ReadWrite, sfs::AssetDatabase::projectFolders());
-    CHECK(gltfFiles::remove(assets, assets.findByPath("assets/models/a.gltf")->id));
+    sfs::AssetDatabase assets(root.path,
+                              sfs::AssetDatabase::Mode::ReadWrite,
+                              sfs::AssetDatabase::projectFolders());
+    CHECK(gltfFiles::remove(
+        assets, assets.findByPath("assets/models/a.gltf")->id));
     CHECK(!fs::exists(root.path / "assets/models/a.bin"));
     CHECK(assets.findByPath("assets/models/a.bin") == nullptr);
     CHECK(fs::exists(root.path / "assets/models/tex.png"));
@@ -109,8 +128,12 @@ int main()
   {
     TempFolder root("sfs_gltf_other");
     writeModel(root.path);
-    sfs::AssetDatabase assets(root.path, sfs::AssetDatabase::Mode::ReadWrite, sfs::AssetDatabase::projectFolders());
-    CHECK(gltfFiles::move(assets, assets.findByPath("assets/models/tex.png")->id, "assets/textures/tex.png"));
+    sfs::AssetDatabase assets(root.path,
+                              sfs::AssetDatabase::Mode::ReadWrite,
+                              sfs::AssetDatabase::projectFolders());
+    CHECK(gltfFiles::move(assets,
+                          assets.findByPath("assets/models/tex.png")->id,
+                          "assets/textures/tex.png"));
     CHECK(fs::exists(root.path / "assets/textures/tex.png"));
     CHECK(fs::exists(root.path / "assets/models/a.bin")); // untouched
   }

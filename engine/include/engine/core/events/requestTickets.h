@@ -59,61 +59,12 @@ struct RequestTicket
 class RequestTickets
 {
 public:
-  /** Tickets a block holds, as a power of two. */
-  static constexpr uint32_t kBlockBits = 8;
-  /** Tickets a block holds. */
-  static constexpr uint32_t kBlockSize = 1u << kBlockBits;
-  /** The most tickets a request type has at once. */
-  static constexpr uint32_t kTickets = kBlockSize * 4096;
-
-  /**
-   * Whether `ticket` still holds the request of `generation`. Any thread.
-   * @param ticket the ticket
-   * @param generation the request's generation
-   * @return whether the request is current
-   */
-  inline bool current(uint32_t ticket, uint32_t generation) const
-  {
-    const RequestTicket* found = find(ticket);
-    return found &&
-           found->word.load(std::memory_order_relaxed) == liveWord(generation);
-  }
-
-  /**
-   * Whether the request of `generation` had its final response: it's
-   * closed, and takes no more. Owning thread only.
-   * @param ticket the ticket, current (current())
-   * @param generation the request's generation
-   * @return whether it's closed
-   */
-  inline bool closed(uint32_t ticket, uint32_t generation) const
-  {
-    return find(ticket)->responded == generation;
-  }
-
-  /**
-   * The requester a current ticket belongs to. Owning thread only.
-   * @param ticket the ticket, current (current())
-   * @return its requester's number
-   */
-  inline uint32_t requesterOf(uint32_t ticket) const
-  {
-    return find(ticket)->requester;
-  }
-
   /**
    * A new requester's number (from 1; a gone requester's number may come
    * back, as its tickets went with it).
    * @return the number
    */
   uint32_t addRequester();
-
-  /**
-   * A requester goes: its tickets are freed, so its requests and their
-   * responses are superseded.
-   * @param requester its number
-   */
-  void removeRequester(uint32_t requester);
 
   /**
    * A requester asks about an entity: its ticket for the entity (made the
@@ -130,6 +81,12 @@ public:
            uint32_t& generation);
 
   /**
+   * The memory it holds, in bytes: its blocks, pages and lists.
+   * @return the bytes
+   */
+  std::size_t bytes() const;
+
+  /**
    * Cancels a requester's current request about an entity.
    * @param requester its number
    * @param entity the entity id
@@ -138,20 +95,29 @@ public:
   bool cancel(uint32_t requester, uint32_t entity);
 
   /**
-   * Whether a requester's current request about an entity has no final
-   * response yet.
-   * @param requester its number
-   * @param entity the entity id
-   * @return whether it waits
+   * Whether the request of `generation` had its final response: it's
+   * closed, and takes no more. Owning thread only.
+   * @param ticket the ticket, current (current())
+   * @param generation the request's generation
+   * @return whether it's closed
    */
-  bool waiting(uint32_t requester, uint32_t entity) const;
+  inline bool closed(uint32_t ticket, uint32_t generation) const
+  {
+    return find(ticket)->responded == generation;
+  }
 
   /**
-   * The final response to a ticket's request was taken in.
+   * Whether `ticket` still holds the request of `generation`. Any thread.
    * @param ticket the ticket
    * @param generation the request's generation
+   * @return whether the request is current
    */
-  void responded(uint32_t ticket, uint32_t generation);
+  inline bool current(uint32_t ticket, uint32_t generation) const
+  {
+    const RequestTicket* found = find(ticket);
+    return found &&
+           found->word.load(std::memory_order_relaxed) == liveWord(generation);
+  }
 
   /**
    * An entity is destroyed: its tickets, every requester's, are freed.
@@ -172,13 +138,16 @@ public:
   void forEachOpen(uint32_t entity, TFunction&& fn)
   {
     const Head* head = m_entityHeads.find(entity);
+
     for (uint32_t next = head ? head->first : 0; next != 0;)
     {
       const uint32_t ticket = next - 1;
       const RequestTicket& held = *find(ticket);
       const uint32_t word = held.word.load(std::memory_order_relaxed);
+
       if (!isOpen(held, word))
         return;
+
       next = held.entityNext;
       fn(ticket, word >> 1);
     }
@@ -193,28 +162,48 @@ public:
   bool open(uint32_t entity) const;
 
   /**
-   * The memory it holds, in bytes: its blocks, pages and lists.
-   * @return the bytes
+   * A requester goes: its tickets are freed, so its requests and their
+   * responses are superseded.
+   * @param requester its number
    */
-  std::size_t bytes() const;
+  void removeRequester(uint32_t requester);
 
+  /**
+   * The requester a current ticket belongs to. Owning thread only.
+   * @param ticket the ticket, current (current())
+   * @return its requester's number
+   */
+  inline uint32_t requesterOf(uint32_t ticket) const
+  {
+    return find(ticket)->requester;
+  }
+
+  /**
+   * The final response to a ticket's request was taken in.
+   * @param ticket the ticket
+   * @param generation the request's generation
+   */
+  void responded(uint32_t ticket, uint32_t generation);
+
+  /**
+   * Whether a requester's current request about an entity has no final
+   * response yet.
+   * @param requester its number
+   * @param entity the entity id
+   * @return whether it waits
+   */
+  bool waiting(uint32_t requester, uint32_t entity) const;
+
+  /** Tickets a block holds, as a power of two. */
+  static constexpr uint32_t kBlockBits = 8;
+  /** Tickets a block holds. */
+  static constexpr uint32_t kBlockSize = 1u << kBlockBits;
+  /** The most tickets a request type has at once. */
+  static constexpr uint32_t kTickets = kBlockSize * 4096;
   /** Current requests superseded or cancelled, in all. */
   uint64_t superseded = 0;
 
 private:
-  // The ticket, if its block is made.
-  inline const RequestTicket* find(uint32_t ticket) const
-  {
-    if (ticket >= kTickets) [[unlikely]]
-      return nullptr;
-    const RequestTicket* block = m_blocks[ticket >> kBlockBits].get();
-    return block ? block + (ticket & (kBlockSize - 1)) : nullptr;
-  }
-  inline RequestTicket& at(uint32_t ticket)
-  {
-    return m_blocks[ticket >> kBlockBits][ticket & (kBlockSize - 1)];
-  }
-
   // A list's first and last tickets (+1) and its length (an entity's last
   // is kept; a requester's isn't needed).
   struct Head
@@ -224,25 +213,37 @@ private:
     uint32_t count = 0;
   };
 
+  // A free ticket (UINT32_MAX when all are taken).
+  uint32_t allocate();
+  inline RequestTicket& at(uint32_t ticket)
+  {
+    return m_blocks[ticket >> kBlockBits][ticket & (kBlockSize - 1)];
+  }
+  // The ticket, if its block is made.
+  inline const RequestTicket* find(uint32_t ticket) const
+  {
+    if (ticket >= kTickets) [[unlikely]]
+      return nullptr;
+
+    const RequestTicket* block = m_blocks[ticket >> kBlockBits].get();
+    return block ? block + (ticket & (kBlockSize - 1)) : nullptr;
+  }
+  // Puts an unlinked ticket on the free list, its word cleared.
+  void free(uint32_t ticket);
   // Whether a linked ticket, its word read, is open: current with no final
   // response taken in.
   static inline bool isOpen(const RequestTicket& held, uint32_t word)
   {
     return (word & 1u) && held.responded != (word >> 1);
   }
-
-  // A requester's ticket about an entity, +1; 0 for none.
-  uint32_t lookup(uint32_t requester, uint32_t entity) const;
-  // A free ticket (UINT32_MAX when all are taken).
-  uint32_t allocate();
-  // Takes a ticket out of its requester's list, or its entity's.
-  void unlinkRequester(uint32_t ticket);
-  void unlinkEntity(uint32_t ticket);
   // Puts an unlinked ticket first, or last, in its entity's list.
   void linkEntityFirst(uint32_t ticket, Head& head);
   void linkEntityLast(uint32_t ticket, Head& head);
-  // Puts an unlinked ticket on the free list, its word cleared.
-  void free(uint32_t ticket);
+  // A requester's ticket about an entity, +1; 0 for none.
+  uint32_t lookup(uint32_t requester, uint32_t entity) const;
+  void unlinkEntity(uint32_t ticket);
+  // Takes a ticket out of its requester's list, or its entity's.
+  void unlinkRequester(uint32_t ticket);
 
   std::array<std::unique_ptr<RequestTicket[]>, kTickets / kBlockSize> m_blocks;
   uint32_t m_made = 0;     // tickets ever handed out (the next new one)

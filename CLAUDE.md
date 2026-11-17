@@ -146,8 +146,8 @@ it. The standard engine approach is the baseline; do better where the data allow
   the tests your change touches.
 - Builds happen in WSL. Windows is cross-built with MinGW into `build-win/`. Use `nice -n 15 cmake --build ... -j3`
   (wider builds freeze WSL). Only one build at a time.
-- clang-format 17.0.6, on `.cpp`/`.h` files only (never md, yml, wgsl or CMake). Some files in HEAD aren't
-  formatted: don't reformat code you didn't touch.
+- Format the C++ files you change with `sfs-lsp --format` (clang-format 17.0.6, then the house passes), and only
+  those; never md, yml, wgsl or CMake. The pre-commit hook fixes and formats what's committed.
 - Screenshots: only the game's or editor's own windows, never the desktop.
 - Comments: plain, human-readable sentences, and only where the logic is complicated or not obvious. Don't narrate
   what the code does, keep history, or add parenthetical asides. Every public and util function gets a proper

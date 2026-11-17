@@ -1,8 +1,13 @@
 #include "engine/runtime/particles/terrainParticleCollision.h"
 
+#include "engine/core/particles/decal.h"
+#include "engine/core/particles/iParticleCollisionSource.h"
 #include "engine/core/rendering/iTerrainSurfaceSource.h"
-#include "glm/glm/common.hpp"
-#include "glm/glm/ext/vector_int2.hpp"
+
+#include <glm/glm/common.hpp>
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_int2.hpp>
+
 #include <cstdint>
 
 namespace sfs
@@ -11,7 +16,7 @@ namespace
 {
 
 // A step-up of at least this many elevation levels reads as a wall.
-constexpr int kMinWallStep = 1;
+constexpr int MIN_WALL_STEP = 1;
 
 glm::ivec2 floorTile(const glm::vec2& p)
 {
@@ -20,9 +25,20 @@ glm::ivec2 floorTile(const glm::vec2& p)
 
 } // namespace
 
+float TerrainParticleCollision::groundElevation(glm::vec2 worldPos) const
+{
+  if (!m_terrain)
+    return 0.0f;
+
+  return static_cast<float>(
+      m_terrain->terrainHeightAt(static_cast<int>(glm::floor(worldPos.x)),
+                                 static_cast<int>(glm::floor(worldPos.y))));
+}
+
 ParticleHit TerrainParticleCollision::sweep(const ParticleSweep& m) const
 {
   ParticleHit out;
+
   if (!m_terrain)
     return out;
 
@@ -57,10 +73,11 @@ ParticleHit TerrainParticleCollision::sweep(const ParticleSweep& m) const
       const int frontTop =
           visibleFace ? m_terrain->terrainHeightAt(frontTile.x, frontTile.y)
                       : oldTop;
-      const bool tallEnough = (newTop - frontTop) >= kMinWallStep;
+      const bool tallEnough = (newTop - frontTop) >= MIN_WALL_STEP;
 
       out.hit = true;
       out.tile = newTile;
+
       if (visibleFace && tallEnough)
       {
         out.surface = DecalSurface::Wall;
@@ -78,18 +95,21 @@ ParticleHit TerrainParticleCollision::sweep(const ParticleSweep& m) const
         out.pos = m.from;
         out.elevation = static_cast<float>(oldTop);
       }
+
       return out;
     }
   }
 
   // Otherwise, dropped onto the ground/water beneath it.
   const int top = m_terrain->terrainHeightAt(newTile.x, newTile.y);
+
   if (zAbs <= static_cast<float>(top))
   {
     out.hit = true;
     out.tile = newTile;
     out.pos = m.to;
     out.elevation = static_cast<float>(top);
+
     if (m_terrain->isWaterAt(newTile.x, newTile.y))
     {
       out.surface = DecalSurface::Water;
@@ -100,16 +120,8 @@ ParticleHit TerrainParticleCollision::sweep(const ParticleSweep& m) const
       out.surface = DecalSurface::Ground;
     }
   }
-  return out;
-}
 
-float TerrainParticleCollision::groundElevation(glm::vec2 worldPos) const
-{
-  if (!m_terrain)
-    return 0.0f;
-  return static_cast<float>(
-      m_terrain->terrainHeightAt(static_cast<int>(glm::floor(worldPos.x)),
-                                 static_cast<int>(glm::floor(worldPos.y))));
+  return out;
 }
 
 } // namespace sfs

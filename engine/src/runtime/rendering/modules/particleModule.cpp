@@ -1,47 +1,59 @@
 #include "engine/runtime/rendering/modules/particleModule.h"
 
+#include "engine/core/ecs/moduleSettings.h"
 #include "engine/core/ecs/registry.h"
 #include "engine/core/particles/decal.h"
+#include "engine/core/particles/particleEngine.h"
+#include "engine/core/rendering/mesh.h"
 #include "engine/core/rendering/meshPrimitives.h"
+#include "engine/core/types/blendMode.h"
 #include "engine/runtime/assetStore/assetStore.h"
 #include "engine/runtime/particles/colliderParticleCollision.h"
 #include "engine/runtime/particles/terrainParticleCollision.h"
+#include "engine/runtime/rendering/commands.h"
+#include "engine/runtime/rendering/frame.h"
 #include "engine/runtime/rendering/meshLibrary.h"
 #include "engine/runtime/rendering/modules/imageQuads.h"
-#include "glm/glm/geometric.hpp"
+#include "engine/runtime/rendering/modules/renderModule.h"
+#include "engine/runtime/rendering/renderContext.h"
+#include "engine/runtime/rendering/space2D.h"
+
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/geometric.hpp>
 
 #include <cmath>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
 
 namespace sfs
 {
 
 namespace
 {
-constexpr const char* kLitQuadName = "builtin:particleQuadLit";
+constexpr const char* LIT_QUAD_NAME = "builtin:particleQuadLit";
 
 // A lit particle's quad: its normals lean from facing the camera halfway up
 // it, so it's shaded as matter in the air is, lit from above, whichever way
 // it's seen from (with its instance's third axis as long as its others).
 MeshHandle litQuad(MeshLibrary& meshes)
 {
-  if (const MeshHandle quad = meshes.resolve(kLitQuadName); quad.valid())
+  if (const MeshHandle quad = meshes.resolve(LIT_QUAD_NAME); quad.valid())
     return quad;
+
   MeshData quad = meshes::plane(glm::vec2(1.0f));
+
   for (MeshVertex& vertex : quad.vertices)
     vertex.normal = glm::normalize(glm::vec3(0.0f, 1.0f, 1.0f));
-  return meshes.add(quad, kLitQuadName);
+
+  return meshes.add(quad, LIT_QUAD_NAME);
 }
 } // namespace
 
 ParticleModule::ParticleModule(AssetStore& assets) : m_assets(assets) {}
 
 ParticleModule::~ParticleModule() = default;
-
-void ParticleModule::init(const ModuleInit& init)
-{
-  m_registry = init.registry;
-  setRegistry(init.registry);
-}
 
 void ParticleModule::update(double deltaTime)
 {
@@ -50,26 +62,19 @@ void ParticleModule::update(double deltaTime)
     simulate(deltaTime);
     return;
   }
-  simulate(m_registry->paused() ? 0.0 : deltaTime * m_registry->timeScale());
-}
 
-void ParticleModule::enableStains(IDecalSink& decals,
-                                  const ITerrainSurfaceSource* terrain)
-{
-  setDecalSink(&decals);
-  if (terrain)
-    m_collision = std::make_unique<TerrainParticleCollision>(terrain);
-  else
-    m_collision = std::make_unique<ColliderParticleCollision>(m_registry);
-  setCollisionSource(m_collision.get());
+  simulate(m_registry->paused() ? 0.0 : deltaTime * m_registry->timeScale());
 }
 
 void ParticleModule::computeCommands(const RenderContext& context)
 {
   flush();
+
   if (!context.meshes || !context.camera)
     return;
+
   MeshLibrary& meshes = *context.meshes;
+
   if (!m_quad.valid())
     m_quad = imageQuad(meshes);
 
@@ -81,15 +86,18 @@ void ParticleModule::computeCommands(const RenderContext& context)
 
   std::vector<ParticleSpriteBatch> batches;
   sprites(batches);
+
   for (const ParticleSpriteBatch& batch : batches)
   {
     if (!batch.textureId)
       continue;
+
     const bool glow = batch.blend == BlendMode::Additive;
     const std::string name = "particles:" + *batch.textureId +
                              (glow ? ":add" : ":blend") +
                              (batch.lit ? ":lit" : "");
     auto [at, added] = m_materials.emplace(name, MaterialHandle{});
+
     if (added)
       at->second = meshes.setMaterial(
           name,
@@ -98,6 +106,7 @@ void ParticleModule::computeCommands(const RenderContext& context)
                         {},
                         glow ? AlphaMode::Additive : AlphaMode::Blend,
                         !batch.lit));
+
     if (batch.lit && !m_litQuad.valid())
       m_litQuad = litQuad(meshes);
 
@@ -107,6 +116,7 @@ void ParticleModule::computeCommands(const RenderContext& context)
     command.materials = {at->second};
     command.instances.reserve(batch.sprites.size());
     const float scale = space ? space->scale() : 1.0f;
+
     for (const ParticleSprite& sprite : batch.sprites)
     {
       const glm::vec3 centre =
@@ -132,8 +142,15 @@ void ParticleModule::computeCommands(const RenderContext& context)
       instance.uvRect = sprite.uvRect;
       command.instances.push_back(instance);
     }
+
     m_commands.push_back(std::move(command));
   }
+}
+
+void ParticleModule::init(const ModuleInit& init)
+{
+  m_registry = init.registry;
+  setRegistry(init.registry);
 }
 
 std::vector<ModuleSetting> ParticleModule::settings(const RenderContext&)
@@ -141,6 +158,19 @@ std::vector<ModuleSetting> ParticleModule::settings(const RenderContext&)
   return {settings::text("Live particles",
                          [this]
                          { return std::to_string(liveParticleCount()); })};
+}
+
+void ParticleModule::enableStains(IDecalSink& decals,
+                                  const ITerrainSurfaceSource* terrain)
+{
+  setDecalSink(&decals);
+
+  if (terrain)
+    m_collision = std::make_unique<TerrainParticleCollision>(terrain);
+  else
+    m_collision = std::make_unique<ColliderParticleCollision>(m_registry);
+
+  setCollisionSource(m_collision.get());
 }
 
 } // namespace sfs

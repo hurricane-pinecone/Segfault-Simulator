@@ -16,8 +16,8 @@
 // failure) for CTest. Output is coloured when stderr is a terminal, plain
 // otherwise.
 
-#include "glm/glm/ext/vector_float2.hpp"
-#include "glm/glm/ext/vector_int2.hpp"
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_int2.hpp>
 
 #include <cmath>
 #include <cstddef>
@@ -42,15 +42,15 @@ namespace testing
  * code several times over, so timing checks don't hold there and are skipped.
  */
 #if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
-inline constexpr bool kSanitized = true;
+inline constexpr bool SANITIZED = true;
 #elif defined(__has_feature)
   #if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer)
-inline constexpr bool kSanitized = true;
+inline constexpr bool SANITIZED = true;
   #else
-inline constexpr bool kSanitized = false;
+inline constexpr bool SANITIZED = false;
   #endif
 #else
-inline constexpr bool kSanitized = false;
+inline constexpr bool SANITIZED = false;
 #endif
 
 struct Stats
@@ -148,25 +148,18 @@ inline bool approx(float a, float b, float eps = 1e-4f)
 // (a && b) collapse to a plain bool and report the source text only.
 struct Result
 {
+  explicit operator bool() const { return passed; }
+
   bool passed;
   std::string lhs;
   const char* op;
   std::string rhs;
-  explicit operator bool() const { return passed; }
 };
 
 template <typename L>
 struct ExprLhs
 {
-  L lhs;
-
   explicit operator bool() const { return static_cast<bool>(lhs); }
-
-  template <typename R>
-  Result operator==(const R& r) const
-  {
-    return {static_cast<bool>(lhs == r), stringify(lhs), "==", stringify(r)};
-  }
   template <typename R>
   Result operator!=(const R& r) const
   {
@@ -178,20 +171,27 @@ struct ExprLhs
     return {static_cast<bool>(lhs < r), stringify(lhs), "<", stringify(r)};
   }
   template <typename R>
-  Result operator>(const R& r) const
-  {
-    return {static_cast<bool>(lhs > r), stringify(lhs), ">", stringify(r)};
-  }
-  template <typename R>
   Result operator<=(const R& r) const
   {
     return {static_cast<bool>(lhs <= r), stringify(lhs), "<=", stringify(r)};
+  }
+  template <typename R>
+  Result operator==(const R& r) const
+  {
+    return {static_cast<bool>(lhs == r), stringify(lhs), "==", stringify(r)};
+  }
+  template <typename R>
+  Result operator>(const R& r) const
+  {
+    return {static_cast<bool>(lhs > r), stringify(lhs), ">", stringify(r)};
   }
   template <typename R>
   Result operator>=(const R& r) const
   {
     return {static_cast<bool>(lhs >= r), stringify(lhs), ">=", stringify(r)};
   }
+
+  L lhs;
 };
 
 struct Decomposer
@@ -223,6 +223,7 @@ inline void check(const Result& r, const char* expr, const char* file, int line)
     ++detail::g_total.passed;
     return;
   }
+
   ++detail::g_total.failed;
   // For a == the right operand is the expected value; for the other operators
   // it is a bound, so keep the operator with it (e.g. "> 0", "!= 3").
@@ -239,6 +240,7 @@ void check(const ExprLhs<L>& e, const char* expr, const char* file, int line)
     ++detail::g_total.passed;
     return;
   }
+
   ++detail::g_total.failed;
   detail::emit(failDetail(file, line, expr, "true", stringify(e.lhs)));
 }
@@ -250,6 +252,7 @@ inline void check(bool passed, const char* expr, const char* file, int line)
     ++detail::g_total.passed;
     return;
   }
+
   ++detail::g_total.failed;
   detail::emit(failDetail(file, line, expr, "true", "false"));
 }
@@ -271,8 +274,10 @@ public:
   ~TestScope()
   {
     --detail::g_testDepth;
+
     if (m_skipped)
       return;
+
     const int passed = detail::g_total.passed - m_start.passed;
     const int failed = detail::g_total.failed - m_start.failed;
     const bool ok = failed == 0;

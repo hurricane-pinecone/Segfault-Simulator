@@ -5,6 +5,7 @@
 #include "engine/runtime/ui/picture.h"
 
 #include <concepts>
+#include <cstdint>
 #include <functional>
 #include <initializer_list>
 #include <limits>
@@ -38,24 +39,22 @@ namespace sfs::ui
 /** A colour, its channels 0 to 1 as they look on screen (sRGB), and alpha. */
 struct Color
 {
-  float r = 1.0f;
-  float g = 1.0f;
-  float b = 1.0f;
-  float a = 1.0f;
-
+  static constexpr Color black() { return {0.0f, 0.0f, 0.0f, 1.0f}; }
+  static constexpr Color clear() { return {0.0f, 0.0f, 0.0f, 0.0f}; }
+  /** The same colour, `alpha` as see-through. */
+  constexpr Color opacity(float alpha) const { return {r, g, b, a * alpha}; }
+  bool operator==(const Color&) const = default;
   /** From 0-255 channels, as a colour picker gives them. */
   static constexpr Color rgb(int r, int g, int b, float a = 1.0f)
   {
     return {r / 255.0f, g / 255.0f, b / 255.0f, a};
   }
-  /** The same colour, `alpha` as see-through. */
-  constexpr Color opacity(float alpha) const { return {r, g, b, a * alpha}; }
-
   static constexpr Color white() { return {1.0f, 1.0f, 1.0f, 1.0f}; }
-  static constexpr Color black() { return {0.0f, 0.0f, 0.0f, 1.0f}; }
-  static constexpr Color clear() { return {0.0f, 0.0f, 0.0f, 0.0f}; }
 
-  bool operator==(const Color&) const = default;
+  float r = 1.0f;
+  float g = 1.0f;
+  float b = 1.0f;
+  float a = 1.0f;
 };
 
 /**
@@ -65,21 +64,20 @@ struct Color
  */
 struct Font
 {
-  std::string file;
-  float size = 20.0f;
-
   static Font body() { return {{}, 20.0f}; }
   static Font caption() { return {{}, 15.0f}; }
   static Font headline() { return {{}, 24.0f}; }
-  static Font title() { return {{}, 32.0f}; }
   static Font named(std::string file, float size)
   {
     return {std::move(file), size};
   }
+  bool operator==(const Font&) const = default;
   /** The same typeface at another size. */
   Font sized(float points) const { return {file, points}; }
+  static Font title() { return {{}, 32.0f}; }
 
-  bool operator==(const Font&) const = default;
+  std::string file;
+  float size = 20.0f;
 };
 
 /** Where something sits in the space it's given (or the screen). */
@@ -99,17 +97,17 @@ enum class Alignment : uint8_t
 /** Space round the edges of something, in points. */
 struct Insets
 {
-  float top = 0.0f;
-  float leading = 0.0f;
-  float bottom = 0.0f;
-  float trailing = 0.0f;
-
   static Insets all(float points) { return {points, points, points, points}; }
   /** `vertical` above and below, `horizontal` either side. */
   static Insets symmetric(float vertical, float horizontal)
   {
     return {vertical, horizontal, vertical, horizontal};
   }
+
+  float top = 0.0f;
+  float leading = 0.0f;
+  float bottom = 0.0f;
+  float trailing = 0.0f;
 };
 
 /** How a background is filled: colour, rounded corners, border and shadow. */
@@ -331,16 +329,6 @@ public:
     Custom,    // the game's
   };
 
-  /** The theme's: a soft, rounded face, lighter hovered, darker pressed. */
-  static ButtonStyle automatic() { return ButtonStyle(Kind::Automatic); }
-  /** No face: the label is the button, dimmed while it's pressed. */
-  static ButtonStyle plain() { return ButtonStyle(Kind::Plain); }
-  /** A face filled `normal`, `hovered` or `pressed`, round the label padded. */
-  static ButtonStyle filled(Fill normal,
-                            Fill hovered,
-                            Fill pressed,
-                            Insets padding = Insets::symmetric(7.0f, 14.0f));
-
   template <typename F>
     requires std::is_invocable_r_v<View, const F&, const ButtonConfiguration&>
   ButtonStyle(F makeBody) : m_kind(Kind::Custom), m_make(std::move(makeBody))
@@ -359,10 +347,18 @@ public:
                { return View(style.makeBody(c)); })
   {
   }
-
+  /** The theme's: a soft, rounded face, lighter hovered, darker pressed. */
+  static ButtonStyle automatic() { return ButtonStyle(Kind::Automatic); }
+  /** A face filled `normal`, `hovered` or `pressed`, round the label padded. */
+  static ButtonStyle filled(Fill normal,
+                            Fill hovered,
+                            Fill pressed,
+                            Insets padding = Insets::symmetric(7.0f, 14.0f));
   Kind kind() const { return m_kind; }
   /** Its look for `configuration` (a custom style's; others: the label). */
   View makeBody(const ButtonConfiguration& configuration) const;
+  /** No face: the label is the button, dimmed while it's pressed. */
+  static ButtonStyle plain() { return ButtonStyle(Kind::Plain); }
 
 private:
   explicit ButtonStyle(Kind kind) : m_kind(kind) {}
@@ -511,8 +507,10 @@ template <typename Range, typename Make>
 View ForEach(const Range& items, Make&& make)
 {
   std::vector<View> views;
+
   for (const auto& item : items)
     views.push_back(make(item));
+
   return View::group(std::move(views));
 }
 
@@ -541,6 +539,19 @@ struct Node
     Scroll,     // ScrollView: children[0] the content
     Disclosure, // DisclosureGroup: children label, content, accessory
   };
+
+  /** How many nodes there are in it, itself too (a hit's Hit::source). */
+  uint32_t count() const;
+  /**
+   * What it is, as a number: a hash of every field but the functions (only
+   * whether each is set) and of its children's. Trees that draw the same have
+   * the same hash, so a layer whose tree hashes as last frame's isn't laid
+   * out again (ui::Cache). Worked out once, when first asked (a node doesn't
+   * change once it's in a View).
+   */
+  uint64_t hash() const;
+  /** Whether it, or anything in it, keeps State (a scroll view, a section). */
+  bool keepsState() const;
 
   Kind kind = Kind::Empty;
   std::vector<View> children;
@@ -587,20 +598,6 @@ struct Node
   Alignment alignment = Alignment::Center; // within a ZStack, or the screen
   std::string id;                          // see View::id()
   std::string help;
-
-  /**
-   * What it is, as a number: a hash of every field but the functions (only
-   * whether each is set) and of its children's. Trees that draw the same have
-   * the same hash, so a layer whose tree hashes as last frame's isn't laid
-   * out again (ui::Cache). Worked out once, when first asked (a node doesn't
-   * change once it's in a View).
-   */
-  uint64_t hash() const;
-  /** How many nodes there are in it, itself too (a hit's Hit::source). */
-  uint32_t count() const;
-  /** Whether it, or anything in it, keeps State (a scroll view, a section). */
-  bool keepsState() const;
-
   // Worked out by hash() (0: not yet), and the layout's notes on it.
   mutable uint64_t m_hash = 0;
   mutable uint32_t m_count = 0;

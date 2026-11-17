@@ -1,20 +1,33 @@
 #include "../../testHarness.h"
+#include "engine/core/logger/logger.h"
+#include "engine/runtime/navigation/agentKind.h"
+#include "engine/runtime/navigation/fleet.h"
+#include "engine/runtime/navigation/geometry.h"
+#include "engine/runtime/navigation/planScheduler.h"
+#include "engine/runtime/navigation/planState.h"
+#include "engine/runtime/navigation/space.h"
+#include "engine/runtime/navigation/traffic.h"
+#include "engine/runtime/navigation/vehicle/follower.h"
+#include "engine/runtime/navigation/vehicle/speedProfile.h"
+#include "engine/runtime/navigation/vehicle/vehicleKind.h"
+#include "engine/runtime/navigation/vehicle/vehicleModel.h"
+#include "engine/runtime/navigation/vehicle/vehiclePath.h"
 
-#include <engine/core/logger/logger.h>
-#include <engine/runtime/navigation/fleet.h>
-#include <engine/runtime/navigation/vehicle/follower.h>
-#include <engine/runtime/navigation/vehicle/speedProfile.h>
-#include <engine/runtime/navigation/vehicle/vehicleKind.h>
-#include <engine/runtime/navigation/vehicle/vehicleModel.h>
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/geometric.hpp>
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <limits>
 #include <map>
 #include <memory>
+#include <optional>
 #include <thread>
+#include <utility>
+#include <vector>
 
 using namespace sfs::nav;
 
@@ -46,6 +59,7 @@ bool touching(const Fleet& f, Fleet::AgentId a, Fleet::AgentId b)
     for (const Footprint& q : f.footprint(b))
       if (overlaps(p, q))
         return true;
+
   return false;
 }
 
@@ -55,23 +69,30 @@ int run(Fleet& f, float seconds, std::vector<Fleet::Event>* events = nullptr)
 {
   int touches = 0;
   const std::vector<Fleet::AgentId> ids = f.ids();
+
   for (float t = 0.0f; t < seconds; t += 1.0f / 30.0f)
   {
     f.update(1.0 / 30.0);
+
     for (Fleet::Event& e : f.takeEvents())
       if (events)
         events->push_back(std::move(e));
+
     bool all = true;
+
     for (std::size_t i = 0; i < ids.size(); ++i)
     {
       const Fleet::State st = f.state(ids[i]);
       all = all && (st == Fleet::State::Arrived || st == Fleet::State::Blocked);
+
       for (std::size_t j = i + 1; j < ids.size(); ++j)
         touches += touching(f, ids[i], ids[j]);
     }
+
     if (all)
       break;
   }
+
   return touches;
 }
 
@@ -79,6 +100,7 @@ int run(Fleet& f, float seconds, std::vector<Fleet::Event>* events = nullptr)
 std::shared_ptr<const AgentPath> straightPath(float x0, float x1, float y)
 {
   vehicle::VehiclePath p;
+
   for (float x = x0; x <= x1 + 1.0e-4f; x += 0.1f)
   {
     vehicle::PathPoint q;
@@ -86,6 +108,7 @@ std::shared_ptr<const AgentPath> straightPath(float x0, float x1, float y)
     q.pose = {{x, y}, 0.0f};
     p.points.push_back(q);
   }
+
   p.start = p.points.front().pose;
   vehicle::profile(p, vehicle::modelOf(car()));
   return std::make_shared<vehicle::VehicleAgentPath>(std::move(p));
@@ -97,6 +120,7 @@ linePath(glm::vec2 from, float heading, float length)
 {
   vehicle::VehiclePath p;
   const glm::vec2 dir{std::cos(heading), std::sin(heading)};
+
   for (float s = 0.0f; s <= length + 1.0e-4f; s += 0.1f)
   {
     vehicle::PathPoint q;
@@ -104,6 +128,7 @@ linePath(glm::vec2 from, float heading, float length)
     q.pose = {from + dir * s, heading};
     p.points.push_back(q);
   }
+
   p.start = p.points.front().pose;
   vehicle::profile(p, vehicle::modelOf(car()));
   return std::make_shared<vehicle::VehicleAgentPath>(std::move(p));
@@ -115,9 +140,12 @@ std::shared_ptr<const AgentPath>
 restOf(const AgentPath& path, const AgentSpec& spec, float s, float speed)
 {
   const auto* v = dynamic_cast<const vehicle::VehicleAgentPath*>(&path);
+
   if (!v)
     return nullptr;
+
   vehicle::VehiclePath p;
+
   for (const vehicle::PathPoint& q : v->path.points)
     if (q.s >= s - 1.0e-4f)
     {
@@ -125,8 +153,10 @@ restOf(const AgentPath& path, const AgentSpec& spec, float s, float speed)
       r.s -= s;
       p.points.push_back(r);
     }
+
   if (p.points.size() < 2)
     return nullptr;
+
   p.start = p.points.front().pose;
   p.startHitch = p.points.front().hitch;
   vehicle::profile(p,
@@ -165,15 +195,19 @@ std::shared_ptr<const AgentPath> turnPath(const AgentSpec& spec,
   put(0.0f);
   const float turn = std::abs(angle) * radius;
   const float k = (angle < 0.0f ? -1.0f : 1.0f) / radius;
+
   for (float d = step; d <= first + turn + then + 1.0e-4f; d += step)
   {
     const bool turning = d > first && d <= first + turn;
+
     if (turning)
       h += k * step;
+
     at += float(gear) * step * glm::vec2(std::cos(h), std::sin(h));
     s += step;
     put(turning ? k : 0.0f);
   }
+
   p.start = p.points.front().pose;
   vehicle::profile(p, vehicle::modelOf(spec));
   return std::make_shared<vehicle::VehicleAgentPath>(std::move(p));
@@ -183,15 +217,19 @@ std::shared_ptr<const AgentPath> turnPath(const AgentSpec& spec,
 float gapBetween(const Fleet& f, Fleet::AgentId a, Fleet::AgentId b)
 {
   float lo = 0.0f, hi = 50.0f;
+
   for (int i = 0; i < 24; ++i)
   {
     const float m = 0.5f * (lo + hi);
     bool near = false;
+
     for (const Footprint& p : f.footprint(a))
       for (const Footprint& q : f.footprint(b))
         near = near || overlaps(p, q, m);
+
     (near ? hi : lo) = m;
   }
+
   return lo;
 }
 } // namespace
@@ -287,6 +325,7 @@ int main()
     CHECK(touches == 0);
     CHECK(f.state(1) == Fleet::State::Arrived);
     CHECK(f.state(2) == Fleet::State::Arrived);
+
     // (Sent to a wait spot at most once, re-planning for traffic at most
     // three times (the wait spot, its way on, round the other where it
     // arrived).)
@@ -295,6 +334,7 @@ int main()
       CHECK(f.counters(id).waitSpots <= 1);
       CHECK(f.counters(id).replans <= 3);
     }
+
     CHECK(f.counters(1).waitSpots == 0); // (the higher one never)
   }
 
@@ -308,16 +348,20 @@ int main()
     f.add(1, car(), {{0.0f, 0.0f}, 0.0f});
     f.setPath(1, straightPath(0.0f, 30.0f, 0.0f));
     f.setSpeedCap(1, 0.0f);
+
     for (int i = 0; i < 90; ++i)
       f.update(1.0 / 30.0);
+
     CHECK(f.along(1) < 0.2f);
     f.setSpeedCap(1, 2.0f);
     float fastest = 0.0f;
+
     for (int i = 0; i < 300; ++i)
     {
       f.update(1.0 / 30.0);
       fastest = std::max(fastest, std::abs(f.speed(1)));
     }
+
     CHECK(fastest <= 2.0f + 1.0e-3f);
     f.setSpeedCap(1, std::numeric_limits<float>::infinity());
     run(f, 60.0f);
@@ -337,16 +381,21 @@ int main()
     f.setPriority(2, 5);
     f.setPath(1, straightPath(0.0f, 40.0f, 0.0f));
     std::vector<Fleet::Event> events;
+
     for (int i = 0; i < 30 * 30; ++i)
     {
       f.update(1.0 / 30.0);
+
       for (Fleet::Event& e : f.takeEvents())
         events.push_back(std::move(e));
     }
+
     bool handedBack = false;
+
     for (const Fleet::Event& e : events)
       handedBack = handedBack || (e.kind == Fleet::Event::Kind::NeedsPlan &&
                                   e.agent == 1 && e.other == 2);
+
     CHECK(handedBack);
     CHECK(f.counters(1).plans == 0);
     CHECK(!touching(f, 1, 2));
@@ -372,8 +421,10 @@ int main()
     std::vector<Fleet::Event> events;
     const int touches = run(f, 60.0f, &events);
     int yielding = 0;
+
     for (const Fleet::Event& e : events)
       yielding += e.kind == Fleet::Event::Kind::Yielding;
+
     CHECK(f.state(1) == Fleet::State::Arrived);
     CHECK(yielding == 0);
     CHECK(f.counters(1).heldSeconds == 0.0f);
@@ -396,20 +447,26 @@ int main()
     std::vector<Fleet::Event> events;
     int frames = 0;
     bool handedBack = false;
+
     for (; frames < 30 * 30 && !handedBack; ++frames)
     {
       f.update(1.0 / 30.0);
+
       for (Fleet::Event& e : f.takeEvents())
       {
         handedBack = handedBack || (e.kind == Fleet::Event::Kind::NeedsPlan &&
                                     e.agent == 1 && e.other == 2);
         events.push_back(std::move(e));
       }
+
       CHECK(!touching(f, 1, 2));
     }
+
     int yielding = 0;
+
     for (const Fleet::Event& e : events)
       yielding += e.kind == Fleet::Event::Kind::Yielding;
+
     CHECK(handedBack);
     CHECK(yielding == 0);
     CHECK(frames < 30 * 10); // (braked to a stand, never waited on)
@@ -430,8 +487,10 @@ int main()
     f.update(1.0 / 30.0);
     CHECK(f.solid(1));
     f.setPlanning(1, true);
+
     for (int frame = 0; frame < 30 * 5; ++frame)
       f.update(1.0 / 30.0); // (stood past parkedAfter)
+
     CHECK(!f.solid(1));
     f.setPlanning(1, false);
     f.update(1.0 / 30.0);
@@ -457,12 +516,14 @@ int main()
     f.setPriority(2, 5);
     f.requestGoal(2, {{{30.0f, 0.0f}, 0.0f}});
     int touches = 0;
+
     for (int i = 0; i < 30 * 90 && f.state(2) != Fleet::State::Arrived; ++i)
     {
       f.update(1.0 / 30.0);
       f.takeEvents();
       touches += touching(f, 1, 2);
     }
+
     CHECK(f.state(2) == Fleet::State::Arrived);
     CHECK(f.counters(2).roundSolid >= 1);
     CHECK(touches == 0);
@@ -482,13 +543,16 @@ int main()
     f.setPriority(2, 5);
     f.setPath(2, straightPath(-30.0f, 30.0f, 0.0f));
     bool handedBack = false;
+
     for (int i = 0; i < 30 * 60 && !handedBack; ++i)
     {
       f.update(1.0 / 30.0);
+
       for (const Fleet::Event& e : f.takeEvents())
         handedBack = handedBack || (e.kind == Fleet::Event::Kind::NeedsPlan &&
                                     e.agent == 2 && e.other == 1);
     }
+
     CHECK(handedBack);
     CHECK(!touching(f, 1, 2));
   }
@@ -520,9 +584,11 @@ int main()
                          44.0f - 1.5f * variant));
       float least = 1.0e9f, every = 0.0f;
       bool arrived1 = false, arrived2 = false;
+
       for (int i = 0; i < 30 * 120 && !(arrived1 && arrived2); ++i)
       {
         f.update(1.0 / 30.0);
+
         for (const Fleet::Event& e : f.takeEvents())
         {
           if (e.kind == Fleet::Event::Kind::NeedsPlan)
@@ -531,17 +597,22 @@ int main()
             ask.from = f.pose(e.agent);
             ask.goals = {goals.at(e.agent)};
             const AgentPlan plan = f.planNow(e.agent, ask);
+
             if (plan.path)
               f.setPath(e.agent, plan.path);
           }
+
           if (e.kind == Fleet::Event::Kind::Arrived)
             (e.agent == 1 ? arrived1 : arrived2) = true;
         }
+
         every += 1.0f / 30.0f;
+
         if (every >= 1.0f)
         {
           // (A game handing its route over a stretch at a time.)
           every = 0.0f;
+
           for (Fleet::AgentId id : {Fleet::AgentId(1), Fleet::AgentId(2)})
             if (const AgentPath* p = f.path(id);
                 p && f.state(id) == Fleet::State::Moving &&
@@ -549,8 +620,10 @@ int main()
               if (auto rest = restOf(*p, *f.spec(id), f.along(id), f.speed(id)))
                 f.setPath(id, rest);
         }
+
         least = std::min(least, gapBetween(f, 1, 2));
       }
+
       CHECK(least >= 0.02f);
       CHECK(arrived1 && arrived2);
     }
@@ -583,21 +656,26 @@ int main()
       f.setPath(2, linePath({-5.0f, y}, 0.0f, 19.0f));
       float least = 1.0e9f;
       bool set = false, arrived1 = false;
+
       for (int i = 0; i < 30 * 90 && !arrived1; ++i)
       {
         f.update(1.0 / 30.0);
+
         for (const Fleet::Event& e : f.takeEvents())
           if (e.kind == Fleet::Event::Kind::Arrived && e.agent == 1)
             arrived1 = true;
+
         if (!set && f.pose(2).position.x > 2.0f)
         {
           // (Its route comes as the truck's front draws level.)
           set = true;
           f.setPath(1, straightPath(7.8f, 40.0f, 28.3f));
         }
+
         if (set && std::abs(f.speed(1)) > 0.01f)
           least = std::min(least, gapBetween(f, 1, 2));
       }
+
       CHECK(least >= 0.02f);
     }
   }
@@ -636,9 +714,11 @@ int main()
     bool solidWhileGiving = false, loaderHanded = false;
     int loaderYields = 0, truckYields = 0;
     float least = 1.0e9f;
+
     for (int i = 0; i < 30 * 120 && !(arrived1 && arrived2); ++i)
     {
       f.update(1.0 / 30.0);
+
       for (const Fleet::Event& e : f.takeEvents())
       {
         if (e.kind == Fleet::Event::Kind::NeedsPlan)
@@ -648,24 +728,30 @@ int main()
           ask.from = f.pose(e.agent);
           ask.goals = {goals.at(e.agent)};
           const AgentPlan plan = f.planNow(e.agent, ask);
+
           if (plan.path)
             f.setPath(e.agent, plan.path);
         }
+
         if (e.kind == Fleet::Event::Kind::Yielding)
           ++(e.agent == 1 ? loaderYields : truckYields);
+
         if (e.kind == Fleet::Event::Kind::Arrived)
           (e.agent == 1 ? arrived1 : arrived2) = true;
       }
+
       if (!set && f.pose(2).position.y > 22.0f)
       {
         // (Its route comes with the truck's front in its way.)
         set = true;
         f.setPath(1, straightPath(7.8f, 40.0f, 28.3f));
       }
+
       solidWhileGiving = solidWhileGiving ||
                          (f.state(2) == Fleet::State::Yielding && f.solid(2));
       least = std::min(least, gapBetween(f, 1, 2));
     }
+
     CHECK(set);
     CHECK(!solidWhileGiving);
     CHECK(!loaderHanded);
@@ -696,21 +782,28 @@ int main()
     std::vector<Fleet::Event> events;
     bool bothIn = false;
     int touches = 0;
+
     for (int i = 0; i < 30 * 200; ++i)
     {
       f.update(1.0 / 30.0);
+
       for (Fleet::Event& e : f.takeEvents())
         events.push_back(std::move(e));
+
       touches += touching(f, 1, 2);
       bothIn = bothIn || (std::abs(f.pose(1).position.x) < 3.0f &&
                           std::abs(f.pose(2).position.x) < 3.0f);
+
       if (f.state(1) == Fleet::State::Arrived &&
           f.state(2) == Fleet::State::Arrived)
         break;
     }
+
     int yields = 0;
+
     for (const Fleet::Event& e : events)
       yields += e.kind == Fleet::Event::Kind::Yielding;
+
     CHECK(touches == 0);
     CHECK(!bothIn);
     CHECK(f.state(1) == Fleet::State::Arrived);
@@ -804,20 +897,25 @@ int main()
   {
     touches = 0;
     const std::vector<Fleet::AgentId> ids = f.ids();
+
     for (float t = 0.0f; t < seconds; t += 1.0f / 30.0f)
     {
       f.update(1.0 / 30.0);
       f.takeEvents();
       bool all = true;
+
       for (std::size_t i = 0; i < ids.size(); ++i)
       {
         all = all && f.state(ids[i]) == Fleet::State::Arrived;
+
         for (std::size_t j = i + 1; j < ids.size(); ++j)
           touches += touching(f, ids[i], ids[j]);
       }
+
       if (all)
         return true;
     }
+
     return false;
   };
 
@@ -919,6 +1017,7 @@ int main()
     float slowest = 1.0e9f, fastest = 0.0f;
     bool eased = false;
     int touches = 0;
+
     for (int i = 0; i < 30 * 60; ++i)
     {
       f.update(1.0 / 30.0);
@@ -926,13 +1025,17 @@ int main()
       touches += touching(f, 1, 2);
       const float v = std::abs(f.speed(2));
       eased = eased || std::isfinite(f.traffic().scheduleOf(2).easeTo);
+
       if (fastest > 1.0f && f.pose(2).position.y < 5.0f)
         slowest = std::min(slowest, v);
+
       fastest = std::max(fastest, v);
+
       if (f.state(1) == Fleet::State::Arrived &&
           f.state(2) == Fleet::State::Arrived)
         break;
     }
+
     CHECK(eased);
     CHECK(touches == 0);
     CHECK(slowest > 0.5f);
@@ -945,6 +1048,7 @@ int main()
   {
     vehicle::VehiclePath p;
     std::vector<float> limits;
+
     for (int i = 0; i <= 400; ++i)
     {
       vehicle::PathPoint q;
@@ -953,17 +1057,20 @@ int main()
       p.points.push_back(q);
       limits.push_back(q.s > 15.0f && q.s < 25.0f ? 1.0f : 100.0f);
     }
+
     vehicle::profile(p,
                      vehicle::modelOf(car()),
                      std::numeric_limits<float>::infinity(),
                      0.0f,
                      &limits);
     bool kept = true, faster = false;
+
     for (std::size_t i = 0; i < p.points.size(); ++i)
     {
       kept = kept && p.points[i].speed <= limits[i] + 1.0e-4f;
       faster = faster || p.points[i].speed > 2.0f;
     }
+
     CHECK(kept);
     CHECK(faster);
   }
@@ -980,20 +1087,26 @@ int main()
     Controls c;
     c.throttle = 1.0f;
     const float dt = 1.0f / 60.0f;
+
     for (int i = 0; i < 60; ++i)
       d.step(c, dt);
+
     // (A second at its accel, straight ahead.)
     CHECK(std::abs(d.speed() - m.accel) < 0.05f);
     CHECK(d.pose().position.x > 0.4f && std::abs(d.pose().position.y) < 1e-3f);
+
     for (int i = 0; i < 60 * 20; ++i)
       d.step(c, dt);
+
     CHECK(std::abs(d.speed() - m.topSpeed) < 1.0e-3f);
     // Full lock asked: the wheel gets there at steerRate, no faster.
     c.steer = 1.0f;
     d.step(c, 0.1f);
     CHECK(std::abs(d.steerAngle() - m.steerRate * 0.1f) < 1.0e-4f);
+
     for (int i = 0; i < 60 * 5; ++i)
       d.step(c, dt);
+
     CHECK(std::abs(d.steerAngle() - d.fullLock()) < 1.0e-4f);
     CHECK(std::abs(1.0f / d.curvature() - m.minRadius) < 0.01f);
     // On full lock, no faster than the speed profile's own limit there.
@@ -1017,8 +1130,10 @@ int main()
                    std::max(0.0f, 4.0f - m.accel - 0.5f * m.brake)) < 1e-3f);
     c = {};
     c.throttle = 1.0f;
+
     for (int i = 0; i < 600; ++i)
       d.step(c, 1.0f / 60.0f, 2.5f);
+
     CHECK(std::abs(d.speed() - 2.5f) < 1.0e-3f);
   }
 
@@ -1036,21 +1151,27 @@ int main()
     float t = 0.0f, stoodAt = -1.0f;
     float lowest = 1.0f;
     const float dt = 1.0f / 60.0f;
+
     for (; t < 10.0f; t += dt)
     {
       d.step(c, dt);
       lowest = std::min(lowest, d.speed());
+
       if (stoodAt < 0.0f && std::abs(d.speed()) < 1.0e-6f)
         stoodAt = t;
+
       if (d.speed() < -0.05f)
         break;
     }
+
     CHECK(stoodAt > 0.0f);
     // (It stood the shuttle before backing off.)
     CHECK(t - stoodAt >= 0.5f - 2.0f * dt);
     CHECK(d.speed() < 0.0f);
+
     for (int i = 0; i < 600; ++i)
       d.step(c, dt);
+
     CHECK(std::abs(d.speed() + m.reverseSpeed) < 1.0e-3f);
     CHECK(d.pose().position.x < 3.0f); // (came back past where it stood)
   }
@@ -1066,8 +1187,10 @@ int main()
     Controls c;
     c.throttle = 0.3f;
     c.steer = 1.0f;
+
     for (int i = 0; i < 60 * 20; ++i)
       d.step(c, 1.0f / 60.0f);
+
     CHECK(d.hitch() > 0.2f);
     CHECK(d.hitch() <= m.trailer->forwardLimit + 1.0e-5f);
   }
@@ -1087,8 +1210,10 @@ int main()
     Controls c;
     c.throttle = 1.0f;
     f.setControls(1, c);
+
     for (int i = 0; i < 120; ++i)
       f.update(1.0 / 60.0);
+
     CHECK(f.pose(1).position.x > 1.0f);
     CHECK(f.speed(1) > 1.0f);
     CHECK(f.path(1) == nullptr);
@@ -1096,15 +1221,19 @@ int main()
     CHECK(f.state(1) == Fleet::State::Moving);
     // (Its game's cap holds it, as on a path.)
     f.setSpeedCap(1, 0.0f);
+
     for (int i = 0; i < 600; ++i)
       f.update(1.0 / 60.0);
+
     CHECK(std::abs(f.speed(1)) < kStill);
     f.setSpeedCap(1, std::numeric_limits<float>::infinity());
     const Pose2 at = f.pose(1);
     f.handBack(1);
     CHECK(!f.handDriven(1));
+
     for (int i = 0; i < 60; ++i)
       f.update(1.0 / 60.0);
+
     CHECK(glm::length(f.pose(1).position - at.position) < 1.0e-4f);
     // Sent somewhere again, it plans and goes as any agent.
     f.requestGoal(1, {{{at.position.x + 10.0f, 0.0f}, 0.0f}});
@@ -1142,20 +1271,26 @@ int main()
     // several times slower.
     const auto waitUntil =
         std::chrono::steady_clock::now() + std::chrono::seconds(60);
+
     while (!f.path(1) && std::chrono::steady_clock::now() < waitUntil)
     {
       f.update(1.0 / 60.0);
       planned = planned || f.state(1) == Fleet::State::Planning;
+
       if (!f.path(1)) // (no finished plan yet: it hasn't moved)
         movedEarly = movedEarly || std::abs(f.speed(1)) > 0.0f ||
                      glm::length(f.pose(1).position) > 1e-4f;
+
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
+
     CHECK(planned);
     CHECK(!movedEarly);
     CHECK(f.path(1) != nullptr);
+
     if (f.path(1) && whole.path)
       CHECK(std::abs(f.path(1)->length() - whole.path->length()) < 1e-4f);
+
     run(f, 60.0f);
     CHECK(f.state(1) == Fleet::State::Arrived);
   }
@@ -1176,25 +1311,32 @@ int main()
     CHECK(f.planAhead(1, ask));
     CHECK(f.planningAhead(1));
     std::optional<AgentPlan> next;
+
     for (int i = 0; i < 4000 && !next; ++i)
     {
       next = f.ahead(1);
+
       if (!next)
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
+
     CHECK(next.has_value());
     CHECK(!f.planningAhead(1));
+
     if (next && next->path && !next->path->samples.empty())
     {
       CHECK(next->state == PlanState::Found);
       CHECK(glm::length(next->path->samples.front().pose.position -
                         glm::vec2(30.0f, 0.0f)) < 1e-3f);
     }
+
     // (It drives the first to its end, then the one planned ahead.)
     run(f, 30.0f);
     CHECK(f.state(1) == Fleet::State::Arrived);
+
     if (next && next->path)
       f.setPath(1, next->path);
+
     run(f, 60.0f);
     CHECK(glm::length(f.pose(1).position - glm::vec2(30.0f, 20.0f)) < 0.1f);
   }
@@ -1212,14 +1354,18 @@ int main()
     const auto handBacks = [&](int frames)
     {
       int n = 0;
+
       for (int frame = 0; frame < frames; ++frame)
       {
         f.update(1.0 / 30.0);
+
         for (const Fleet::Event& e : f.takeEvents())
           n += e.kind == Fleet::Event::Kind::NeedsPlan && e.agent == 1 &&
                e.other == 2;
+
         CHECK(!touching(f, 1, 2));
       }
+
       return n;
     };
     f.setPath(1, straightPath(0.0f, 40.0f, 0.0f));
@@ -1254,17 +1400,21 @@ int main()
               message.find("nobody in it can get out") != std::string::npos)
             ++warned;
         });
+
     for (int round = 0; round < 3; ++round)
     {
       f.setPath(1, straightPath(0.0f, 30.0f, 0.0f));
       f.setPath(2, linePath({7.3f, 0.0f}, kPi, 30.0f));
+
       for (int frame = 0; frame < 30 * 8; ++frame)
       {
         f.update(1.0 / 30.0);
         f.takeEvents();
       }
+
       CHECK(!touching(f, 1, 2));
     }
+
     sfs::Logger::removeSink(sink);
     // (Its members planned again each round (stuck no more), the same ones
     // stand nobody able to give way again: no news.)
@@ -1293,6 +1443,7 @@ int main()
     AgentSpec truck = car();
     truck.boxes = {{-1.1f, 3.86f, 1.31f, 0.0f, 0.0f, 3.56f}};
     truck.topSpeed = 2.5f;
+
     for (const float from : {1.0f, 3.0f})
     {
       Fleet f(deterministic());
@@ -1312,15 +1463,18 @@ int main()
           2, turnPath(truck, {10.0f, -1.0f}, kPi, 20.0f, 6.0f, 0.0f, 0.0f));
       float least = std::numeric_limits<float>::infinity();
       int touches = 0;
+
       for (float t = 0.0f; t < 60.0f; t += 1.0f / 30.0f)
       {
         f.update(1.0 / 30.0);
         f.takeEvents();
         least = std::min(least, gapBetween(f, 1, 2));
         touches += touching(f, 1, 2);
+
         if (f.state(1) == Fleet::State::Arrived)
           break;
       }
+
       std::printf("yard near-miss (loader %.0f m off): least gap %.3f m, "
                   "truck wait spots %d, hard stops %d/%d, loader held "
                   "%.1f s\n",

@@ -1,6 +1,6 @@
 #pragma once
 
-#include <sfs/codegen/model.h>
+#include "sfs/codegen/model.h"
 
 #include <filesystem>
 #include <string>

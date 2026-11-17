@@ -73,22 +73,23 @@ public:
   class Context
   {
   public:
-    /** A leg, in order; it never changes once published. */
-    void publish(std::any leg);
+    /** Cancelled: the step should end soon (a planner's PlanRequest::cancel).
+     */
+    const std::atomic<bool>& cancelFlag() const;
+    bool cancelled() const;
     /**
      * A task run in parallel with this job's others (any worker); the job's
      * next step waits for all of them. It's handed the job's cancel flag.
      */
     void fork(std::function<void(const std::atomic<bool>& cancel)> task);
-    /** Cancelled: the step should end soon (a planner's PlanRequest::cancel).
-     */
-    const std::atomic<bool>& cancelFlag() const;
-    bool cancelled() const;
+    /** A leg, in order; it never changes once published. */
+    void publish(std::any leg);
     /** Legs published so far (this one's index next). */
     std::size_t published() const;
 
   private:
     friend class PlanScheduler;
+
     PlanScheduler* m_scheduler = nullptr;
     void* m_job = nullptr;
   };
@@ -153,27 +154,21 @@ public:
 
   PlanScheduler();
   explicit PlanScheduler(Settings settings);
+  PlanScheduler(const PlanScheduler&) = delete;
   /** Cancels every job and waits for the running steps to end. */
   ~PlanScheduler();
-  PlanScheduler(const PlanScheduler&) = delete;
   PlanScheduler& operator=(const PlanScheduler&) = delete;
-
-  /** Start a job (thread-safe). */
-  JobId submit(Request request);
-  /** A one-step job publishing one leg (the result of `work`). */
-  JobId submitOne(uint64_t owner,
-                  std::string label,
-                  Clock::time_point deadline,
-                  std::function<std::any(const std::atomic<bool>& cancel)> work,
-                  bool lookAhead = false);
+  /** Drop it: its queued tasks never run, a running step is told to stop. */
+  void cancel(JobId job);
   /**
    * The legs since the last call, and its state. A finished job (Done or
    * Failed) is forgotten once it's collected with nothing left.
    */
   Collected collect(JobId job);
-  State state(JobId job) const;
-  /** Drop it: its queued tasks never run, a running step is told to stop. */
-  void cancel(JobId job);
+  /** The pool size for this machine: hardware threads - 2, at least 2. */
+  static unsigned defaultThreads();
+  /** Tasks queued or running. */
+  std::size_t pending() const;
   /**
    * Let go of something heavy without freeing it on this thread (the game
    * thread): a worker drops the last hold on it (a finished plan's copy of
@@ -183,36 +178,40 @@ public:
   void release(std::shared_ptr<const void> object);
   /** Needed sooner (or later) than asked: an agent stopped early. */
   void setDeadline(JobId job, Clock::time_point deadline);
-
-  unsigned threads() const { return static_cast<unsigned>(m_threads.size()); }
-  /** Tasks queued or running. */
-  std::size_t pending() const;
-  Stats stats() const;
   const Settings& settings() const { return m_settings; }
-
-  /** The pool size for this machine: hardware threads - 2, at least 2. */
-  static unsigned defaultThreads();
+  State state(JobId job) const;
+  Stats stats() const;
+  /** Start a job (thread-safe). */
+  JobId submit(Request request);
+  /** A one-step job publishing one leg (the result of `work`). */
+  JobId submitOne(uint64_t owner,
+                  std::string label,
+                  Clock::time_point deadline,
+                  std::function<std::any(const std::atomic<bool>& cancel)> work,
+                  bool lookAhead = false);
+  unsigned threads() const { return static_cast<unsigned>(m_threads.size()); }
 
 private:
   struct Job;
   struct Task;
-  void run();
-  // The task a free worker takes now (null: none; `wake`: when to look
-  // again for a deferred one). Under m_mutex.
-  std::shared_ptr<Task> pick(Clock::time_point now, Clock::time_point& wake);
-  void finishStep(const std::shared_ptr<Job>& job, bool more, double seconds);
+
   // cancel() under m_mutex.
   void cancelLocked(JobId job);
-  // The job's Request::wanted, its throw caught and logged as unwanted.
-  // Under m_mutex.
-  static bool wanted(const Job& job);
-  void publish(Job& job, std::any leg);
-  void fork(Job& job, std::function<void(const std::atomic<bool>&)> task);
   void fail(Job& job, const std::string& what);
+  void finishStep(const std::shared_ptr<Job>& job, bool more, double seconds);
   // A job just ended (Done or Failed) that nobody collects
   // (Request::collected false): forgotten now, let go on a worker. Called
   // with m_mutex held.
   void forgetUncollectedLocked(const Job& job);
+  void fork(Job& job, std::function<void(const std::atomic<bool>&)> task);
+  // The task a free worker takes now (null: none; `wake`: when to look
+  // again for a deferred one). Under m_mutex.
+  std::shared_ptr<Task> pick(Clock::time_point now, Clock::time_point& wake);
+  void publish(Job& job, std::any leg);
+  void run();
+  // The job's Request::wanted, its throw caught and logged as unwanted.
+  // Under m_mutex.
+  static bool wanted(const Job& job);
 
   Settings m_settings;
   mutable std::mutex m_mutex;

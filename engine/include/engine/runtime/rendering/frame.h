@@ -12,11 +12,13 @@
 #include "engine/core/rendering/sunShadow.h"
 #include "engine/core/sceneData/shaderGlobals.h"
 #include "engine/core/sceneData/wind.h"
-#include "glm/glm/ext/matrix_float4x4.hpp"
-#include "glm/glm/ext/vector_float3.hpp"
-#include "glm/glm/ext/vector_float4.hpp"
-#include "glm/glm/ext/vector_int2.hpp"
-#include "glm/glm/ext/vector_int4.hpp"
+
+#include <glm/glm/ext/matrix_float4x4.hpp>
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
+#include <glm/glm/ext/vector_float4.hpp>
+#include <glm/glm/ext/vector_int2.hpp>
+#include <glm/glm/ext/vector_int4.hpp>
 
 #include <cstddef>
 #include <cstdint>
@@ -190,11 +192,11 @@ struct FrameParams
 /** A grass field the renderer holds (IRenderer::createGrass). */
 struct GrassHandle
 {
-  uint32_t id = 0;
+  bool operator==(const GrassHandle&) const = default;
 
   bool valid() const { return id != 0; }
 
-  bool operator==(const GrassHandle&) const = default;
+  uint32_t id = 0;
 };
 
 /**

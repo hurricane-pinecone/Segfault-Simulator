@@ -4,8 +4,9 @@
 #include "engine/core/sceneData/celestialBodies.h"
 #include "engine/core/sceneData/clouds.h"
 #include "engine/core/sceneData/directionalLighting.h"
-#include "glm/glm/ext/vector_float3.hpp"
-#include "glm/glm/ext/vector_float4.hpp"
+
+#include <glm/glm/ext/vector_float3.hpp>
+#include <glm/glm/ext/vector_float4.hpp>
 
 #include <cstdint>
 
@@ -138,6 +139,8 @@ float moonlight(const CelestialBodies& bodies);
  */
 struct PointLight
 {
+  bool spot() const { return spotDirection != glm::vec3(0.0f); }
+
   glm::vec3 position{0.0f};
   glm::vec3 color{1.0f, 0.85f, 0.6f};
   float intensity = 1.0f;
@@ -148,8 +151,6 @@ struct PointLight
   glm::vec3 spotDirection{0.0f};
   float spotCosInner = -1.0f;
   float spotCosOuter = -1.0f;
-
-  bool spot() const { return spotDirection != glm::vec3(0.0f); }
 };
 
 /**
@@ -208,6 +209,8 @@ bool lightReachesFace(const PointLight& light, int face);
  */
 struct ShadowSettings
 {
+  bool operator==(const ShadowSettings&) const = default;
+
   bool enabled = true;
   float distance = 40.0f;
   float depthBias = 0.0015f;
@@ -217,8 +220,6 @@ struct ShadowSettings
   uint32_t cascades = 1;
   float cascadeDistance = 200.0f;
   float cascadeSplit = 0.75f;
-
-  bool operator==(const ShadowSettings&) const = default;
 };
 
 /**
@@ -236,13 +237,13 @@ struct ShadowSettings
  */
 struct BloomSettings
 {
+  bool operator==(const BloomSettings&) const = default;
+
   bool enabled = true;
   float intensity = 0.6f;
   float threshold = 1.0f;
   float softness = 0.5f;
   float radius = 1.0f;
-
-  bool operator==(const BloomSettings&) const = default;
 };
 
 /**
@@ -284,10 +285,10 @@ struct DepthOfFieldSettings
  */
 struct HazeSettings
 {
+  bool operator==(const HazeSettings&) const = default;
+
   float strength = 0.0f;
   float distance = 120.0f;
-
-  bool operator==(const HazeSettings&) const = default;
 };
 
 } // namespace sfs

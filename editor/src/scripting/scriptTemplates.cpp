@@ -1,12 +1,13 @@
 #include "scripting/scriptTemplates.h"
 
-#include "scripting/scriptFiles.h"
-
 #include "engine/core/logger/logger.h"
 #include "engine/core/util/atomicFile.h"
+#include "scripting/scriptFiles.h"
 
 #include <cctype>
-#include <fstream>
+#include <filesystem>
+#include <optional>
+#include <string>
 
 namespace scriptTemplates
 {
@@ -21,7 +22,9 @@ std::string source(Kind kind, const std::string& name)
     return "#pragma once\n"
            "#include <sfs/sfs.h>\n"
            "\n"
-           "class " + name + " : public sfs::GameObject\n"
+           "class " +
+           name +
+           " : public sfs::GameObject\n"
            "{\n"
            "protected:\n"
            "  void onCreate(sfs::Scene& scene) override\n"
@@ -36,10 +39,14 @@ std::string source(Kind kind, const std::string& name)
     return "#pragma once\n"
            "#include <sfs/sfs.h>\n"
            "\n"
-           "class " + name + " : public sfs::System\n"
+           "class " +
+           name +
+           " : public sfs::System\n"
            "{\n"
-           "  // The components an entity needs to be one of this system's entities.\n"
-           "  // using Entities = sfs::Query<YourComponent, sfs::TransformComponent>;\n"
+           "  // The components an entity needs to be one of this system's "
+           "entities.\n"
+           "  // using Entities = sfs::Query<YourComponent, "
+           "sfs::TransformComponent>;\n"
            "\n"
            "protected:\n"
            "  void create() override\n"
@@ -52,9 +59,11 @@ std::string source(Kind kind, const std::string& name)
            "    for (const sfs::Entity& entity : getEntities())\n"
            "    {\n"
            "    }\n"
-           "    // Once Entities is registered, each row unpacks its components\n"
+           "    // Once Entities is registered, each row unpacks its "
+           "components\n"
            "    // (`auto [entity, yours, transform]` with the entity too):\n"
-           "    // for (auto [yours, transform] : getEntities<Entities>().components())\n"
+           "    // for (auto [yours, transform] : "
+           "getEntities<Entities>().components())\n"
            "    // {\n"
            "    // }\n"
            "  }\n"
@@ -63,13 +72,17 @@ std::string source(Kind kind, const std::string& name)
     return "#pragma once\n"
            "#include <sfs/sfs.h>\n"
            "\n"
-           "class " + name + " : public sfs::Service\n"
+           "class " +
+           name +
+           " : public sfs::Service\n"
            "{\n"
            "protected:\n"
            "  void create() override\n"
            "  {\n"
-           "    // Make the consumers it reacts to, each with its handler, and keep them.\n"
-           "    // A handler checks the entity it's handed first: it may be gone.\n"
+           "    // Make the consumers it reacts to, each with its handler, and "
+           "keep them.\n"
+           "    // A handler checks the entity it's handed first: it may be "
+           "gone.\n"
            "    // m_events = consumer<YourEvent>().onEvent(\n"
            "    //     [](const sfs::Entity& entity, const YourEvent& event)\n"
            "    //     {\n"
@@ -82,19 +95,28 @@ std::string source(Kind kind, const std::string& name)
     return "#pragma once\n"
            "#include <sfs/sfs.h>\n"
            "\n"
-           "struct " + name + "\n"
+           "struct " +
+           name +
+           "\n"
            "{\n"
            "};\n";
   case Kind::ScriptableObject:
     return "#pragma once\n"
            "#include <sfs/sfs.h>\n"
            "\n"
-           "// Shared data, kept in .asset files: make one in the Assets panel\n"
-           "// (New Scriptable Object), and refer to it with an sfs::AssetRef<" + name + "> field.\n"
-           "struct " + name + " : sfs::ScriptableObject\n"
+           "// Shared data, kept in .asset files: make one in the Assets "
+           "panel\n"
+           "// (New Scriptable Object), and refer to it with an "
+           "sfs::AssetRef<" +
+           name +
+           "> field.\n"
+           "struct " +
+           name +
+           " : sfs::ScriptableObject\n"
            "{\n"
            "};\n";
   }
+
   return {};
 }
 } // namespace
@@ -114,6 +136,7 @@ const char* label(Kind kind)
   case Kind::ScriptableObject:
     return "Scriptable Object Template";
   }
+
   return "";
 }
 
@@ -121,16 +144,19 @@ bool isValidName(const std::string& name)
 {
   if (name.empty() || std::isdigit(static_cast<unsigned char>(name.front())))
     return false;
+
   for (const char c : name)
     if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_')
       return false;
+
   return true;
 }
 
-std::optional<std::filesystem::path> create(Kind kind,
-                                            const std::string& name,
-                                            const std::filesystem::path& scriptsFolder,
-                                            const std::filesystem::path& folder)
+std::optional<std::filesystem::path>
+create(Kind kind,
+       const std::string& name,
+       const std::filesystem::path& scriptsFolder,
+       const std::filesystem::path& folder)
 {
   if (!isValidName(name))
   {
@@ -138,19 +164,23 @@ std::optional<std::filesystem::path> create(Kind kind,
     return std::nullopt;
   }
 
-  if (const auto existing = scriptFiles::find(scriptsFolder, name, scriptFiles::Prefer::Header))
+  if (const auto existing =
+          scriptFiles::find(scriptsFolder, name, scriptFiles::Prefer::Header))
   {
     LOG_ERROR("There's already a script called " + name + " (" +
-              existing->lexically_relative(scriptsFolder).generic_string() + ")");
+              existing->lexically_relative(scriptsFolder).generic_string() +
+              ")");
     return std::nullopt;
   }
 
   const std::filesystem::path path = folder / (name + ".h");
   std::filesystem::create_directories(folder);
+
   if (!sfs::writeFileAtomically(path, source(kind, name)))
     return std::nullopt;
 
-  LOG_INFO("Created " + std::string(label(kind)) + " " + path.filename().string());
+  LOG_INFO("Created " + std::string(label(kind)) + " " +
+           path.filename().string());
   return path;
 }
 

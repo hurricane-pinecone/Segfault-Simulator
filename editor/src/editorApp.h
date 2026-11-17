@@ -1,9 +1,14 @@
 #pragma once
 
+#include "build/buildEnvironment.h"
 #include "build/gameExporter.h"
 #include "build/moduleBuilder.h"
 #include "editorContext.h"
 #include "editorSettings.h"
+#include "engine/core/assets/assetDatabase.h"
+#include "engine/core/ecs/entity.h"
+#include "engine/runtime/game/game.h"
+#include "engine/runtime/rendering/backend/iRenderBackend.h"
 #include "engine/runtime/scripting/moduleHost.h"
 #include "history/editorHistory.h"
 #include "panels/panel.h"
@@ -11,7 +16,8 @@
 #include "scripting/fieldMigration.h"
 #include "scripting/scriptTemplates.h"
 
-#include "engine/runtime/game/game.h"
+#include <nlohmann/json.hpp>
+#include <SDL_events.h>
 
 #include <chrono>
 #include <cstdint>
@@ -145,9 +151,11 @@ private:
   /** Do `action`, first asking to save whatever it would lose. */
   void guarded(PendingAction action);
   void perform(const PendingAction& action);
-  /** Whether `kind` would lose changes (quitting: any tab's; else the scene's). */
+  /** Whether `kind` would lose changes (quitting: any tab's; else the scene's).
+   */
   bool losesChanges(Pending kind) const;
-  /** Save what `kind` would lose. @return false (m_unsavedError says why) if something wasn't. */
+  /** Save what `kind` would lose. @return false (m_unsavedError says why) if
+   * something wasn't. */
   bool saveBefore(Pending kind);
   void drawUnsavedDialog();
   PendingAction m_pendingAction;
@@ -167,12 +175,14 @@ private:
   void drawRecoverDialog();
   struct Autosave
   {
-    std::filesystem::path file;  // in .sfs/autosave
-    std::filesystem::path scene; // the scene file it's of; empty: an unsaved one
+    std::filesystem::path file; // in .sfs/autosave
+    std::filesystem::path
+        scene; // the scene file it's of; empty: an unsaved one
     std::filesystem::file_time_type written;
   };
   std::vector<Autosave> m_autosaves; // to offer to recover
-  std::chrono::steady_clock::time_point m_lastAutosave = std::chrono::steady_clock::now();
+  std::chrono::steady_clock::time_point m_lastAutosave =
+      std::chrono::steady_clock::now();
   uint64_t m_autosavedRevision = 0;
 
   // --- game module & play mode ---
@@ -209,7 +219,7 @@ private:
   // The next check compares the scripts with the ones the game module was
   // built from (changed while the editor was closed: it's rebuilt).
   bool m_moduleFirstCheck = false;
-  std::string m_buildScriptsStamp; // the scripts the running build is of
+  std::string m_buildScriptsStamp;  // the scripts the running build is of
   bool m_moduleBuildQueued = false; // asked for during a UI Preview build
   struct ScriptsStamp
   {
@@ -241,13 +251,15 @@ private:
     EditorHistory* history = nullptr;
     ViewportPanel* viewport = nullptr; // in m_panels
     sfs::Entity selection;             // kept while another is active
-    uint64_t appliedRevision = 0;      // the history's, when last applied (the scene's: saved)
+    uint64_t appliedRevision =
+        0; // the history's, when last applied (the scene's: saved)
     std::unique_ptr<SceneDocument> ownDocument; // a prefab's
     std::unique_ptr<EditorHistory> ownHistory;
   };
   Workspace& sceneWorkspace() { return *m_workspaces.front(); }
   const Workspace& sceneWorkspace() const { return *m_workspaces.front(); }
-  /** Whether a tab has edits not yet saved (the scene) or applied (a prefab). */
+  /** Whether a tab has edits not yet saved (the scene) or applied (a prefab).
+   */
   bool unsaved(const Workspace& workspace) const;
   /** The scene's edits are all in its file (just saved, opened or new). */
   void markSceneSaved();
@@ -339,11 +351,11 @@ private:
   UiPreviewPanel* m_uiPreview = nullptr;
   std::filesystem::path m_startupProject;
   bool m_layoutChecked = false;
-  bool m_resetLayout = false; // Window > Reset Layout, done next frame
+  bool m_resetLayout = false;  // Window > Reset Layout, done next frame
   int m_defaultTabsFrames = 0; // frames showDefaultTabs() has left
   int m_startFrames = 3;       // the first frames, while windows appear
   EditorSettings m_settings;   // the layout and window, kept between sessions
-  bool m_appFocused = false; // one of the editor's windows has the keyboard
+  bool m_appFocused = false;   // one of the editor's windows has the keyboard
 
   // Open/New project dialogs.
   enum class Dialog

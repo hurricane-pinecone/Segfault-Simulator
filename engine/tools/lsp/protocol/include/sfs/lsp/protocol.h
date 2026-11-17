@@ -34,9 +34,6 @@ inline constexpr int kServerNotInitialized = -32002;
 class MessageReader
 {
 public:
-  /** The largest body kept: larger ones are skipped. */
-  static constexpr std::size_t kMaxMessageSize = 64u * 1024u * 1024u;
-
   /**
    * Adds bytes from the stream.
    *
@@ -47,6 +44,9 @@ public:
   void feed(std::string_view bytes,
             std::vector<std::string>& messages,
             std::vector<std::string>& problems);
+
+  /** The largest body kept: larger ones are skipped. */
+  static constexpr std::size_t kMaxMessageSize = 64u * 1024u * 1024u;
 
 private:
   std::string m_buffer;

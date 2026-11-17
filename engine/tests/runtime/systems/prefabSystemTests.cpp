@@ -1,28 +1,34 @@
 #include "../../testHarness.h"
 #include "../rendering/mockRenderer.h"
 #include "../serialization/rigComponent.h"
+#include "engine/core/assets/assetDatabase.h"
+#include "engine/core/components/cameraFollowComponent.h"
+#include "engine/core/components/capsuleCollider3DComponent.h"
+#include "engine/core/components/transformComponent.h"
+#include "engine/core/ecs/entity.h"
+#include "engine/core/hierarchy/hierarchy.h"
+#include "engine/core/rendering/camera.h"
+#include "engine/runtime/animation/animationSystem.h"
+#include "engine/runtime/assetStore/assetStore.h"
+#include "engine/runtime/game/gameObject.h"
+#include "engine/runtime/rendering/renderSystem.h"
+#include "engine/runtime/rendering/standardScene.h"
+#include "engine/runtime/sceneManager/scene.h"
+#include "engine/runtime/sceneManager/sceneManager.h"
+#include "engine/runtime/scripting/scriptRegistry.h"
+#include "engine/runtime/systems/physicsSystem3D.h"
+#include "engine/runtime/systems/prefabSystem.h"
 
-#include <engine/core/assets/assetDatabase.h>
-#include <engine/core/components/cameraFollowComponent.h>
-#include <engine/core/components/capsuleCollider3DComponent.h>
-#include <engine/core/components/nameComponent.h>
-#include <engine/core/components/scriptComponent.h>
-#include <engine/core/components/transformComponent.h>
-#include <engine/core/hierarchy/hierarchy.h>
-#include <engine/runtime/animation/animationSystem.h>
-#include <engine/runtime/assetStore/assetStore.h>
-#include <engine/runtime/game/gameObject.h>
-#include <engine/runtime/rendering/renderSystem.h>
-#include <engine/runtime/rendering/standardScene.h>
-#include <engine/runtime/sceneManager/sceneManager.h>
-#include <engine/runtime/scripting/scriptRegistry.h>
-#include <engine/runtime/systems/physicsSystem3D.h>
-#include <engine/runtime/systems/prefabSystem.h>
+#include <glm/glm/ext/quaternion_trigonometric.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
 
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <memory>
+#include <ratio>
 #include <string>
 
 using namespace sfs;
@@ -76,15 +82,19 @@ struct Project
     const AssetDatabase database(folder,
                                  AssetDatabase::Mode::ReadWrite,
                                  AssetDatabase::projectFolders());
+
     if (const AssetRecord* r =
             database.findByPath(fs::path("prefabs") / "tree.prefab"))
       tree = "asset:" + r->id.toString();
+
     if (const AssetRecord* r =
             database.findByPath(fs::path("prefabs") / "post.prefab"))
       post = "asset:" + r->id.toString();
+
     if (const AssetRecord* r =
             database.findByPath(fs::path("prefabs") / "follower.prefab"))
       follower = "asset:" + r->id.toString();
+
     if (const AssetRecord* r =
             database.findByPath(fs::path("prefabs") / "lost.prefab"))
       lost = "asset:" + r->id.toString();
@@ -235,21 +245,25 @@ int main()
     World world(project);
     const Entity first = world.prefabs->spawn(project.follower, at({}));
     const Entity second = world.prefabs->spawn(project.follower, at({}));
+
     for (const Entity& root : {first, second})
     {
       const Entity target = root.getComponent<CameraFollowComponent>()->target;
       CHECK(target.isValid());
       CHECK(hierarchy::parentOf(target) == root);
     }
+
     CHECK(first.getComponent<CameraFollowComponent>()->target !=
           second.getComponent<CameraFollowComponent>()->target);
 
     testing3d::LogLines log;
+
     for (int i = 0; i < 4; ++i)
     {
       const Entity root = world.prefabs->spawn(project.lost, at({}));
       CHECK(!root.getComponent<CameraFollowComponent>()->target.isValid());
     }
+
     CHECK(log.count("no entity at '8'") == 1u);
   }
 
@@ -287,12 +301,14 @@ int main()
     group.addComponent<TransformComponent>();
     const auto start = std::chrono::steady_clock::now();
     int made = 0;
+
     for (int i = 0; i < 1000; ++i)
       made += world.prefabs
                   ->spawn(project.tree,
                           at({float(i % 40) * 5.0f, float(i / 40) * 5.0f, 0}),
                           group)
                   .isValid();
+
     const auto spawned = std::chrono::steady_clock::now();
     world.step(); // their bodies made
     const auto stepped = std::chrono::steady_clock::now();

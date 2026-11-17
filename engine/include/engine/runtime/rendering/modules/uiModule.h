@@ -6,12 +6,16 @@
 #include "engine/runtime/ui/fontAtlas.h"
 #include "engine/runtime/ui/imageAtlas.h"
 #include "engine/runtime/ui/layout.h"
+#include "engine/runtime/ui/ui.h"
+
+#include <glm/glm/ext/vector_float2.hpp>
 
 #include <chrono>
+#include <cstdint>
 #include <functional>
-#include <memory>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace sfs
@@ -46,11 +50,32 @@ class UiModule : public CommandModule<RenderContext, UiDrawCommand>,
 public:
   explicit UiModule(Scene& scene);
 
-  void update(double deltaTime) override;
   void computeCommands(const RenderContext& context) override;
+
+  /**
+   * How big a view would be laid out in `offer` pixels (its own size, or
+   * the offer along a way it stretches), at the fixed pixels a point.
+   */
+  glm::vec2 fit(const ui::View& view, glm::vec2 offer);
 
   /** Clicks on UI, and the mouse kept from the game while it's the UI's. */
   void handleInput(Input& input);
+
+  /**
+   * What was laid out last frame, every layer's, front last (for tests and
+   * tools; ids are each layer's own).
+   */
+  const std::vector<ui::Hit>& hits();
+
+  /**
+   * An Image's picture: an image file (loaded once), or a mesh's icon
+   * (drawn once), in the module's atlas; null if there's none, or the mesh
+   * isn't loaded yet.
+   */
+  const ui::SourceImage* image(const std::string& source, bool mesh) override;
+
+  /** Where every view went last frame, layer by layer, if recorded. */
+  const std::vector<ui::Placed>& placed() const { return m_placed; }
 
   /**
    * The mouse as handleInput() takes it: where it is (pixels in the
@@ -64,6 +89,9 @@ public:
                bool released,
                bool held,
                glm::vec2 wheel = glm::vec2(0.0f));
+
+  /** Pixels a point, now (the screen's height / 1080, x setScale()). */
+  float scale() const { return m_scale; }
 
   /**
    * Draw these layers instead of the scene's (the editor's UI preview);
@@ -86,48 +114,21 @@ public:
    */
   void setPixelsPerPoint(float pixels) { m_fixedScale = pixels; }
 
-  /**
-   * How big a view would be laid out in `offer` pixels (its own size, or
-   * the offer along a way it stretches), at the fixed pixels a point.
-   */
-  glm::vec2 fit(const ui::View& view, glm::vec2 offer);
-
   /** Keep where every view went (placed()), for tools. */
   void setRecordPlaced(bool record) { m_recordPlaced = record; }
-  /** Where every view went last frame, layer by layer, if recorded. */
-  const std::vector<ui::Placed>& placed() const { return m_placed; }
+
+  /** Bigger or smaller UI (1: as designed); a game's UI scale setting. */
+  void setScale(float scale) { m_userScale = scale; }
 
   /** The colours and default font (Theme::font) layers are drawn with. */
   ui::Theme& theme() { return m_theme; }
 
-  /** Pixels a point, now (the screen's height / 1080, x setScale()). */
-  float scale() const { return m_scale; }
-  /** Bigger or smaller UI (1: as designed); a game's UI scale setting. */
-  void setScale(float scale) { m_userScale = scale; }
+  void update(double deltaTime) override;
+
   /** What setScale() set. */
   float userScale() const { return m_userScale; }
 
-  /**
-   * An Image's picture: an image file (loaded once), or a mesh's icon
-   * (drawn once), in the module's atlas; null if there's none, or the mesh
-   * isn't loaded yet.
-   */
-  const ui::SourceImage* image(const std::string& source, bool mesh) override;
-
-  /**
-   * What was laid out last frame, every layer's, front last (for tests and
-   * tools; ids are each layer's own).
-   */
-  const std::vector<ui::Hit>& hits();
-
 private:
-  // A font's file as a path to open: an asset ("asset:<id>"), the project's
-  // assets folder, or the engine's (beside the program).
-  std::string resolveFont(const std::string& file) const;
-  // A file the UI reads (a font, an image) as a path to open: an asset
-  // ("asset:<id>"), the project's folder, or beside the program; empty if
-  // there's none.
-  std::string resolveFile(const std::string& file) const;
   // What a layer keeps from frame to frame.
   struct LayerUi
   {
@@ -143,13 +144,21 @@ private:
     const ui::Layer* layer = nullptr;
     const ui::Hit* hit = nullptr;
   };
+
+  Found helpAt(glm::vec2 point) const;
   // The front hit there (with help, for helpAt()).
   Found hitAt(glm::vec2 point) const;
-  Found helpAt(glm::vec2 point) const;
-  // A hit's node in its layer's newest tree (its callbacks' source).
-  const ui::Node* sourceOf(const Found& found) const;
   // The pointer as `layer`'s layout sees it.
   ui::Pointer pointerFor(const ui::Layer* layer) const;
+  // A file the UI reads (a font, an image) as a path to open: an asset
+  // ("asset:<id>"), the project's folder, or beside the program; empty if
+  // there's none.
+  std::string resolveFile(const std::string& file) const;
+  // A font's file as a path to open: an asset ("asset:<id>"), the project's
+  // assets folder, or the engine's (beside the program).
+  std::string resolveFont(const std::string& file) const;
+  // A hit's node in its layer's newest tree (its callbacks' source).
+  const ui::Node* sourceOf(const Found& found) const;
 
   Scene& m_scene;
   ui::Theme m_theme;

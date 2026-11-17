@@ -2,7 +2,9 @@
 
 #include "engine/core/rendering/aabb.h"
 #include "engine/core/rendering/mesh.h"
-#include "glm/glm/ext/vector_float4.hpp"
+
+#include <glm/glm/ext/vector_float3.hpp>
+#include <glm/glm/ext/vector_float4.hpp>
 
 #include <string>
 #include <vector>
@@ -44,6 +46,15 @@ namespace sfs
  */
 struct MeshRendererComponent
 {
+  MeshRendererComponent() = default;
+
+  explicit MeshRendererComponent(MeshHandle mesh,
+                                 glm::vec4 tint = glm::vec4(1.0f),
+                                 bool castsShadow = true)
+      : mesh(mesh), materials(), tint(tint), castsShadow(castsShadow)
+  {
+  }
+
   MeshHandle mesh;
   [[sfs::materials]] std::vector<std::string> materials;
   [[sfs::color]] glm::vec4 tint{1.0f};
@@ -64,15 +75,6 @@ struct MeshRendererComponent
   [[sfs::hide]] Aabb bounds;
   /** The mesh `bounds` were taken from (RenderSystem's). */
   [[sfs::hide]] MeshHandle boundsOf;
-
-  MeshRendererComponent() = default;
-
-  explicit MeshRendererComponent(MeshHandle mesh,
-                                 glm::vec4 tint = glm::vec4(1.0f),
-                                 bool castsShadow = true)
-      : mesh(mesh), materials(), tint(tint), castsShadow(castsShadow)
-  {
-  }
 };
 
 } // namespace sfs

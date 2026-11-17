@@ -3,6 +3,8 @@
 #include "engine/core/rendering/debugLines.h"
 #include "engine/runtime/rendering/space2D.h"
 
+#include <glm/glm/ext/vector_float4.hpp>
+
 #include <cstddef>
 #include <optional>
 

@@ -1,6 +1,5 @@
 #include "../../testHarness.h"
-
-#include <engine/core/jobs/workerPool.h>
+#include "engine/core/jobs/workerPool.h"
 
 #include <atomic>
 #include <chrono>
@@ -17,6 +16,7 @@ bool waitFor(Done done)
 {
   for (int i = 0; i < 500 && !done(); ++i)
     std::this_thread::sleep_for(std::chrono::milliseconds(2));
+
   return done();
 }
 } // namespace
@@ -29,6 +29,7 @@ int main()
     std::atomic<int> ran = 0;
     std::atomic<bool> elsewhere = true;
     const std::thread::id caller = std::this_thread::get_id();
+
     for (int i = 0; i < 50; ++i)
       pool.submit(
           [&]
@@ -36,6 +37,7 @@ int main()
             elsewhere = elsewhere && std::this_thread::get_id() != caller;
             ++ran;
           });
+
     CHECK(waitFor([&] { return ran == 50; }));
     CHECK(elsewhere);
     CHECK(waitFor([&] { return pool.pending() == 0u; }));
@@ -54,8 +56,10 @@ int main()
             std::this_thread::sleep_for(std::chrono::milliseconds(30));
             ++ran;
           });
+
       for (int i = 0; i < 10; ++i)
         pool.submit([&] { ++ran; });
+
       CHECK(waitFor([&] { return started.load(); }));
     }
     CHECK(ran == 1); // the running one finished; the rest never started

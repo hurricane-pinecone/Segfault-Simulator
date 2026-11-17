@@ -1,15 +1,19 @@
 #pragma once
 
 #include "engine/runtime/navigation/agentKind.h"
+#include "engine/runtime/navigation/geometry.h"
 #include "engine/runtime/navigation/planScheduler.h"
+#include "engine/runtime/navigation/space.h"
 #include "engine/runtime/navigation/traffic.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <map>
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace sfs::nav
@@ -78,6 +82,7 @@ public:
       // it again from where it stands.
       NeedsPlan,
     };
+
     Kind kind = Kind::Arrived;
     AgentId agent = 0;
     uint64_t request = 0;
@@ -125,74 +130,34 @@ public:
   /** `scheduler`: where its plans run (null: in update(), deterministic). */
   explicit Fleet(Settings settings,
                  std::shared_ptr<PlanScheduler> scheduler = nullptr);
-  ~Fleet();
   Fleet(const Fleet&) = delete;
+  ~Fleet();
   Fleet& operator=(const Fleet&) = delete;
-
-  const Settings& settings() const { return m_settings; }
-  /** What plans from now on plan in (statics changed: a new World). */
-  void setWorld(World world);
-  const World& world() const { return m_world; }
-
   /** False if there's no agent kind of the spec's name. */
   bool add(AgentId id, AgentSpec spec, Pose2 pose, float hitch = 0.0f);
-  void remove(AgentId id);
-  bool has(AgentId id) const { return m_agents.contains(id); }
-  void setSpec(AgentId id, AgentSpec spec);
-  const AgentSpec* spec(AgentId id) const;
-  void setPriority(AgentId id, int priority);
-  /** Put it somewhere (standing; its plan, if any, dropped). */
-  void place(AgentId id, Pose2 pose, float hitch = 0.0f);
-  /**
-   * Its trailer's angle while nothing here moves it (no path, not driven by
-   * hand): as whoever swung the towed thing left it (hitched, put down). Its
-   * footprint, a plan or a hand drive from where it stands start from it.
-   */
-  void setHitch(AgentId id, float hitch);
-
-  /** Send it to a goal: a new request (the last one counts). */
-  uint64_t requestGoal(AgentId id, AgentGoal goal);
-  /** To the nearest of several, or anywhere `goalTest` accepts. */
-  uint64_t requestGoals(AgentId id,
-                        std::vector<AgentGoal> goals,
-                        std::function<bool(Pose2)> goalTest = {});
-  /** Drive a path made elsewhere (a patrol route): claimed as any. */
-  void setPath(AgentId id, std::shared_ptr<const AgentPath> path);
-  /**
-   * Drive no faster than this (m/s; 0 stands it where it is, braking): a
-   * game's live limit (a working pace, a held pace). Infinity: none.
-   */
-  void setSpeedCap(AgentId id, float cap);
-  /**
-   * Its game is planning its next path (setPath() to come): it's about to
-   * move, so never a static obstacle meanwhile (not solid(), whatever it
-   * stood for). Two machines standing side by side, each planning its way
-   * off, each a solid in the other's plan, searched on for ever.
-   */
-  void setPlanning(AgentId id, bool planning);
+  /** Its look-ahead plan once it's finished (taken once); none meanwhile. */
+  std::optional<AgentPlan> ahead(AgentId id);
+  float along(AgentId id) const;
+  /** Blocked: what blocks it. */
+  std::vector<Space::Hit> blockers(AgentId id) const;
   /** Stop and forget its goal. */
   void cancel(AgentId id);
-  /**
-   * A driver takes the wheel (a player): its goal and path dropped, it's
-   * moved each update by the controls last given (setControls), by its
-   * kind's own motion from its spec (no faster than its speed cap), till
-   * handBack() stands it where it is. Meanwhile it's solid to every other
-   * agent's plans (where it goes next is anyone's guess). False: its kind
-   * can't be driven by hand.
-   */
-  bool takeWheel(AgentId id);
-  void setControls(AgentId id, const Controls& controls);
-  void handBack(AgentId id);
-  bool handDriven(AgentId id) const;
   /** A pair that keep their own spacing (a truck beside its loader). */
   void cooperate(AgentId a, AgentId b, bool on);
-
-  /**
-   * A plan right now on this thread (a game's own checks). `ask.world`
-   * left empty: the fleet's, with the parked agents but `id` as solids.
-   */
-  AgentPlan planNow(AgentId id, PlanAsk ask) const;
-
+  Counters counters(AgentId id) const;
+  float curvature(AgentId id) const;
+  DeadlockStats deadlockStats() const { return m_deadlockStats; }
+  std::vector<Footprint> footprint(AgentId id) const;
+  std::vector<AgentGoal> goals(AgentId id) const;
+  void handBack(AgentId id);
+  bool handDriven(AgentId id) const;
+  bool has(AgentId id) const { return m_agents.contains(id); }
+  float hitch(AgentId id) const;
+  std::vector<AgentId> ids() const;
+  /** The path it drives (null: none) and how far along it is. */
+  const AgentPath* path(AgentId id) const;
+  /** Put it somewhere (standing; its plan, if any, dropped). */
+  void place(AgentId id, Pose2 pose, float hitch = 0.0f);
   /**
    * Look ahead: plan its next way from where its current path ends (`ask`'s
    * from and hitch set to its last sample; `ask.world` empty: the fleet's,
@@ -202,44 +167,77 @@ public:
    * planned from where it stands, needed now. False: no such agent.
    */
   bool planAhead(AgentId id, PlanAsk ask);
-  /** Its look-ahead plan once it's finished (taken once); none meanwhile. */
-  std::optional<AgentPlan> ahead(AgentId id);
   /** Whether a look-ahead plan is on its way (or in, not taken). */
   bool planningAhead(AgentId id) const;
-
-  /** Plans in, claims, right of way, everyone on by `deltaTime`. */
-  void update(double deltaTime);
-
-  State state(AgentId id) const;
+  /**
+   * A plan right now on this thread (a game's own checks). `ask.world`
+   * left empty: the fleet's, with the parked agents but `id` as solids.
+   */
+  AgentPlan planNow(AgentId id, PlanAsk ask) const;
   Pose2 pose(AgentId id) const;
-  float hitch(AgentId id) const;
-  float speed(AgentId id) const; // signed
-  float curvature(AgentId id) const;
-  std::optional<Pose2> towedPose(AgentId id) const;
-  /** The path it drives (null: none) and how far along it is. */
-  const AgentPath* path(AgentId id) const;
-  float along(AgentId id) const;
-  std::vector<AgentGoal> goals(AgentId id) const;
-  std::vector<Footprint> footprint(AgentId id) const;
+  void remove(AgentId id);
+  /** Send it to a goal: a new request (the last one counts). */
+  uint64_t requestGoal(AgentId id, AgentGoal goal);
+  /** To the nearest of several, or anywhere `goalTest` accepts. */
+  uint64_t requestGoals(AgentId id,
+                        std::vector<AgentGoal> goals,
+                        std::function<bool(Pose2)> goalTest = {});
+  void setControls(AgentId id, const Controls& controls);
+  /**
+   * Its trailer's angle while nothing here moves it (no path, not driven by
+   * hand): as whoever swung the towed thing left it (hitched, put down). Its
+   * footprint, a plan or a hand drive from where it stands start from it.
+   */
+  void setHitch(AgentId id, float hitch);
+  /** How agents are named in its log lines (default "agent <id>"). */
+  void setNamer(std::function<std::string(AgentId)> namer)
+  {
+    m_namer = std::move(namer);
+  }
+  /** Drive a path made elsewhere (a patrol route): claimed as any. */
+  void setPath(AgentId id, std::shared_ptr<const AgentPath> path);
+  /**
+   * Its game is planning its next path (setPath() to come): it's about to
+   * move, so never a static obstacle meanwhile (not solid(), whatever it
+   * stood for). Two machines standing side by side, each planning its way
+   * off, each a solid in the other's plan, searched on for ever.
+   */
+  void setPlanning(AgentId id, bool planning);
+  void setPriority(AgentId id, int priority);
+  void setSpec(AgentId id, AgentSpec spec);
+  /**
+   * Drive no faster than this (m/s; 0 stands it where it is, braking): a
+   * game's live limit (a working pace, a held pace). Infinity: none.
+   */
+  void setSpeedCap(AgentId id, float cap);
+  const Settings& settings() const { return m_settings; }
+  /** What plans from now on plan in (statics changed: a new World). */
+  void setWorld(World world);
   /**
    * Whether it's a static obstacle in others' plans (nothing to do; stood
    * parkedAfter not for traffic; stuck with no wait spot): the one test
    * every planner world takes (the fleet's own, and a game's).
    */
   bool solid(AgentId id) const;
-  /** Blocked: what blocks it. */
-  std::vector<Space::Hit> blockers(AgentId id) const;
-  Counters counters(AgentId id) const;
-  std::vector<AgentId> ids() const;
+  const AgentSpec* spec(AgentId id) const;
+  float speed(AgentId id) const; // signed
+  State state(AgentId id) const;
   /** The events since the last call. */
   std::vector<Event> takeEvents();
+  /**
+   * A driver takes the wheel (a player): its goal and path dropped, it's
+   * moved each update by the controls last given (setControls), by its
+   * kind's own motion from its spec (no faster than its speed cap), till
+   * handBack() stands it where it is. Meanwhile it's solid to every other
+   * agent's plans (where it goes next is anyone's guess). False: its kind
+   * can't be driven by hand.
+   */
+  bool takeWheel(AgentId id);
+  std::optional<Pose2> towedPose(AgentId id) const;
   const Traffic& traffic() const { return m_traffic; }
-  DeadlockStats deadlockStats() const { return m_deadlockStats; }
-  /** How agents are named in its log lines (default "agent <id>"). */
-  void setNamer(std::function<std::string(AgentId)> namer)
-  {
-    m_namer = std::move(namer);
-  }
+  /** Plans in, claims, right of way, everyone on by `deltaTime`. */
+  void update(double deltaTime);
+  const World& world() const { return m_world; }
 
 private:
   struct Job;
@@ -250,17 +248,6 @@ private:
     Trip,     // its goal, from where it stands
     WaitSpot, // off the reservations ranked above it
   };
-  void ask(AgentId id, Agent& a, Want want);
-  void submit(AgentId id, Agent& a);
-  std::shared_ptr<Job> start(AgentId id,
-                             const Agent& a,
-                             PlanAsk ask,
-                             const char* what,
-                             PlanScheduler::Clock::time_point deadline,
-                             bool lookAhead);
-  static std::optional<AgentPlan> finished(PlanScheduler* scheduler, Job& job);
-  void poll(AgentId id, Agent& a);
-  void take(AgentId id, Agent& a, const AgentPlan& plan);
   // A way it planned on its own (a wait spot's, a trip's) that would hold
   // it standing in the way of one ranked above it (Traffic::crossing()):
   // planned again round that one's way (Again), up to kAvoidTries times
@@ -271,32 +258,18 @@ private:
     Again,
     Held,
   };
-  Round planRound(AgentId id, Agent& a, const AgentPlan& plan);
-  void claim(AgentId id, Agent& a, float dt);
-  void drive(AgentId id, Agent& a, float dt);
-  World planWorld(AgentId except, const std::vector<Footprint>& more) const;
-  bool standing(const Agent& a) const;
-  bool parked(const Agent& a) const;
-  bool still(const Agent& a) const;
-  bool solid(const Agent& a) const;
-  std::vector<Traffic::Zone> zones(Agent& a, float s, std::size_t from);
   struct Deadlock
   {
     std::vector<AgentId> members; // (a cycle in waiting order, or a chain)
     double since = 0.0;           // when its members began standing
     AgentId yielder = 0;
   };
+
+  void ask(AgentId id, Agent& a, Want want);
   void breakDeadlocks(float dt, const std::map<AgentId, AgentId>& waits);
-  void resolveCycle(Deadlock& d,
-                    const std::vector<AgentId>& cycle,
-                    const std::vector<AgentId>& group);
-  void resolveChain(Deadlock& d,
-                    AgentId waiter,
-                    AgentId end,
-                    const std::vector<AgentId>& group);
-  bool yieldFor(AgentId id, Agent& a, const std::vector<AgentId>& members);
-  std::string nameOf(AgentId id) const;
+  void claim(AgentId id, Agent& a, float dt);
   std::string describe(AgentId id) const;
+  void drive(AgentId id, Agent& a, float dt);
   void event(Event::Kind kind,
              AgentId id,
              uint64_t request,
@@ -305,6 +278,32 @@ private:
   {
     m_events.push_back({kind, id, request, other, std::move(blockers)});
   }
+  static std::optional<AgentPlan> finished(PlanScheduler* scheduler, Job& job);
+  std::string nameOf(AgentId id) const;
+  bool parked(const Agent& a) const;
+  Round planRound(AgentId id, Agent& a, const AgentPlan& plan);
+  World planWorld(AgentId except, const std::vector<Footprint>& more) const;
+  void poll(AgentId id, Agent& a);
+  void resolveChain(Deadlock& d,
+                    AgentId waiter,
+                    AgentId end,
+                    const std::vector<AgentId>& group);
+  void resolveCycle(Deadlock& d,
+                    const std::vector<AgentId>& cycle,
+                    const std::vector<AgentId>& group);
+  bool solid(const Agent& a) const;
+  bool standing(const Agent& a) const;
+  std::shared_ptr<Job> start(AgentId id,
+                             const Agent& a,
+                             PlanAsk ask,
+                             const char* what,
+                             PlanScheduler::Clock::time_point deadline,
+                             bool lookAhead);
+  bool still(const Agent& a) const;
+  void submit(AgentId id, Agent& a);
+  void take(AgentId id, Agent& a, const AgentPlan& plan);
+  bool yieldFor(AgentId id, Agent& a, const std::vector<AgentId>& members);
+  std::vector<Traffic::Zone> zones(Agent& a, float s, std::size_t from);
 
   Settings m_settings;
   World m_world;

@@ -3,13 +3,25 @@
 #include "engine/core/logger/logger.h"
 #include "engine/core/util/atomicFile.h"
 
+#include <nlohmann/json.hpp>
+
 #include <algorithm>
 #include <cctype>
+#include <cstddef>
+#include <cstdint>
+#include <filesystem>
 #include <fstream>
+#include <initializer_list>
+#include <ios>
 #include <iterator>
+#include <optional>
 #include <random>
+#include <string>
+#include <string_view>
 #include <system_error>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 
 namespace fs = std::filesystem;
 using nlohmann::json;
@@ -19,12 +31,13 @@ namespace sfs
 
 namespace
 {
-constexpr int kMetaFormatVersion = 1;
+constexpr int META_FORMAT_VERSION = 1;
 
 std::string lowercase(std::string text)
 {
   for (char& c : text)
     c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
   return text;
 }
 
@@ -59,8 +72,10 @@ AssetId AssetId::generate()
       std::random_device{}() ^
       (static_cast<uint64_t>(std::random_device{}()) << 32)};
   AssetId id;
+
   while (!id.valid())
     id = AssetId{random(), random()};
+
   return id;
 }
 
@@ -68,33 +83,40 @@ std::optional<AssetId> AssetId::parse(std::string_view text)
 {
   if (text.size() != 32)
     return std::nullopt;
+
   AssetId id;
+
   for (std::size_t i = 0; i < 32; ++i)
   {
     const char c =
         static_cast<char>(std::tolower(static_cast<unsigned char>(text[i])));
     int digit = 0;
+
     if (c >= '0' && c <= '9')
       digit = c - '0';
     else if (c >= 'a' && c <= 'f')
       digit = c - 'a' + 10;
     else
       return std::nullopt;
+
     uint64_t& half = i < 16 ? id.high : id.low;
     half = (half << 4) | static_cast<uint64_t>(digit);
   }
+
   return id;
 }
 
 std::string AssetId::toString() const
 {
-  static constexpr char kDigits[] = "0123456789abcdef";
+  static constexpr char DIGITS[] = "0123456789abcdef";
   std::string text(32, '0');
+
   for (int i = 0; i < 16; ++i)
   {
-    text[15 - i] = kDigits[(high >> (4 * i)) & 0xf];
-    text[31 - i] = kDigits[(low >> (4 * i)) & 0xf];
+    text[15 - i] = DIGITS[(high >> (4 * i)) & 0xf];
+    text[31 - i] = DIGITS[(low >> (4 * i)) & 0xf];
   }
+
   return text;
 }
 
@@ -113,22 +135,31 @@ AssetKind assetKindOf(const fs::path& file)
 
   if (any({".png", ".jpg", ".jpeg", ".bmp", ".tga"}))
     return AssetKind::Texture;
+
   if (any({".glb", ".gltf", ".obj"}))
     return AssetKind::Model;
+
   if (any({".mat"}))
     return AssetKind::Material;
+
   if (any({".prefab"}))
     return AssetKind::Prefab;
+
   if (any({".style"}))
     return AssetKind::VisualStyle;
+
   if (any({".asset"}))
     return AssetKind::ScriptableObject;
+
   if (any({".ttf", ".otf"}))
     return AssetKind::Font;
+
   if (any({".wav", ".ogg", ".mp3", ".flac"}))
     return AssetKind::Audio;
+
   if (any({".json", ".txt", ".csv"}))
     return AssetKind::Data;
+
   return AssetKind::Other;
 }
 
@@ -157,6 +188,7 @@ const char* assetKindName(AssetKind kind)
   case AssetKind::Other:
     break;
   }
+
   return "File";
 }
 
@@ -171,13 +203,121 @@ AssetDatabase::AssetDatabase(fs::path root,
   refresh();
 }
 
-bool AssetDatabase::writable(const char* action) const
+fs::path AssetDatabase::absolutePath(const AssetRecord& record) const
 {
-  if (m_mode == Mode::ReadWrite)
-    return true;
-  LOG_ERROR(std::string("AssetDatabase: can't ") + action +
-            " in a read-only database");
-  return false;
+  return m_root / record.path;
+}
+
+void AssetDatabase::addFolders(const fs::path& relative)
+{
+  for (fs::path folder = fs::path(key(relative));
+       !folder.empty() && folder != ".";
+       folder = folder.parent_path())
+    if (std::find(m_folders.begin(), m_folders.end(), folder) ==
+        m_folders.end())
+      m_folders.push_back(folder);
+}
+
+bool AssetDatabase::apply(Scan scan)
+{
+  const bool changed = scan.records.size() != m_records.size() ||
+                       !std::equal(scan.records.begin(),
+                                   scan.records.end(),
+                                   m_records.begin(),
+                                   sameRecord) ||
+                       scan.folders != m_folders;
+
+  if (changed)
+  {
+    m_records = std::move(scan.records);
+    m_folders = std::move(scan.folders);
+    rebuildIndex();
+    ++m_version;
+  }
+
+  return changed;
+}
+
+void AssetDatabase::catalogueChanged()
+{
+  std::sort(m_records.begin(),
+            m_records.end(),
+            [](const AssetRecord& a, const AssetRecord& b)
+            { return key(a.path) < key(b.path); });
+  std::sort(m_folders.begin(),
+            m_folders.end(),
+            [](const fs::path& a, const fs::path& b)
+            { return key(a) < key(b); });
+  rebuildIndex();
+  ++m_version;
+}
+
+bool AssetDatabase::createFolder(const fs::path& relative)
+{
+  if (!writable("create folders"))
+    return false;
+
+  std::error_code error;
+  fs::create_directories(m_root / relative, error);
+
+  if (error)
+  {
+    LOG_ERROR("Assets: can't create folder " + key(relative) + ": " +
+              error.message());
+    return false;
+  }
+
+  addFolders(relative);
+  catalogueChanged();
+  return true;
+}
+
+const AssetRecord* AssetDatabase::find(const AssetId& id) const
+{
+  const auto it = m_byId.find(id);
+  return it == m_byId.end() ? nullptr : &m_records[it->second];
+}
+
+const AssetRecord* AssetDatabase::findByPath(const fs::path& relative) const
+{
+  const auto it = m_byPath.find(key(relative));
+  return it == m_byPath.end() ? nullptr : &m_records[it->second];
+}
+
+std::optional<AssetId> AssetDatabase::import(const fs::path& file,
+                                             const fs::path& folder)
+{
+  if (!writable("import assets"))
+    return std::nullopt;
+
+  // A free name: "tree.png", else "tree 2.png", "tree 3.png", ...
+  const fs::path targetFolder = m_root / folder;
+  fs::path target = targetFolder / file.filename();
+  std::error_code error;
+
+  for (int n = 2; fs::exists(target, error); ++n)
+    target = targetFolder / (file.stem().string() + " " + std::to_string(n) +
+                             file.extension().string());
+
+  fs::create_directories(targetFolder, error);
+  fs::copy_file(file, target, error);
+
+  if (error)
+  {
+    LOG_ERROR("Assets: can't import " + file.string() + ": " + error.message());
+    return std::nullopt;
+  }
+
+  // A new asset, with a new id.
+  AssetRecord record;
+  record.id = AssetId::generate();
+  record.path = fs::path(key(target.lexically_relative(m_root)));
+  record.kind = assetKindOf(record.path);
+  writeMeta(target, Meta{record.id, record.settings});
+  m_records.push_back(record);
+  addFolders(record.path.parent_path());
+  catalogueChanged();
+  return record.id;
 }
 
 fs::path AssetDatabase::metaPathFor(const fs::path& file)
@@ -187,36 +327,219 @@ fs::path AssetDatabase::metaPathFor(const fs::path& file)
   return meta;
 }
 
+bool AssetDatabase::move(const AssetId& id, const fs::path& relative)
+{
+  if (!writable("move assets"))
+    return false;
+
+  const AssetRecord* record = find(id);
+
+  if (!record)
+    return false;
+
+  const fs::path from = absolutePath(*record);
+  const fs::path to = m_root / relative;
+  std::error_code error;
+
+  if (fs::exists(to, error))
+  {
+    LOG_ERROR("Assets: can't move " + key(record->path) + " to " +
+              key(relative) + ": it exists");
+    return false;
+  }
+
+  fs::create_directories(to.parent_path(), error);
+  fs::rename(from, to, error);
+
+  if (error)
+  {
+    LOG_ERROR("Assets: can't move " + key(record->path) + ": " +
+              error.message());
+    return false;
+  }
+
+  if (fs::exists(metaPathFor(from)))
+    fs::rename(metaPathFor(from), metaPathFor(to), error);
+
+  if (error)
+    LOG_ERROR("Assets: moved " + key(relative) +
+              " but not its .meta: " + error.message());
+
+  // The catalogue is updated in place: rescanning every folder (slow on a
+  // network share) for one file isn't needed.
+  m_records[m_byId.at(id)].path = fs::path(key(relative));
+  addFolders(relative.parent_path());
+  catalogueChanged();
+  return true;
+}
+
+bool AssetDatabase::moveFolder(const fs::path& from, const fs::path& to)
+{
+  if (!writable("move folders"))
+    return false;
+
+  const std::string fromKey = key(from);
+  const std::string toKey = key(to);
+
+  if (fromKey.empty() || toKey == fromKey || toKey.starts_with(fromKey + "/"))
+  {
+    LOG_ERROR("Assets: can't move folder " + fromKey + " into itself");
+    return false;
+  }
+
+  std::error_code error;
+
+  if (fs::exists(m_root / to, error))
+  {
+    LOG_ERROR("Assets: can't move folder " + fromKey + " to " + toKey +
+              ": it exists");
+    return false;
+  }
+
+  fs::create_directories((m_root / to).parent_path(), error);
+  fs::rename(
+      m_root / from, m_root / to, error); // .meta files go with their assets
+
+  if (error)
+  {
+    LOG_ERROR("Assets: can't move folder " + fromKey + ": " + error.message());
+    return false;
+  }
+
+  // Everything in it moves with it.
+  const auto moved = [&](const fs::path& path) -> std::optional<fs::path>
+  {
+    const std::string pathKey = key(path);
+
+    if (pathKey == fromKey)
+      return fs::path(toKey);
+
+    if (pathKey.starts_with(fromKey + "/"))
+      return fs::path(toKey + pathKey.substr(fromKey.size()));
+
+    return std::nullopt;
+  };
+
+  for (AssetRecord& record : m_records)
+    if (const auto path = moved(record.path))
+      record.path = *path;
+
+  for (fs::path& folder : m_folders)
+    if (const auto path = moved(folder))
+      folder = *path;
+
+  addFolders(to);
+  catalogueChanged();
+  return true;
+}
+
 AssetDatabase::MetaState AssetDatabase::readMeta(const fs::path& file,
                                                  std::optional<Meta>& meta)
 {
   meta.reset();
   std::ifstream in(metaPathFor(file), std::ios::binary);
+
   if (!in)
     return MetaState::Missing;
+
   const std::string text{
       std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+
   if (text.find_first_not_of(" \t\r\n") == std::string::npos)
     return MetaState::Missing; // empty: nothing in it to keep
+
   const json data = json::parse(text, nullptr, false);
+
   if (!data.is_object() || !data.contains("id") || !data["id"].is_string())
     return MetaState::Corrupt;
+
   const std::optional<AssetId> id =
       AssetId::parse(data["id"].get<std::string>());
+
   if (!id || !id->valid())
     return MetaState::Corrupt;
+
   meta = Meta{*id, data.value("settings", json::object())};
+
   if (!meta->settings.is_object())
     meta->settings = json::object();
+
   return MetaState::Read;
 }
 
-bool AssetDatabase::writeMeta(const fs::path& file, const Meta& meta)
+void AssetDatabase::rebuildIndex()
 {
-  const json data = {{"formatVersion", kMetaFormatVersion},
-                     {"id", meta.id.toString()},
-                     {"settings", meta.settings}};
-  return writeFileAtomically(metaPathFor(file), data.dump(2) + '\n');
+  m_byId.clear();
+  m_byPath.clear();
+
+  for (std::size_t i = 0; i < m_records.size(); ++i)
+  {
+    if (m_records[i].id.valid())
+      m_byId.emplace(m_records[i].id, i);
+
+    m_byPath.emplace(key(m_records[i].path), i);
+  }
+}
+
+bool AssetDatabase::refresh() { return apply(scan()); }
+
+bool AssetDatabase::remove(const AssetId& id)
+{
+  if (!writable("delete assets"))
+    return false;
+
+  const AssetRecord* record = find(id);
+
+  if (!record)
+    return false;
+
+  const fs::path file = absolutePath(*record);
+  std::error_code error;
+  fs::remove(file, error);
+
+  if (error)
+  {
+    LOG_ERROR("Assets: can't delete " + key(record->path) + ": " +
+              error.message());
+    return false;
+  }
+
+  fs::remove(metaPathFor(file), error);
+  m_records.erase(m_records.begin() +
+                  static_cast<std::ptrdiff_t>(m_byId.at(id)));
+  catalogueChanged();
+  return true;
+}
+
+bool AssetDatabase::removeFolder(const fs::path& relative)
+{
+  if (!writable("delete folders"))
+    return false;
+
+  if (key(relative).empty() || key(relative) == ".")
+    return false; // never the root
+
+  std::error_code error;
+  fs::remove_all(m_root / relative, error);
+
+  if (error)
+  {
+    LOG_ERROR("Assets: can't delete folder " + key(relative) + ": " +
+              error.message());
+    return false;
+  }
+
+  const std::string folderKey = key(relative);
+  const auto inside = [&](const fs::path& path)
+  {
+    const std::string pathKey = key(path);
+    return pathKey == folderKey || pathKey.starts_with(folderKey + "/");
+  };
+  std::erase_if(m_records,
+                [&](const AssetRecord& record) { return inside(record.path); });
+  std::erase_if(m_folders, inside);
+  catalogueChanged();
+  return true;
 }
 
 AssetDatabase::Scan
@@ -229,35 +552,44 @@ AssetDatabase::scan(const fs::path& root,
   std::vector<fs::path> folders;
   std::error_code error;
   std::vector<fs::path> tops; // where to look
+
   if (catalogued.empty())
     tops.push_back(root);
+
   for (const fs::path& folder : catalogued)
     if (fs::is_directory(root / folder, error))
     {
       tops.push_back(root / folder);
       folders.push_back(folder);
     }
+
   for (const fs::path& top : tops)
   {
     error.clear();
+
     for (auto it = fs::recursive_directory_iterator(top, error);
          !error && it != fs::recursive_directory_iterator();
          it.increment(error))
     {
       const fs::path& path = it->path();
+
       if (hidden(path))
       {
         if (it->is_directory(error))
           it.disable_recursion_pending();
+
         continue;
       }
+
       const fs::path relative = path.lexically_relative(root);
+
       if (it->is_directory(error))
         folders.push_back(relative);
       else if (!isMeta(path))
         files.push_back(relative);
     }
   }
+
   std::sort(files.begin(),
             files.end(),
             [](const fs::path& a, const fs::path& b)
@@ -276,6 +608,7 @@ AssetDatabase::scan(const fs::path& root,
     std::optional<Meta> meta;
   };
   std::vector<Found> found(files.size());
+
   for (std::size_t i = 0; i < files.size(); ++i)
   {
     found[i].relative = files[i];
@@ -285,17 +618,22 @@ AssetDatabase::scan(const fs::path& root,
   // Who keeps an id claimed twice (a file and its .meta copied, say "a.png"
   // to "a - Copy.png"): the path it belonged to before, else the first path.
   std::unordered_map<AssetId, std::string, AssetIdHash> before;
+
   for (const AssetRecord& record : previous)
     if (record.id.valid())
       before.emplace(record.id, key(record.path));
+
   std::unordered_map<AssetId, std::size_t, AssetIdHash> owner;
+
   for (std::size_t i = 0; i < found.size(); ++i)
   {
     if (!found[i].meta)
       continue;
+
     const AssetId id = found[i].meta->id;
     const auto [claim, first] = owner.emplace(id, i);
     const auto had = before.find(id);
+
     if (!first && had != before.end() &&
         had->second == key(found[i].relative) &&
         had->second != key(found[claim->second].relative))
@@ -304,6 +642,7 @@ AssetDatabase::scan(const fs::path& root,
 
   std::vector<AssetRecord> records;
   records.reserve(files.size());
+
   for (std::size_t i = 0; i < found.size(); ++i)
   {
     Found& file = found[i];
@@ -320,6 +659,7 @@ AssetDatabase::scan(const fs::path& root,
       if (duplicate)
         LOG_INFO("Assets: " + key(file.relative) +
                  " has another asset's id (a copy?); giving it its own");
+
       file.meta = Meta{AssetId::generate(),
                        file.meta ? file.meta->settings : json::object()};
       writeMeta(absolute, *file.meta);
@@ -328,290 +668,58 @@ AssetDatabase::scan(const fs::path& root,
     AssetRecord record;
     record.path = fs::path(key(file.relative));
     record.kind = assetKindOf(file.relative);
+
     if (file.meta && !(duplicate && mode == Mode::ReadOnly))
     {
       record.id = file.meta->id;
       record.settings = std::move(file.meta->settings);
     }
+
     records.push_back(std::move(record));
   }
 
   return {std::move(records), std::move(folders)};
 }
 
-bool AssetDatabase::apply(Scan scan)
-{
-  const bool changed = scan.records.size() != m_records.size() ||
-                       !std::equal(scan.records.begin(),
-                                   scan.records.end(),
-                                   m_records.begin(),
-                                   sameRecord) ||
-                       scan.folders != m_folders;
-  if (changed)
-  {
-    m_records = std::move(scan.records);
-    m_folders = std::move(scan.folders);
-    rebuildIndex();
-    ++m_version;
-  }
-  return changed;
-}
-
-bool AssetDatabase::refresh() { return apply(scan()); }
-
-void AssetDatabase::rebuildIndex()
-{
-  m_byId.clear();
-  m_byPath.clear();
-  for (std::size_t i = 0; i < m_records.size(); ++i)
-  {
-    if (m_records[i].id.valid())
-      m_byId.emplace(m_records[i].id, i);
-    m_byPath.emplace(key(m_records[i].path), i);
-  }
-}
-
-const AssetRecord* AssetDatabase::find(const AssetId& id) const
-{
-  const auto it = m_byId.find(id);
-  return it == m_byId.end() ? nullptr : &m_records[it->second];
-}
-
-const AssetRecord* AssetDatabase::findByPath(const fs::path& relative) const
-{
-  const auto it = m_byPath.find(key(relative));
-  return it == m_byPath.end() ? nullptr : &m_records[it->second];
-}
-
-fs::path AssetDatabase::absolutePath(const AssetRecord& record) const
-{
-  return m_root / record.path;
-}
-
-bool AssetDatabase::move(const AssetId& id, const fs::path& relative)
-{
-  if (!writable("move assets"))
-    return false;
-  const AssetRecord* record = find(id);
-  if (!record)
-    return false;
-
-  const fs::path from = absolutePath(*record);
-  const fs::path to = m_root / relative;
-  std::error_code error;
-  if (fs::exists(to, error))
-  {
-    LOG_ERROR("Assets: can't move " + key(record->path) + " to " +
-              key(relative) + ": it exists");
-    return false;
-  }
-  fs::create_directories(to.parent_path(), error);
-  fs::rename(from, to, error);
-  if (error)
-  {
-    LOG_ERROR("Assets: can't move " + key(record->path) + ": " +
-              error.message());
-    return false;
-  }
-  if (fs::exists(metaPathFor(from)))
-    fs::rename(metaPathFor(from), metaPathFor(to), error);
-  if (error)
-    LOG_ERROR("Assets: moved " + key(relative) +
-              " but not its .meta: " + error.message());
-  // The catalogue is updated in place: rescanning every folder (slow on a
-  // network share) for one file isn't needed.
-  m_records[m_byId.at(id)].path = fs::path(key(relative));
-  addFolders(relative.parent_path());
-  catalogueChanged();
-  return true;
-}
-
-void AssetDatabase::addFolders(const fs::path& relative)
-{
-  for (fs::path folder = fs::path(key(relative));
-       !folder.empty() && folder != ".";
-       folder = folder.parent_path())
-    if (std::find(m_folders.begin(), m_folders.end(), folder) ==
-        m_folders.end())
-      m_folders.push_back(folder);
-}
-
-void AssetDatabase::catalogueChanged()
-{
-  std::sort(m_records.begin(),
-            m_records.end(),
-            [](const AssetRecord& a, const AssetRecord& b)
-            { return key(a.path) < key(b.path); });
-  std::sort(m_folders.begin(),
-            m_folders.end(),
-            [](const fs::path& a, const fs::path& b)
-            { return key(a) < key(b); });
-  rebuildIndex();
-  ++m_version;
-}
-
-bool AssetDatabase::moveFolder(const fs::path& from, const fs::path& to)
-{
-  if (!writable("move folders"))
-    return false;
-  const std::string fromKey = key(from);
-  const std::string toKey = key(to);
-  if (fromKey.empty() || toKey == fromKey || toKey.starts_with(fromKey + "/"))
-  {
-    LOG_ERROR("Assets: can't move folder " + fromKey + " into itself");
-    return false;
-  }
-  std::error_code error;
-  if (fs::exists(m_root / to, error))
-  {
-    LOG_ERROR("Assets: can't move folder " + fromKey + " to " + toKey +
-              ": it exists");
-    return false;
-  }
-  fs::create_directories((m_root / to).parent_path(), error);
-  fs::rename(
-      m_root / from, m_root / to, error); // .meta files go with their assets
-  if (error)
-  {
-    LOG_ERROR("Assets: can't move folder " + fromKey + ": " + error.message());
-    return false;
-  }
-  // Everything in it moves with it.
-  const auto moved = [&](const fs::path& path) -> std::optional<fs::path>
-  {
-    const std::string pathKey = key(path);
-    if (pathKey == fromKey)
-      return fs::path(toKey);
-    if (pathKey.starts_with(fromKey + "/"))
-      return fs::path(toKey + pathKey.substr(fromKey.size()));
-    return std::nullopt;
-  };
-  for (AssetRecord& record : m_records)
-    if (const auto path = moved(record.path))
-      record.path = *path;
-  for (fs::path& folder : m_folders)
-    if (const auto path = moved(folder))
-      folder = *path;
-  addFolders(to);
-  catalogueChanged();
-  return true;
-}
-
-bool AssetDatabase::remove(const AssetId& id)
-{
-  if (!writable("delete assets"))
-    return false;
-  const AssetRecord* record = find(id);
-  if (!record)
-    return false;
-  const fs::path file = absolutePath(*record);
-  std::error_code error;
-  fs::remove(file, error);
-  if (error)
-  {
-    LOG_ERROR("Assets: can't delete " + key(record->path) + ": " +
-              error.message());
-    return false;
-  }
-  fs::remove(metaPathFor(file), error);
-  m_records.erase(m_records.begin() +
-                  static_cast<std::ptrdiff_t>(m_byId.at(id)));
-  catalogueChanged();
-  return true;
-}
-
-bool AssetDatabase::removeFolder(const fs::path& relative)
-{
-  if (!writable("delete folders"))
-    return false;
-  if (key(relative).empty() || key(relative) == ".")
-    return false; // never the root
-  std::error_code error;
-  fs::remove_all(m_root / relative, error);
-  if (error)
-  {
-    LOG_ERROR("Assets: can't delete folder " + key(relative) + ": " +
-              error.message());
-    return false;
-  }
-  const std::string folderKey = key(relative);
-  const auto inside = [&](const fs::path& path)
-  {
-    const std::string pathKey = key(path);
-    return pathKey == folderKey || pathKey.starts_with(folderKey + "/");
-  };
-  std::erase_if(m_records,
-                [&](const AssetRecord& record) { return inside(record.path); });
-  std::erase_if(m_folders, inside);
-  catalogueChanged();
-  return true;
-}
-
-bool AssetDatabase::createFolder(const fs::path& relative)
-{
-  if (!writable("create folders"))
-    return false;
-  std::error_code error;
-  fs::create_directories(m_root / relative, error);
-  if (error)
-  {
-    LOG_ERROR("Assets: can't create folder " + key(relative) + ": " +
-              error.message());
-    return false;
-  }
-  addFolders(relative);
-  catalogueChanged();
-  return true;
-}
-
-std::optional<AssetId> AssetDatabase::import(const fs::path& file,
-                                             const fs::path& folder)
-{
-  if (!writable("import assets"))
-    return std::nullopt;
-
-  // A free name: "tree.png", else "tree 2.png", "tree 3.png", ...
-  const fs::path targetFolder = m_root / folder;
-  fs::path target = targetFolder / file.filename();
-  std::error_code error;
-  for (int n = 2; fs::exists(target, error); ++n)
-    target = targetFolder / (file.stem().string() + " " + std::to_string(n) +
-                             file.extension().string());
-
-  fs::create_directories(targetFolder, error);
-  fs::copy_file(file, target, error);
-  if (error)
-  {
-    LOG_ERROR("Assets: can't import " + file.string() + ": " + error.message());
-    return std::nullopt;
-  }
-  // A new asset, with a new id.
-  AssetRecord record;
-  record.id = AssetId::generate();
-  record.path = fs::path(key(target.lexically_relative(m_root)));
-  record.kind = assetKindOf(record.path);
-  writeMeta(target, Meta{record.id, record.settings});
-  m_records.push_back(record);
-  addFolders(record.path.parent_path());
-  catalogueChanged();
-  return record.id;
-}
-
 bool AssetDatabase::setSettings(const AssetId& id, json settings)
 {
   if (!writable("change import settings"))
     return false;
+
   const auto it = m_byId.find(id);
+
   if (it == m_byId.end())
     return false;
+
   AssetRecord& record = m_records[it->second];
+
   if (!settings.is_object())
     settings = json::object();
+
   if (!writeMeta(absolutePath(record), Meta{id, settings}))
     return false;
+
   record.settings = std::move(settings);
   ++m_version;
   return true;
+}
+
+bool AssetDatabase::writable(const char* action) const
+{
+  if (m_mode == Mode::ReadWrite)
+    return true;
+
+  LOG_ERROR(std::string("AssetDatabase: can't ") + action +
+            " in a read-only database");
+  return false;
+}
+
+bool AssetDatabase::writeMeta(const fs::path& file, const Meta& meta)
+{
+  const json data = {{"formatVersion", META_FORMAT_VERSION},
+                     {"id", meta.id.toString()},
+                     {"settings", meta.settings}};
+  return writeFileAtomically(metaPathFor(file), data.dump(2) + '\n');
 }
 
 } // namespace sfs

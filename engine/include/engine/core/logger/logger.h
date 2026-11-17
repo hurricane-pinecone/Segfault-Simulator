@@ -36,16 +36,6 @@ public:
     MINIMAL // just timestamp + message
   };
 
-  static void setLogLevel(Level level);
-  static Level logLevel() { return s_logLevel; }
-  static void setVerbosity(Verbosity v);
-
-  /**
-   * Write out anything held back: a pending repeat count, and buffered
-   * stdout/stderr. Sinks are told of the repeat count like any message.
-   */
-  static void flush();
-
   /** Receives every message that passes the log level, already formatted. */
   using Sink = std::function<void(Level level, const std::string& message)>;
   using SinkId = int;
@@ -59,12 +49,7 @@ public:
    * @return an id for removeSink.
    */
   static SinkId addSink(Sink sink);
-  static void removeSink(SinkId id);
 
-  static void info(const std::string& message,
-                   const char* file,
-                   int line,
-                   const char* func);
   static void debug(const std::string& message,
                     const char* file,
                     int line,
@@ -72,34 +57,43 @@ public:
 
   static void debug(const char* message, std::size_t value, const char* file);
 
-  static void warn(const std::string& message,
-                   const char* file,
-                   int line,
-                   const char* func);
-
   static void error(const std::string& message,
                     const char* file,
                     int line,
                     const char* func);
 
-private:
-  static Level s_logLevel;
-  static Verbosity verbosity;
+  /**
+   * Write out anything held back: a pending repeat count, and buffered
+   * stdout/stderr. Sinks are told of the repeat count like any message.
+   */
+  static void flush();
 
-  inline static constexpr const char* RED = "\033[31m";
-  inline static constexpr const char* BLUE = "\033[94m";
-  inline static constexpr const char* YELLOW = "\033[33m";
-  inline static constexpr const char* RESET = "\033[0m";
+  static void info(const std::string& message,
+                   const char* file,
+                   int line,
+                   const char* func);
+
+  static Level logLevel() { return s_logLevel; }
+
+  static void removeSink(SinkId id);
+
+  static void setLogLevel(Level level);
+
+  static void setVerbosity(Verbosity v);
+
+  static void warn(const std::string& message,
+                   const char* file,
+                   int line,
+                   const char* func);
+
+private:
+  static std::string currentTime();
 
   static std::string formatMessage(Level level,
                                    const std::string& message,
                                    const char* file,
                                    int line,
                                    const char* func);
-  static std::string currentTime();
-
-  // Forward a formatted message to every registered sink.
-  static void notifySinks(Level level, const std::string& message);
 
   // Log a message that passed the level: counted if it repeats the last one,
   // else written (after the last one's repeat count, if any).
@@ -108,10 +102,22 @@ private:
                   const char* file,
                   int line,
                   const char* func);
+
+  // Forward a formatted message to every registered sink.
+  static void notifySinks(Level level, const std::string& message);
+
+  static const char* toString(Level level);
+
   // Write a formatted message to stdout/stderr and the sinks.
   static void write(Level level, const std::string& formatted);
 
-  static const char* toString(Level level);
+  static Level s_logLevel;
+  static Verbosity verbosity;
+
+  inline static constexpr const char* RED = "\033[31m";
+  inline static constexpr const char* BLUE = "\033[94m";
+  inline static constexpr const char* YELLOW = "\033[33m";
+  inline static constexpr const char* RESET = "\033[0m";
 };
 
 inline const char* __log_file_name(const char* path)

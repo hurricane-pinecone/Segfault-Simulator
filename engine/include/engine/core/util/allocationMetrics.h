@@ -40,9 +40,8 @@ class ScopedMemoryTracking
 {
 public:
   explicit ScopedMemoryTracking(MemoryTrackingPhase phase);
-  ~ScopedMemoryTracking();
-
   ScopedMemoryTracking(const ScopedMemoryTracking&) = delete;
+  ~ScopedMemoryTracking();
   ScopedMemoryTracking& operator=(const ScopedMemoryTracking&) = delete;
 
 private:

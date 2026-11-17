@@ -1,68 +1,59 @@
 #include "engine/runtime/navigation/vehicle/vehicleKind.h"
 
+#include "engine/runtime/navigation/agentKind.h"
+#include "engine/runtime/navigation/geometry.h"
+#include "engine/runtime/navigation/traffic.h"
 #include "engine/runtime/navigation/vehicle/follower.h"
+#include "engine/runtime/navigation/vehicle/planner.h"
 #include "engine/runtime/navigation/vehicle/steering.h"
+#include "engine/runtime/navigation/vehicle/vehicleModel.h"
+#include "engine/runtime/navigation/vehicle/vehiclePath.h"
 #include "engine/runtime/navigation/vehicle/vehicleSpec.h"
+
+#include <glm/glm/ext/vector_float2.hpp>
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
+#include <functional>
+#include <memory>
 #include <mutex>
+#include <optional>
+#include <utility>
+#include <vector>
 
 namespace sfs::nav::vehicle
 {
 
 void applySpec(AgentSpec& agent, const VehicleSpec& spec, const Rig& rig)
 {
-  constexpr float kG = 9.81f, kDegrees = 3.14159265358979f / 180.0f;
+  constexpr float G = 9.81f, DEGREES = 3.14159265358979f / 180.0f;
   const float own = std::max(spec.mass, 1.0f);
   const float rigMass = own + std::max(rig.extraMass, 0.0f);
   const float grip = std::max(rig.grip, 0.01f);
   const float effort = std::clamp(rig.effort, 0.01f, 1.0f);
-  const float steer = std::clamp(spec.maxSteerAngle, 1.0f, 80.0f) * kDegrees;
+  const float steer = std::clamp(spec.maxSteerAngle, 1.0f, 80.0f) * DEGREES;
 
   agent.wheelbase =
       std::max(spec.wheelbase > 0.0f ? spec.wheelbase : rig.wheelbase, 0.05f);
   agent.minRadius = agent.wheelbase / std::tan(steer);
-  agent.steerRate = std::max(spec.steerRate, 0.1f) * kDegrees;
+  agent.steerRate = std::max(spec.steerRate, 0.1f) * DEGREES;
   agent.topSpeed =
       std::clamp(spec.roadSpeed, 0.1f, std::max(spec.topSpeed, 0.1f));
   agent.reverseSpeed = std::max(spec.reverseSpeed, 0.05f);
   agent.mayReverse = spec.mayReverse;
   agent.shuttleSeconds = std::max(spec.shuttleSeconds, 0.0f);
   // The driven wheels carry the machine's own weight, not what it tows.
-  const float traction = grip * kG * own;
+  const float traction = grip * G * own;
   const float drive = 2.0f * spec.power * 1000.0f / agent.topSpeed;
   agent.accel = effort * std::min(drive, traction) / rigMass;
   agent.brake =
       effort * std::min(spec.brakeForce * 1000.0f, traction) / rigMass;
-  agent.lateralAccel = effort * grip * kG;
+  agent.lateralAccel = effort * grip * G;
 }
 
 namespace
 {
-
-std::vector<AgentPath::Sample> samplesOf(const VehiclePath& path)
-{
-  std::vector<AgentPath::Sample> out;
-  out.reserve(path.points.size());
-  for (const PathPoint& p : path.points)
-    out.push_back({p.s, p.pose, p.hitch, p.time, p.gear});
-  return out;
-}
-
-AgentPlan toPlan(const PlanResult& r)
-{
-  AgentPlan out;
-  out.state = r.state;
-  if (!r.path.empty())
-    out.path = std::make_shared<VehicleAgentPath>(r.path);
-  out.seconds = r.seconds;
-  out.goal = r.goal;
-  out.blockers = r.blockers;
-  out.stats = r.stats;
-  out.why = r.why;
-  return out;
-}
 
 // Follower behind AgentMotion.
 class VehicleMotion : public AgentMotion
@@ -82,11 +73,13 @@ public:
   {
     m_path = std::move(path);
     const auto* v = dynamic_cast<const VehicleAgentPath*>(m_path.get());
+
     if (!v)
     {
       m_follower.setPath({}, 0.0f);
       return;
     }
+
     if (fromS > 1.0e-4f)
     {
       // (Its own copy of the rest: the follower drives from its start.)
@@ -94,6 +87,7 @@ public:
       m_path = rest;
       v = rest.get();
     }
+
     m_follower.setPath(v->path, speed);
   }
   const AgentPath* path() const override { return m_path.get(); }
@@ -105,6 +99,7 @@ public:
       m_hand.step(m_controls, dt, speedCap);
       return {};
     }
+
     const Follower::State st = m_follower.step(dt, speedCap, stopAt);
     return {st.done, st.waiting, st.hardStopFrom};
   }
@@ -153,6 +148,33 @@ private:
   bool m_handOn = false;
 };
 
+std::vector<AgentPath::Sample> samplesOf(const VehiclePath& path)
+{
+  std::vector<AgentPath::Sample> out;
+  out.reserve(path.points.size());
+
+  for (const PathPoint& p : path.points)
+    out.push_back({p.s, p.pose, p.hitch, p.time, p.gear});
+
+  return out;
+}
+
+AgentPlan toPlan(const PlanResult& r)
+{
+  AgentPlan out;
+  out.state = r.state;
+
+  if (!r.path.empty())
+    out.path = std::make_shared<VehicleAgentPath>(r.path);
+
+  out.seconds = r.seconds;
+  out.goal = r.goal;
+  out.blockers = r.blockers;
+  out.stats = r.stats;
+  out.why = r.why;
+  return out;
+}
+
 Footprint footprintOf(const Box3& b, Pose2 q)
 {
   const glm::vec2 f = unit(q.heading), l{-f.y, f.x};
@@ -179,6 +201,51 @@ VehicleAgentPath::VehicleAgentPath(VehiclePath p) : path(std::move(p))
   samples = samplesOf(path);
 }
 
+std::vector<Footprint>
+VehicleKind::footprint(const AgentSpec& agent, Pose2 pose, float hitch) const
+{
+  std::vector<Footprint> out;
+
+  for (const Box3& b : agent.boxes)
+    out.push_back(footprintOf(b, pose));
+
+  if (agent.trailer)
+    out.push_back(
+        footprintOf(agent.trailer->box,
+                    trailerPose(trailerOf(*agent.trailer), pose, hitch)));
+
+  return out;
+}
+
+std::unique_ptr<AgentMotion>
+VehicleKind::makeFollower(const AgentSpec& agent) const
+{
+  return std::make_unique<VehicleMotion>(agent);
+}
+
+AgentPlan
+VehicleKind::plan(const AgentSpec& agent,
+                  const PlanAsk& ask,
+                  const std::function<void(const AgentPlan&)>& onPartial) const
+{
+  const PlanRequest q = requestOf(agent, ask);
+  std::function<void(const PlanResult&)> partial;
+
+  if (onPartial)
+    partial = [&](const PlanResult& r) { onPartial(toPlan(r)); };
+
+  return toPlan(planNow(q, partial));
+}
+
+std::optional<Pose2>
+VehicleKind::towedPose(const AgentSpec& agent, Pose2 pose, float hitch) const
+{
+  if (!agent.trailer)
+    return std::nullopt;
+
+  return trailerPose(trailerOf(*agent.trailer), pose, hitch);
+}
+
 VehicleModel modelOf(const AgentSpec& a)
 {
   VehicleModel v;
@@ -193,10 +260,13 @@ VehicleModel modelOf(const AgentSpec& a)
   v.lateralAccel = a.lateralAccel;
   v.shuttleSeconds = a.shuttleSeconds;
   v.mayReverse = a.mayReverse;
+
   if (a.trailer)
     v.trailer = trailerOf(*a.trailer);
+
   for (const AgentSpec::Mode& m : a.modes)
     v.modes.push_back({m.boxes, m.minRadius, m.forwardOnly});
+
   return v;
 }
 
@@ -211,6 +281,7 @@ PlanRequest requestOf(const AgentSpec& a, const PlanAsk& ask)
   q.graph = ask.world.graph;
   q.from = ask.from;
   q.hitch = ask.hitch;
+
   for (const AgentGoal& g : ask.goals)
   {
     Goal goal;
@@ -220,6 +291,7 @@ PlanRequest requestOf(const AgentSpec& a, const PlanAsk& ask)
     q.goals.push_back(goal);
     q.speedCap = std::min(q.speedCap, g.speedCap);
   }
+
   q.goalTest = ask.goalTest;
   q.nodeBudget = ask.nodeBudget;
   q.budgetCap = ask.budgetCap;
@@ -231,12 +303,17 @@ VehiclePath tail(const VehiclePath& path, float fromS)
 {
   VehiclePath out;
   const std::vector<PathPoint>& p = path.points;
+
   if (p.empty())
     return out;
+
   std::size_t i = 0;
+
   while (i + 1 < p.size() && p[i + 1].s <= fromS)
     ++i;
+
   const float s0 = p[i].s, t0 = p[i].time;
+
   for (std::size_t k = i; k < p.size(); ++k)
   {
     PathPoint q = p[k];
@@ -244,66 +321,34 @@ VehiclePath tail(const VehiclePath& path, float fromS)
     q.time -= t0;
     out.points.push_back(q);
   }
+
   out.start = out.points.front().pose;
   out.startHitch = out.points.front().hitch;
   // (The segments from there: the first one cut where it starts.)
   float at = 0.0f;
+
   for (const Segment& g : path.segments)
   {
     const float end = at + g.length;
+
     if (end > s0 + 1.0e-4f)
     {
       Segment cut = g;
+
       if (at < s0)
       {
         const float u = g.length > 0.0f ? (s0 - at) / g.length : 0.0f;
         cut.k0 = g.k0 + u * (g.k1 - g.k0);
         cut.length = end - s0;
       }
+
       out.segments.push_back(cut);
     }
+
     at = end;
   }
+
   return out;
-}
-
-AgentPlan
-VehicleKind::plan(const AgentSpec& agent,
-                  const PlanAsk& ask,
-                  const std::function<void(const AgentPlan&)>& onPartial) const
-{
-  const PlanRequest q = requestOf(agent, ask);
-  std::function<void(const PlanResult&)> partial;
-  if (onPartial)
-    partial = [&](const PlanResult& r) { onPartial(toPlan(r)); };
-  return toPlan(planNow(q, partial));
-}
-
-std::unique_ptr<AgentMotion>
-VehicleKind::makeFollower(const AgentSpec& agent) const
-{
-  return std::make_unique<VehicleMotion>(agent);
-}
-
-std::vector<Footprint>
-VehicleKind::footprint(const AgentSpec& agent, Pose2 pose, float hitch) const
-{
-  std::vector<Footprint> out;
-  for (const Box3& b : agent.boxes)
-    out.push_back(footprintOf(b, pose));
-  if (agent.trailer)
-    out.push_back(
-        footprintOf(agent.trailer->box,
-                    trailerPose(trailerOf(*agent.trailer), pose, hitch)));
-  return out;
-}
-
-std::optional<Pose2>
-VehicleKind::towedPose(const AgentSpec& agent, Pose2 pose, float hitch) const
-{
-  if (!agent.trailer)
-    return std::nullopt;
-  return trailerPose(trailerOf(*agent.trailer), pose, hitch);
 }
 
 void addKind()

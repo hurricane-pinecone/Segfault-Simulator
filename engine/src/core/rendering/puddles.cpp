@@ -2,11 +2,16 @@
 
 #include "engine/core/rendering/deformation.h"
 #include "engine/core/rendering/terrain.h"
-#include "glm/glm/common.hpp"
-#include "glm/glm/geometric.hpp"
+
+#include <glm/glm/common.hpp>
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
+#include <glm/glm/ext/vector_float4.hpp>
+#include <glm/glm/ext/vector_int2.hpp>
+#include <glm/glm/geometric.hpp>
 
 #include <algorithm>
-#include <cmath>
+#include <vector>
 
 namespace sfs
 {
@@ -15,11 +20,15 @@ glm::vec2 puddleWindowCenter(glm::vec3 eye, glm::vec3 view, float ground)
 {
   const glm::vec2 flat(view);
   const float across = glm::length(flat);
+
   if (across < 1e-4f)
     return glm::vec2(eye);
+
   float out = kPuddleReach;
+
   if (view.z < -1e-4f)
     out = std::min(out, std::max(eye.z - ground, 0.0f) / -view.z * across);
+
   return glm::vec2(eye) + flat / across * out;
 }
 
@@ -40,10 +49,12 @@ std::vector<glm::vec4> puddleGround(const GroundSurface& surface,
 {
   std::vector<glm::vec4> ground = surface.raster(
       origin, kPuddleGroundTexel, glm::ivec2(kPuddleGroundTexels));
+
   for (glm::vec4& texel : ground)
     texel.w = texel.w > 0.5f
                   ? terrainPuddles(terrain, glm::vec2(texel.y, texel.z))
                   : -1.0f;
+
   return ground;
 }
 

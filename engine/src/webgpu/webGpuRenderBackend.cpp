@@ -1,24 +1,23 @@
 #include "engine/webgpu/webGpuRenderBackend.h"
 
-#include "engine/runtime/rendering/backend/renderBackends.h"
-
 #include "engine/core/logger/logger.h"
 #include "engine/core/util/cpuTiming.h"
-#include "engine/runtime/assetStore/textureImporter.h"
-
 #include "engine/runtime/assetStore/assetStore.h"
+#include "engine/runtime/assetStore/textureImporter.h"
+#include "engine/runtime/rendering/backend/renderBackends.h"
+
+#include <SDL.h>
+
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 
-#include "SDL.h"
-
 // No ImGui on the web: a web build is a game, not a tool.
 #ifndef ENGINE_WEB
-  #include "imgui.h"
-  #include "imgui/backends/imgui_impl_sdl2.h"
-  #include "imgui/backends/imgui_impl_wgpu.h"
-  #include "webgpu/imgui/imguiViewportRenderer.h"
+  #include <imgui.h>
+  #include <imgui/backends/imgui_impl_sdl2.h>
+  #include <imgui/backends/imgui_impl_wgpu.h>
+  #include <webgpu/imgui/imguiViewportRenderer.h>
 #endif
 
 namespace sfs
@@ -41,6 +40,7 @@ bool WebGpuRenderBackend::init(const char* title, int width, int height)
       // Hidden until the first frame is drawn, so it
       // doesn't sit black while the GPU sets up.
       SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_HIDDEN);
+
   if (!m_window)
   {
     LOG_ERROR("Error creating window");
@@ -49,6 +49,7 @@ bool WebGpuRenderBackend::init(const char* title, int width, int height)
 
   if (!m_context.init(m_window))
     return false;
+
   // In pixels: more than the window's size on a high-DPI screen that counts
   // it in points.
   SDL_GetWindowSizeInPixels(m_window, &m_width, &m_height);
@@ -68,18 +69,23 @@ bool WebGpuRenderBackend::init(const char* title, int width, int height)
 #endif
 
   m_renderer = std::make_unique<WebGpuRenderer>(m_context);
+
   if (!m_renderer->initialize())
     return false;
 
   if (const char* path = std::getenv("SFS_SCREENSHOT"))
   {
     m_screenshotPath = path;
+
     if (const char* frame = std::getenv("SFS_SCREENSHOT_FRAME"))
       m_screenshotFrame = std::max(std::atoi(frame), 1);
+
     if (const char* every = std::getenv("SFS_SCREENSHOT_EVERY"))
       m_screenshotEvery = std::max(std::atoi(every), 0);
+
     if (const char* count = std::getenv("SFS_SCREENSHOT_COUNT"))
       m_screenshotCount = std::max(std::atoi(count), 1);
+
     m_screenshotTarget = std::make_unique<WebGpuRenderTarget>(m_context);
   }
 
@@ -254,6 +260,7 @@ void WebGpuRenderBackend::beginFrame(int width, int height)
   // see acquire()); then the callbacks below find it already acquired.
   const bool offscreen = (m_screenshotTarget && screenshotDue(m_frame + 1)) ||
                          (m_sceneTarget && m_sceneTarget->valid());
+
   if (!m_lateAcquire)
     acquire(offscreen);
 
@@ -300,7 +307,9 @@ bool WebGpuRenderBackend::acquire(bool clear)
 {
   if (m_acquired)
     return m_view != nullptr;
+
   m_acquired = true;
+
   if (!m_encoder)
     return false;
 
@@ -316,6 +325,7 @@ bool WebGpuRenderBackend::acquire(bool clear)
     SFS_CPU_SCOPE("backend/acquire (late)");
     wgpuSurfaceGetCurrentTexture(m_context.surface(), &m_surfTex);
   }
+
   if (m_surfTex.status != WGPUSurfaceGetCurrentTextureStatus_SuccessOptimal &&
       m_surfTex.status != WGPUSurfaceGetCurrentTextureStatus_SuccessSuboptimal)
   {
@@ -323,14 +333,18 @@ bool WebGpuRenderBackend::acquire(bool clear)
     // this frame.
     if (m_surfTex.texture)
       wgpuTextureRelease(m_surfTex.texture);
+
     m_surfTex = {};
     m_context.configure(m_width, m_height);
     m_view = nullptr;
     return false;
   }
+
   m_view = m_context.surfaceView(m_surfTex.texture);
+
   if (clear)
     clearWindow();
+
   return true;
 }
 
@@ -366,13 +380,16 @@ void WebGpuRenderBackend::endFrame()
     }
 #endif
   }
+
   if (m_screenshotTarget && screenshotDue(++m_frame))
     saveScreenshot();
+
   if (m_view)
   {
     wgpuTextureViewRelease(m_view);
     m_view = nullptr;
   }
+
   // Shown once the first frame is in (or, if a hidden window had nothing to
   // draw into, now anyway).
   if (!m_shown)
@@ -380,6 +397,7 @@ void WebGpuRenderBackend::endFrame()
     SDL_ShowWindow(m_window);
     m_shown = true;
   }
+
   if (m_surfTex.texture)
   {
     wgpuTextureRelease(m_surfTex.texture);
@@ -409,6 +427,7 @@ void WebGpuRenderBackend::shutdown()
   m_assetStore.reset();
   m_renderer.reset(); // before the device it was built on
   m_context.release();
+
   if (m_window)
   {
     SDL_DestroyWindow(m_window);
@@ -479,8 +498,10 @@ WebGpuRenderBackend::createRenderer(uint32_t shadowMapResolution)
 {
   auto renderer =
       std::make_unique<WebGpuRenderer>(m_context, shadowMapResolution);
+
   if (!renderer->initialize())
     return nullptr;
+
   return renderer;
 }
 
@@ -490,8 +511,10 @@ void WebGpuRenderBackend::drawInto(IRenderTarget& target,
 {
   auto& into = static_cast<WebGpuRenderTarget&>(target);
   auto& gpu = static_cast<WebGpuRenderer&>(renderer);
+
   if (!into.valid())
     return;
+
   const WGPUCommandEncoder encoder =
       wgpuDeviceCreateCommandEncoder(m_context.device(), nullptr);
   gpu.setTarget(encoder, into.view(), into.size());
@@ -509,6 +532,7 @@ WebGpuRenderBackend::createImage(glm::ivec2 size, std::span<const uint8_t> rgba)
   if (size.x <= 0 || size.y <= 0 ||
       rgba.size() < std::size_t(size.x) * size.y * 4)
     return nullptr;
+
   return std::make_unique<WebGpuImage>(m_context, size, rgba);
 }
 
@@ -521,10 +545,13 @@ void registerWebGpuBackend()
 bool WebGpuRenderBackend::screenshotDue(int frame) const
 {
   const int after = frame - m_screenshotFrame;
+
   if (after < 0)
     return false;
+
   if (m_screenshotEvery <= 0 || m_screenshotCount <= 1)
     return after == 0;
+
   return after % m_screenshotEvery == 0 &&
          after / m_screenshotEvery < m_screenshotCount;
 }
@@ -532,8 +559,10 @@ bool WebGpuRenderBackend::screenshotDue(int frame) const
 void WebGpuRenderBackend::saveScreenshot()
 {
   const glm::ivec2 size = m_screenshotTarget->size();
+
   if (size.x <= 0 || size.y <= 0)
     return;
+
   // Rows padded to 256 bytes, as copies need.
   const uint32_t rowBytes = (uint32_t(size.x) * 4 + 255) / 256 * 256;
   WGPUBufferDescriptor bufferDesc = {};
@@ -567,13 +596,16 @@ void WebGpuRenderBackend::saveScreenshot()
   callback.userdata1 = &mapped;
   wgpuBufferMapAsync(
       readback.get(), WGPUMapMode_Read, 0, bufferDesc.size, callback);
+
   for (int i = 0; i < 100 && !mapped; ++i)
     m_context.poll(true);
+
   if (!mapped)
   {
     LOG_ERROR("Couldn't read the screenshot back");
     return;
   }
+
   const auto* data = static_cast<const uint8_t*>(
       wgpuBufferGetConstMappedRange(readback.get(), 0, bufferDesc.size));
   TextureData image;
@@ -583,6 +615,7 @@ void WebGpuRenderBackend::saveScreenshot()
   const WGPUTextureFormat format = m_context.format();
   const bool bgra = format == WGPUTextureFormat_BGRA8Unorm ||
                     format == WGPUTextureFormat_BGRA8UnormSrgb;
+
   for (int y = 0; y < size.y; ++y)
     for (int x = 0; x < size.x; ++x)
     {
@@ -593,9 +626,11 @@ void WebGpuRenderBackend::saveScreenshot()
       to[2] = bgra ? from[0] : from[2];
       to[3] = 255;
     }
+
   wgpuBufferUnmap(readback.get());
   // One of a sequence: numbered.
   std::string path = m_screenshotPath;
+
   if (m_screenshotEvery > 0 && m_screenshotCount > 1)
   {
     char number[8];
@@ -606,6 +641,7 @@ void WebGpuRenderBackend::saveScreenshot()
     const std::size_t dot = path.rfind('.');
     path.insert(dot == std::string::npos ? path.size() : dot, number);
   }
+
   if (saveTexturePng(image, path))
     LOG_INFO("Screenshot saved to " + path);
 }

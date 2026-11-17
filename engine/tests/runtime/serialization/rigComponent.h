@@ -3,12 +3,16 @@
 // A component with entity reference fields for the serializer tests,
 // registered by hand as sfs-codegen would.
 
-#include <engine/core/logger/logger.h>
-#include <engine/core/reflection/registration.h>
+#include "engine/core/ecs/entity.h"
+#include "engine/core/logger/logger.h"
+#include "engine/core/reflection/reflection.h"
+#include "engine/core/reflection/registration.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace sfs::testing3d
@@ -35,6 +39,7 @@ inline void registerRig()
 {
   if (reflect::types().find("RigComponent"))
     return;
+
   reflect::TypeInfo part = reflect::componentType<PartRigComponent>(
       "PartRigComponent", "Part Rig", "tests");
   reflect::FieldInfo partArm;
@@ -69,9 +74,6 @@ inline void registerRig()
 /** The log's lines from its making on, to count warnings by. */
 struct LogLines
 {
-  std::vector<std::string> lines;
-  Logger::SinkId sink;
-
   LogLines()
   {
     Logger::flush(); // nothing from before
@@ -90,6 +92,9 @@ struct LogLines
                       [&](const std::string& line)
                       { return line.find(text) != std::string::npos; }));
   }
+
+  std::vector<std::string> lines;
+  Logger::SinkId sink;
 };
 
 } // namespace sfs::testing3d

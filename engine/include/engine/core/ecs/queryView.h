@@ -31,14 +31,14 @@
 // body never reads costs nothing once optimised. Nothing allocates. Included
 // by registry.h; System::getEntities() is defined here too.
 
-#include "engine/core/ecs/component.h"
-#include "engine/core/ecs/entity.h"
+#include "engine/core/ecs/entityDeclaration.h"
 #include "engine/core/ecs/query.h"
 #include "engine/core/ecs/registry.h"
 #include "engine/core/ecs/system.h"
 #include "engine/core/util/typeList.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <iterator>
 #include <string_view>
 #include <tuple>
@@ -124,6 +124,7 @@ template <typename T>
 struct Fetch<Required<T>>
 {
   using Result = T&;
+
   static T& get(const Registry::Finder<T>& finder, Entity::EntityId id)
   {
     return finder.held(id);
@@ -133,6 +134,7 @@ template <typename T>
 struct Fetch<Optional<T>>
 {
   using Result = T*;
+
   static T* get(const Registry::Finder<T>& finder, Entity::EntityId id)
   {
     return finder(id);
@@ -149,16 +151,8 @@ struct FetchersOf;
 template <typename... TBindings>
 struct FetchersOf<TypeList<TBindings...>>
 {
-  /** How many components a row binds. */
-  static constexpr std::size_t count = sizeof...(TBindings);
   /** The bindings, in order. */
   using Bindings = std::tuple<TBindings...>;
-
-  FetchersOf() = default;
-  explicit FetchersOf(Registry& registry)
-      : finders(registry.template finder<typename TBindings::Component>()...)
-  {
-  }
 
   /**
    * The binding I of the living entity `id`.
@@ -170,6 +164,15 @@ struct FetchersOf<TypeList<TBindings...>>
     using Binding = std::tuple_element_t<I, Bindings>;
     return Fetch<Binding>::get(std::get<I>(finders), id);
   }
+
+  FetchersOf() = default;
+  explicit FetchersOf(Registry& registry)
+      : finders(registry.template finder<typename TBindings::Component>()...)
+  {
+  }
+
+  /** How many components a row binds. */
+  static constexpr std::size_t count = sizeof...(TBindings);
 
   /** The finders, in binding order. */
   std::tuple<Registry::Finder<typename TBindings::Component>...> finders;
@@ -274,8 +277,6 @@ class QueryRow : public detail::RowBase<TTerms...>
 public:
   using detail::RowBase<TTerms...>::RowBase;
 
-  /** The row's entity, for loops that go through the entities alone. */
-  operator const Entity&() const { return *this->m_entity; }
   /** The row's entity. */
   const Entity& entity() const { return *this->m_entity; }
 
@@ -292,6 +293,9 @@ public:
     else
       return this->m_fetch->template fetch<I - 1>(this->m_entity->getId());
   }
+
+  /** The row's entity, for loops that go through the entities alone. */
+  operator const Entity&() const { return *this->m_entity; }
 };
 
 /**
@@ -508,17 +512,12 @@ public:
       : m_registry(registry), m_list(list)
   {
   }
-
+  /** The list's last entity; it must have one. */
+  const Entity& back() const { return entities().back(); }
   /** The first row; its finders are made here, one pool lookup each. */
   iterator begin() const
   {
     return m_list ? iterator(*m_registry, *m_list) : iterator();
-  }
-  /** Where the rows end. */
-  sentinel end() const
-  {
-    return {m_list ? m_list->entities.data() + m_list->entities.size()
-                   : nullptr};
   }
   /**
    * The same rows without their entity: `for (auto [position, velocity] :
@@ -528,17 +527,14 @@ public:
   {
     return ComponentView<QueryView>(*this);
   }
-  /** How many entities the list has. */
-  std::size_t size() const { return entities().size(); }
   /** Whether the list has none. */
   bool empty() const { return entities().empty(); }
-  /** The list's entity `i` (in id order). */
-  const Entity& operator[](std::size_t i) const { return entities()[i]; }
-  /** The list's first entity; it must have one. */
-  const Entity& front() const { return entities().front(); }
-  /** The list's last entity; it must have one. */
-  const Entity& back() const { return entities().back(); }
-
+  /** Where the rows end. */
+  sentinel end() const
+  {
+    return {m_list ? m_list->entities.data() + m_list->entities.size()
+                   : nullptr};
+  }
   /**
    * The registry's list itself, for code that stores or passes it (empty for
    * an empty view). It stays valid as long as the registry.
@@ -547,7 +543,13 @@ public:
   {
     return m_list ? m_list->entities : detail::kNoEntities;
   }
+  /** The list's first entity; it must have one. */
+  const Entity& front() const { return entities().front(); }
   operator const std::vector<Entity>&() const { return entities(); }
+  /** The list's entity `i` (in id order). */
+  const Entity& operator[](std::size_t i) const { return entities()[i]; }
+  /** How many entities the list has. */
+  std::size_t size() const { return entities().size(); }
 
 private:
   Registry* m_registry = nullptr;
@@ -559,20 +561,25 @@ QueryView<TTerms...> System::getEntities() const
 {
   if (m_lists.empty())
     return {};
+
   if constexpr (sizeof...(TTerms) > 0)
   {
     const QuerySignature& wanted = detail::querySignature<TTerms...>();
+
     if (!m_signature.implies(wanted))
     {
       static bool logged = false;
+
       if (!logged)
       {
         logged = true;
         warnNotImplied(detail::unvouchedTerm<TTerms...>(m_signature));
       }
+
       return {};
     }
   }
+
   return QueryView<TTerms...>(registry, m_lists.front());
 }
 

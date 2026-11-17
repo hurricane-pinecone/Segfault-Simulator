@@ -1,7 +1,7 @@
 #pragma once
 
+#include "engine/runtime/input/keyboardInput.h"
 #include "engine/runtime/input/mouseInput.h"
-#include <engine/runtime/input/keyboardInput.h>
 
 namespace sfs
 {
@@ -9,12 +9,11 @@ namespace sfs
 class Input
 {
 public:
-  void update();
-
   const KeyboardInput& keyboard() const;
   KeyboardInput& keyboard();
   MouseInput& mouse();
   const MouseInput& mouse() const;
+  void update();
   // const GamepadInput& gamepad() const;
 
 private:

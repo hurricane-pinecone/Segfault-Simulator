@@ -4,11 +4,13 @@
 #include "nvim/msgpack.h"
 #include "nvim/nvimScreen.h"
 
+#include <cstdint>
 #include <deque>
 #include <filesystem>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -39,49 +41,57 @@ public:
   explicit NvimClient(const BuildEnvironment& environment);
   ~NvimClient();
 
+  /** The project script being edited last (an editor path), if any. */
+  const std::filesystem::path& focusedScript() const { return m_focusedScript; }
+
+  /** Keys in Neovim's notation, e.g. "i", "<C-s>", "<lt>". */
+  void input(const std::string& keys);
+
+  /** A mouse event, as nvim_input_mouse takes it. */
+  void mouse(const char* button,
+             const char* action,
+             const std::string& modifiers,
+             int row,
+             int column);
+
+  /** Open a file (an editor path) in the current window. */
+  void open(const std::filesystem::path& file);
+
+  /** The project scripts open in Neovim (listed buffers), as editor paths. */
+  const std::vector<std::filesystem::path>& openScripts() const
+  {
+    return m_openScripts;
+  }
+
+  /** Apply everything Neovim sent since the last call (main thread). */
+  void poll();
+
+  /** Resize the UI grid (only sent when it changes). */
+  void resize(int columns, int rows);
+
+  /** Whether Neovim is running (false once it quits, e.g. after :qa). */
+  bool running();
+
+  const NvimScreen& screen() const { return m_screen; }
+
+  /** Point Neovim at another project (its working directory). */
+  void setProject(const std::filesystem::path& root);
+
   /** Start Neovim and attach as a `columns` x `rows` UI. */
   bool start(const LaunchOptions& options, int columns, int rows);
 
   /** Quit Neovim, saving modified files (killed if it doesn't exit in time). */
   void stop();
 
-  /** Whether Neovim is running (false once it quits, e.g. after :qa). */
-  bool running();
-
-  /** Apply everything Neovim sent since the last call (main thread). */
-  void poll();
-
-  const NvimScreen& screen() const { return m_screen; }
-
-  /** Resize the UI grid (only sent when it changes). */
-  void resize(int columns, int rows);
-
-  /** Keys in Neovim's notation, e.g. "i", "<C-s>", "<lt>". */
-  void input(const std::string& keys);
-
-  /** A mouse event, as nvim_input_mouse takes it. */
-  void mouse(const char* button, const char* action, const std::string& modifiers, int row, int column);
-
-  /** Point Neovim at another project (its working directory). */
-  void setProject(const std::filesystem::path& root);
-
-  /** Open a file (an editor path) in the current window. */
-  void open(const std::filesystem::path& file);
-
-  /** True once after a file in the project's scripts/ was saved (the config reports it). */
+  /** True once after a file in the project's scripts/ was saved (the config
+   * reports it). */
   bool takeScriptSaved() { return std::exchange(m_scriptSaved, false); }
 
-  /** The project script being edited last (an editor path), if any. */
-  const std::filesystem::path& focusedScript() const { return m_focusedScript; }
-
-  /** The project scripts open in Neovim (listed buffers), as editor paths. */
-  const std::vector<std::filesystem::path>& openScripts() const { return m_openScripts; }
-
 private:
+  void handle(const msgpack::Value& message);
+  void receive(std::string_view chunk); // reader thread
   // Fire-and-forget: Neovim's replies are only checked for errors.
   void request(const std::string& method, const msgpack::Array& params);
-  void receive(std::string_view chunk); // reader thread
-  void handle(const msgpack::Value& message);
 
   const BuildEnvironment& m_environment;
   std::unique_ptr<ChildProcess> m_process;

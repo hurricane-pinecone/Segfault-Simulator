@@ -41,6 +41,7 @@ extern "C"
       g_result = "error: Lua VM not ready";
       return g_result.c_str();
     }
+
     g_result = g_lua->evalRepl(source ? source : "");
     return g_result.c_str();
   }
@@ -50,6 +51,7 @@ extern "C"
   SFS_LUA_EXPORT const char* sfsLuaKeys(const char* path)
   {
     g_result.clear();
+
     if (!g_lua || !path)
       return g_result.c_str();
 
@@ -57,8 +59,10 @@ extern "C"
     {
       if (!g_result.empty())
         g_result.push_back('\n');
+
       g_result += key;
     }
+
     return g_result.c_str();
   }
 }

@@ -1,30 +1,39 @@
 #include "../../testHarness.h"
 #include "../rendering/mockRenderer.h"
+#include "engine/core/components/boxCollider3DComponent.h"
+#include "engine/core/components/contactReportComponent.h"
+#include "engine/core/components/rigidBody3DComponent.h"
+#include "engine/core/components/sphereCollider3DComponent.h"
+#include "engine/core/components/transformComponent.h"
+#include "engine/core/ecs/entity.h"
+#include "engine/core/hierarchy/hierarchy.h"
+#include "engine/core/rendering/camera.h"
+#include "engine/runtime/assetStore/assetStore.h"
+#include "engine/runtime/game/gameObject.h"
+#include "engine/runtime/rendering/standardScene.h"
+#include "engine/runtime/sceneManager/scene.h"
+#include "engine/runtime/sceneManager/sceneManager.h"
+#include "engine/runtime/scripting/scriptRegistry.h"
+#include "engine/runtime/systems/collision3D.h"
+#include "engine/runtime/systems/collisionWorld3D.h"
+#include "engine/runtime/systems/physicsSystem3D.h"
 
-#include <engine/core/components/boxCollider3DComponent.h>
-#include <engine/core/components/contactReportComponent.h>
-#include <engine/core/components/nameComponent.h>
-#include <engine/core/components/rigidBody3DComponent.h>
-#include <engine/core/components/sphereCollider3DComponent.h>
-#include <engine/core/components/transformComponent.h>
-#include <engine/core/hierarchy/hierarchy.h>
-#include <engine/runtime/assetStore/assetStore.h>
-#include <engine/runtime/game/gameObject.h>
-#include <engine/runtime/rendering/standardScene.h>
-#include <engine/runtime/sceneManager/scene.h>
-#include <engine/runtime/sceneManager/sceneManager.h>
-#include <engine/runtime/scripting/scriptRegistry.h>
-#include <engine/runtime/systems/physicsSystem3D.h>
+#include <glm/glm/ext/vector_float3.hpp>
 
 #include <algorithm>
 #include <atomic>
+#include <cstddef>
+#include <cstdint>
+#include <cstdlib>
+#include <span>
 #include <thread>
+#include <vector>
 
 using namespace sfs;
 
 namespace
 {
-constexpr double kFrame = 1.0 / 60.0;
+constexpr double FRAME = 1.0 / 60.0;
 
 struct World
 {
@@ -41,8 +50,10 @@ struct World
     entity.addComponent<TransformComponent>(TransformComponent{position});
     entity.addComponent<BoxCollider3DComponent>(
         BoxCollider3DComponent{size, glm::vec3(0.0f), trigger});
+
     if (dynamic)
       entity.addComponent<RigidBody3DComponent>();
+
     return entity;
   }
 
@@ -58,17 +69,20 @@ struct World
            std::vector<Contact3D>* ended = nullptr,
            std::vector<Contact3D>* deepened = nullptr)
   {
-    for (double t = 0.0; t < seconds; t += kFrame)
+    for (double t = 0.0; t < seconds; t += FRAME)
     {
-      scene.update(kFrame);
+      scene.update(FRAME);
+
       if (deepened)
         deepened->insert(deepened->end(),
                          physics.contactsDeepened().begin(),
                          physics.contactsDeepened().end());
+
       if (begun)
         begun->insert(begun->end(),
                       physics.contactsBegun().begin(),
                       physics.contactsBegun().end());
+
       if (ended)
         ended->insert(ended->end(),
                       physics.contactsEnded().begin(),
@@ -86,8 +100,10 @@ struct World
     body.kinematic = true;
     body.touchStatic = true;
     entity.addComponent<RigidBody3DComponent>(body);
+
     if (parent)
       hierarchy::setParentKeepWorld(entity, parent);
+
     return entity;
   }
 
@@ -97,8 +113,10 @@ struct World
     Entity entity = scene.createEntity();
     entity.addComponent<TransformComponent>();
     entity.addComponent<ContactReportComponent>();
+
     if (parent)
       hierarchy::setParent(entity, parent);
+
     return entity;
   }
 
@@ -107,10 +125,12 @@ struct World
             std::vector<Contact3D>* begun,
             std::vector<Contact3D>* ended = nullptr)
   {
-    scene.update(kFrame);
+    scene.update(FRAME);
     const auto* heard = report.getComponent<ContactReportComponent>();
+
     if (begun)
       begun->insert(begun->end(), heard->begun.begin(), heard->begun.end());
+
     if (ended)
       ended->insert(ended->end(), heard->ended.begin(), heard->ended.end());
   }
@@ -137,12 +157,6 @@ struct World
     hierarchy::setWorldMatrix(entity, TransformComponent(position).matrix());
   }
 };
-
-bool involves(const Contact3D& contact, const Entity& a, const Entity& b)
-{
-  return (contact.a == a && contact.b == b) ||
-         (contact.a == b && contact.b == a);
-}
 
 // Records the collision callbacks it gets.
 class Listener : public GameObject
@@ -186,6 +200,7 @@ protected:
   {
     if (!m_entity.isValid())
       return;
+
     x += m_speed * static_cast<float>(deltaTime);
     m_entity.getComponent<TransformComponent>()->position.x = x;
   }
@@ -277,6 +292,12 @@ struct Fast
       scene.update(1.0 / 144.0);
   }
 };
+
+bool involves(const Contact3D& contact, const Entity& a, const Entity& b)
+{
+  return (contact.a == a && contact.b == b) ||
+         (contact.a == b && contact.b == a);
+}
 } // namespace
 
 int main()
@@ -344,7 +365,7 @@ int main()
               {2.0f, 2.0f, 1.0f},
               false,
               true); // a trigger in the way
-    world.run(kFrame);
+    world.run(FRAME);
 
     const auto hit =
         world.physics.raycast(Ray{{0.0f, 0.0f, 10.0f}, {0.0f, 0.0f, -1.0f}});
@@ -360,9 +381,9 @@ int main()
   {
     World world;
     Entity wall = world.box({0.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, false);
-    world.run(kFrame);
+    world.run(FRAME);
     wall.getComponent<TransformComponent>()->position = {10.0f, 0.0f, 0.0f};
-    world.run(kFrame);
+    world.run(FRAME);
     const auto hit =
         world.physics.raycast(Ray{{10.0f, 0.0f, 5.0f}, {0.0f, 0.0f, -1.0f}});
     CHECK(hit.has_value() && hit->entity == wall);
@@ -380,7 +401,7 @@ int main()
     Entity group = world.scene.createEntity(); // only groups: no transform
     Entity wall = world.box({0.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, false);
     hierarchy::setParent(wall, group);
-    world.run(kFrame);
+    world.run(FRAME);
     const auto hitAt = [&](float x)
     {
       const auto hit =
@@ -390,14 +411,14 @@ int main()
     CHECK(hitAt(0.0f));
 
     hierarchy::setParent(group, left); // an ancestor gains a parent
-    world.run(kFrame);
+    world.run(FRAME);
     CHECK(hitAt(10.0f));
     hierarchy::setParent(group, right); // and moves to another
-    world.run(kFrame);
+    world.run(FRAME);
     CHECK(hitAt(20.0f));
     CHECK(!hitAt(10.0f));
     hierarchy::setParent(wall, {}); // the body itself becomes a root
-    world.run(kFrame);
+    world.run(FRAME);
     CHECK(hitAt(0.0f));
   }
 
@@ -437,13 +458,13 @@ int main()
     world.physics.setGravity(glm::vec3(0.0f));
     Entity puck = world.box({0.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, true);
     puck.getComponent<RigidBody3DComponent>()->linearDamping = 0.0f;
-    world.run(kFrame);
+    world.run(FRAME);
     world.physics.setVelocity(puck, {2.0f, 0.0f, 0.0f});
     world.run(1.0);
     CHECK(testing::approx(hierarchy::worldPosition(puck).x, 2.0f, 0.1f));
     CHECK(testing::approx(world.physics.velocity(puck).x, 2.0f, 1e-3f));
     world.physics.addImpulse(puck, {0.0f, 3.0f, 0.0f}); // mass 1: +3 m/s
-    world.run(kFrame);
+    world.run(FRAME);
     CHECK(testing::approx(world.physics.velocity(puck).y, 3.0f, 1e-2f));
   }
 
@@ -452,11 +473,11 @@ int main()
     World world;
     Entity a = world.box({0.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, false);
     Entity b = world.box({3.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, false);
-    world.run(kFrame);
+    world.run(FRAME);
     CHECK(world.physics.hasBody(a) && world.physics.hasBody(b));
     a.removeComponent<BoxCollider3DComponent>();
     world.scene.destroyEntity(b);
-    world.run(kFrame);
+    world.run(FRAME);
     CHECK(!world.physics.hasBody(a));
     CHECK(!world.physics.hasBody(b));
   }
@@ -514,7 +535,8 @@ int main()
     Listener& listener = scene.attachObject<Listener>(crate);
 
     for (int i = 0; i < 180; ++i)
-      scene.update(kFrame);
+      scene.update(FRAME);
+
     CHECK(listener.triggers == 1);
     CHECK(listener.collisions == 1);
     CHECK(listener.lastOther == floor);
@@ -527,7 +549,7 @@ int main()
     Entity post = world.box({0.0f, 0.0f, 0.6f}, {0.2f, 0.2f, 1.2f}, false);
     Entity wall = world.box({5.0f, 0.0f, 1.0f}, {0.2f, 4.0f, 2.0f}, false);
     wall.getComponent<BoxCollider3DComponent>()->layer = 3;
-    world.run(kFrame);
+    world.run(FRAME);
     const auto frozen = world.physics.snapshot();
     CHECK(frozen->size() == 2);
     // A 2 x 1 x 1 box standing on the ground.
@@ -564,12 +586,12 @@ int main()
   {
     World world;
     Entity post = world.box({0.0f, 0.0f, 0.5f}, {0.5f, 0.5f, 1.0f}, false);
-    world.run(kFrame);
+    world.run(FRAME);
     const uint64_t before = world.physics.revision();
     const auto frozen = world.physics.snapshot();
     hierarchy::setWorldMatrix(
         post, TransformComponent({10.0f, 0.0f, 0.5f}).matrix());
-    world.run(kFrame);
+    world.run(FRAME);
     CHECK(world.physics.revision() != before);
     const CollisionShape3D ball{
         CollisionShape3D::Kind::Sphere, {0.3f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.5f}};
@@ -579,6 +601,7 @@ int main()
         probe, {10.0f, 0.0f, 0.0f}, yawRotation(0.0f)));
     std::atomic<int> wrong{0};
     std::vector<std::thread> threads;
+
     for (int t = 0; t < 4; ++t)
       threads.emplace_back(
           [&, t]
@@ -588,13 +611,16 @@ int main()
               const float x =
                   -2.0f + 0.002f * static_cast<float>(i) + 0.0001f * t;
               const bool expect = std::abs(x) < 0.25f + 0.3f;
+
               if (frozen->overlaps(probe, {x, 0.0f, 0.0f}, yawRotation(0.0f)) !=
                   expect)
                 ++wrong;
             }
           });
+
     for (std::thread& thread : threads)
       thread.join();
+
     CHECK(wrong.load() == 0);
   }
 
@@ -609,25 +635,29 @@ int main()
     body.touchStatic = true;
     cart.addComponent<RigidBody3DComponent>(body);
     std::vector<Contact3D> begun, ended;
-    world.run(kFrame);
+    world.run(FRAME);
+
     for (int i = 0; i <= 40; ++i)
     {
       hierarchy::setWorldMatrix(
           cart, TransformComponent({0.05f * i, 0.0f, 0.5f}).matrix());
-      world.run(kFrame, &begun, &ended);
+      world.run(FRAME, &begun, &ended);
     }
+
     const auto touched = std::find_if(begun.begin(),
                                       begun.end(),
                                       [&](const Contact3D& c)
                                       { return involves(c, post, cart); });
     CHECK(touched != begun.end());
     CHECK(touched != begun.end() && std::abs(touched->point.x - 1.9f) < 0.15f);
+
     for (int i = 0; i <= 40; ++i)
     {
       hierarchy::setWorldMatrix(
           cart, TransformComponent({2.0f - 0.1f * i, 0.0f, 0.5f}).matrix());
-      world.run(kFrame, nullptr, &ended);
+      world.run(FRAME, nullptr, &ended);
     }
+
     CHECK(std::any_of(ended.begin(),
                       ended.end(),
                       [&](const Contact3D& c)
@@ -649,13 +679,15 @@ int main()
       body.touchStatic = true;
       cart.addComponent<RigidBody3DComponent>(body);
       std::vector<Contact3D> begun, ended;
-      world.run(kFrame);
+      world.run(FRAME);
+
       for (int i = 0; i <= 80; ++i)
       {
         hierarchy::setWorldMatrix(
             cart, TransformComponent({0.05f * i, 0.6f + gap, 0.5f}).matrix());
-        world.run(kFrame, &begun, &ended);
+        world.run(FRAME, &begun, &ended);
       }
+
       const auto with = [&](const std::vector<Contact3D>& list)
       {
         return std::count_if(list.begin(),
@@ -679,24 +711,29 @@ int main()
     body.touchStatic = true;
     cart.addComponent<RigidBody3DComponent>(body);
     std::vector<Contact3D> begun, ended, deepened;
-    world.run(kFrame);
+    world.run(FRAME);
     // (In from 5 cm away to 8 cm deep, 5 mm a frame, then back out.)
     const auto place = [&](float y)
     {
       hierarchy::setWorldMatrix(
           cart, TransformComponent({2.0f, y, 0.5f}).matrix());
-      world.run(kFrame, &begun, &ended, &deepened);
+      world.run(FRAME, &begun, &ended, &deepened);
     };
+
     for (float y = 0.65f; y >= 0.52f - 1e-4f; y -= 0.005f)
       place(y);
+
     for (float y = 0.52f; y <= 0.7f; y += 0.005f)
       place(y);
+
     const auto with = [&](const std::vector<Contact3D>& list)
     {
       std::vector<Contact3D> found;
+
       for (const Contact3D& c : list)
         if (involves(c, post, cart))
           found.push_back(c);
+
       return found;
     };
     const std::vector<Contact3D> b = with(begun), e = with(ended),
@@ -704,11 +741,13 @@ int main()
     CHECK(b.size() == 1);
     CHECK(e.size() == 1);
     CHECK(!d.empty());
+
     if (b.size() == 1 && e.size() == 1 && !d.empty())
     {
       CHECK(b[0].depth < 0.01f);
       CHECK(std::abs(d.back().depth - 0.08f) < 0.01f);
       CHECK(std::abs(e[0].depth - d.back().depth) < 1e-6f);
+
       for (size_t i = 1; i < d.size(); ++i)
         CHECK(d[i].depth > d[i - 1].depth);
     }
@@ -718,33 +757,37 @@ int main()
        "step")
   {
     World world;
+
     for (int i = 0; i < 30; ++i)
       world.box({3.0f * i, 0.0f, 0.5f}, {0.5f, 0.5f, 1.0f}, false);
+
     Entity cart = world.box({0.0f, 10.0f, 0.5f}, {1.0f, 1.0f, 1.0f}, false);
     RigidBody3DComponent body;
     body.kinematic = true;
     cart.addComponent<RigidBody3DComponent>(body);
-    world.run(kFrame);
+    world.run(FRAME);
     CHECK(world.physics.lastUpdateStats().lookedForBodies);
-    world.run(kFrame);
+    world.run(FRAME);
     int searches = 0, steps = 0;
+
     for (int i = 0; i < 30; ++i)
     {
-      world.run(kFrame);
+      world.run(FRAME);
       searches += world.physics.lastUpdateStats().lookedForBodies ? 1 : 0;
       steps += world.physics.lastUpdateStats().steps;
     }
+
     CHECK(searches == 0);
     CHECK(steps == 0);
 
     // Still noticed: a static body moved by code, and a new one.
     const uint64_t revision = world.physics.revision();
     Entity post = world.box({0.0f, 20.0f, 0.5f}, {0.5f, 0.5f, 1.0f}, false);
-    world.run(kFrame);
+    world.run(FRAME);
     CHECK(world.physics.lastUpdateStats().lookedForBodies);
     CHECK(world.physics.hasBody(post));
     post.getComponent<TransformComponent>()->position.x = 5.0f;
-    world.run(kFrame);
+    world.run(FRAME);
     CHECK(!world.physics.lastUpdateStats().lookedForBodies);
     CHECK(world.physics.revision() > revision + 1);
     const auto hit =
@@ -752,7 +795,7 @@ int main()
     CHECK(hit && hit->entity == post);
     // And a collider changed in place.
     post.getComponent<BoxCollider3DComponent>()->size = {0.5f, 0.5f, 3.0f};
-    world.run(kFrame);
+    world.run(FRAME);
     const auto taller =
         world.physics.raycast(Ray{{5.0f, 20.0f, 5.0f}, {0.0f, 0.0f, -1.0f}});
     CHECK(taller && testing::approx(taller->point.z, 2.0f, 0.01f));
@@ -780,18 +823,22 @@ int main()
     world.box({0.0f, 0.0f, 3.0f}, {1.0f, 1.0f, 1.0f}, true);
     world.scene.update(1.0 / 60.0); // (just short of a step)
     int steps = 0;
+
     for (int i = 0; i < 10; ++i)
     {
       world.scene.update(1.0 / 60.0);
       steps += world.physics.lastUpdateStats().steps;
     }
+
     CHECK(steps == 10);
     steps = 0;
+
     for (int i = 0; i < 20; ++i)
     {
       world.scene.update(1.0 / 120.0);
       steps += world.physics.lastUpdateStats().steps;
     }
+
     CHECK(steps >= 9 && steps <= 11);
   }
 
@@ -803,15 +850,19 @@ int main()
       {
         Fast fast(speed);
         std::vector<Entity> posts;
+
         for (int i = 0; i < 20; ++i)
           posts.push_back(fast.post({1.0f * i, 0.0f, 0.5f}));
+
         if (dynamics) // (fixed steps, far off)
           fast.crate({0.0f, 100.0f, 0.5f});
+
         Entity bar = fast.bar({-2.0f, 0.0f, 0.5f}, {0.3f, 2.0f, 1.0f});
         fast.driver.drive(bar, 10.0f);
         fast.frames(static_cast<int>(144.0 * 2.5 / speed) + 4);
         CHECK(fast.driver.x > 21.0f);
         int missed = 0, unended = 0, twice = 0;
+
         for (const Entity& post : posts)
         {
           const auto touching = [&](const Contact3D& c)
@@ -826,6 +877,7 @@ int main()
                   ? 1
                   : 0;
         }
+
         CHECK(missed == 0);
         CHECK(twice == 0);
         CHECK(unended == 0);
@@ -843,14 +895,16 @@ int main()
     body.touchStatic = true;
     spinner.addComponent<RigidBody3DComponent>(body);
     std::vector<Contact3D> begun, ended;
-    world.run(kFrame, &begun, &ended);
-    world.run(kFrame, &begun, &ended);
+    world.run(FRAME, &begun, &ended);
+    world.run(FRAME, &begun, &ended);
     const uint64_t revision = world.physics.revision();
+
     for (int i = 0; i < 200; ++i)
     {
       spinner.getComponent<TransformComponent>()->setYaw(0.037f * i);
-      world.run(kFrame, &begun, &ended);
+      world.run(FRAME, &begun, &ended);
     }
+
     CHECK(world.physics.revision() == revision);
     CHECK(std::count_if(begun.begin(),
                         begun.end(),
@@ -906,14 +960,16 @@ int main()
     Entity cart = world.cart({0.0f, 0.0f, 0.5f}, root);
     const auto* report = root.getComponent<ContactReportComponent>();
     bool heard = false;
+
     for (int i = 1; i <= 60 && !heard; ++i)
     {
       World::place(cart, {0.05f * i, 0.0f, 0.5f});
-      world.scene.update(kFrame);
+      world.scene.update(FRAME);
       heard = !report->begun.empty();
     }
+
     CHECK(heard);
-    world.scene.update(kFrame);
+    world.scene.update(FRAME);
     CHECK(report->begun.empty() && report->ended.empty() &&
           report->deepened.empty());
   }
@@ -928,6 +984,7 @@ int main()
     cart.addComponent<ContactReportComponent>();
     std::vector<Contact3D> postHeard, cartHeard;
     world.step(post, &postHeard);
+
     for (int i = 1; i <= 60; ++i)
     {
       World::place(cart, {0.05f * i, 0.0f, 0.5f});
@@ -935,6 +992,7 @@ int main()
       const auto& own = cart.getComponent<ContactReportComponent>()->begun;
       cartHeard.insert(cartHeard.end(), own.begin(), own.end());
     }
+
     CHECK(postHeard.size() == 1 && postHeard[0].a == post &&
           postHeard[0].b == cart);
     CHECK(cartHeard.size() == 1 && cartHeard[0].a == cart &&
@@ -954,8 +1012,10 @@ int main()
     ball.addComponent<SphereCollider3DComponent>();
     ball.addComponent<RigidBody3DComponent>();
     std::vector<Contact3D> begun;
-    for (double t = 0.0; t < 3.0; t += kFrame)
+
+    for (double t = 0.0; t < 3.0; t += FRAME)
       world.step(zone, &begun);
+
     CHECK(begun.size() == 1);
     CHECK(!begun.empty() && begun[0].trigger && begun[0].a == zone &&
           begun[0].b == ball);

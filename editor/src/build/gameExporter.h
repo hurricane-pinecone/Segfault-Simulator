@@ -36,6 +36,9 @@ public:
   /** The player executable and libraries ship from the editor's own folder. */
   explicit GameExporter(std::filesystem::path editorFolder);
 
+  /** The game's executable name for a project name (filesystem-safe). */
+  static std::string executableName(const std::string& projectName);
+
   /**
    * Export `project` into `options.output`. An existing output folder is
    * replaced only if it is empty or a previous export (it has a game.json),
@@ -43,10 +46,8 @@ public:
    *
    * @return the game's executable, or empty (logged) on failure.
    */
-  std::filesystem::path run(const Project& project, const Options& options) const;
-
-  /** The game's executable name for a project name (filesystem-safe). */
-  static std::string executableName(const std::string& projectName);
+  std::filesystem::path run(const Project& project,
+                            const Options& options) const;
 
 private:
   // Shared libraries the player needs: those next to it, plus any listed in

@@ -1,18 +1,17 @@
 #pragma once
 
+#include "engine/core/assets/assetDatabase.h"
+#include "engine/core/ecs/registry.h"
 #include "engine/runtime/console/devConsole.h"
+#include "engine/runtime/input/input.h"
 #include "engine/runtime/rendering/backend/iRenderBackend.h"
 #include "engine/runtime/sceneManager/sceneManager.h"
+
+#include <glm/glm/ext/vector_int2.hpp>
 #include <SDL_events.h>
-#include <SDL_render.h>
+#include <SDL_rect.h>
 #include <SDL_stdinc.h>
 #include <SDL_video.h>
-#include <engine/runtime/input/input.h>
-
-#include <engine/core/ecs/registry.h>
-#include <engine/runtime/assetStore/assetStore.h>
-
-#include "glm/glm/ext/vector_int2.hpp"
 
 #include <filesystem>
 #include <memory>

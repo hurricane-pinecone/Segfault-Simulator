@@ -1,11 +1,7 @@
 #pragma once
 
-#include "glm/glm/common.hpp"
-#include "glm/glm/ext/vector_float2.hpp"
-#include "glm/glm/ext/vector_int2.hpp"
-#include "glm/glm/geometric.hpp"
+#include <glm/glm/ext/vector_float2.hpp>
 
-#include <algorithm>
 #include <cmath>
 
 /**
@@ -31,13 +27,18 @@ inline float wrapAngle(float a)
   // (Usually a turn or less off already: no division.)
   if (a > -kPi && a <= kPi)
     return a;
+
   if (a > kPi && a <= 3.0f * kPi)
     return a - kTwoPi;
+
   if (a <= -kPi && a > -3.0f * kPi)
     return a + kTwoPi;
+
   a = std::fmod(a + kPi, kTwoPi);
+
   if (a <= 0.0f)
     a += kTwoPi;
+
   return a - kPi;
 }
 /** An angle brought into [0, 2 pi). */
@@ -45,8 +46,10 @@ inline float wrapPositive(float a)
 {
   if (a >= 0.0f && a < kTwoPi)
     return a;
+
   if (a < 0.0f && a >= -kTwoPi)
     return a + kTwoPi < kTwoPi ? a + kTwoPi : 0.0f;
+
   a = std::fmod(a, kTwoPi);
   return a < 0.0f ? a + kTwoPi : a;
 }
@@ -77,11 +80,12 @@ struct Box3
 /** An axis-aligned rectangle of ground. */
 struct Rect
 {
-  glm::vec2 lo{0.0f}, hi{0.0f};
   bool contains(glm::vec2 p) const
   {
     return p.x >= lo.x && p.y >= lo.y && p.x <= hi.x && p.y <= hi.y;
   }
+
+  glm::vec2 lo{0.0f}, hi{0.0f};
 };
 
 } // namespace sfs::nav

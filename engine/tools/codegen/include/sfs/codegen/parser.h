@@ -35,7 +35,8 @@ namespace sfs::codegen
  * with a base, or an unnamed, nested or template type it's an error.
  */
 // A UI header (*.ui.h) is skipped: nothing in it is a script or a component.
-ParseResult parseHeader(std::string_view source, const std::filesystem::path& path);
+ParseResult parseHeader(std::string_view source,
+                        const std::filesystem::path& path);
 
 /**
  * parseHeader() on a syntax tree the caller already has (sfs-lsp's, kept up to
@@ -116,7 +117,8 @@ SourceRange rangeOf(TSNode node);
  * non-static, non-const data members that aren't pointers, references or
  * arrays. Templates and nested types are left out.
  */
-UiParseResult parseUiHeader(std::string_view source, const std::filesystem::path& path);
+UiParseResult parseUiHeader(std::string_view source,
+                            const std::filesystem::path& path);
 
 /**
  * Check that no two types share a registered (unqualified) name, which would

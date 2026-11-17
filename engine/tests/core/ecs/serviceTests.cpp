@@ -1,12 +1,11 @@
 #include "../../testHarness.h"
-
-#include <engine/core/ecs/ecs.h>
-#include <engine/core/events/events.h>
-#include <engine/core/events/responder.h>
-#include <engine/core/hierarchy/hierarchy.h>
-#include <engine/core/jobs/workerPool.h>
-#include <engine/core/logger/logger.h>
-#include <engine/core/util/allocationMetrics.h>
+#include "engine/core/ecs/ecs.h"
+#include "engine/core/events/events.h"
+#include "engine/core/events/responder.h"
+#include "engine/core/hierarchy/hierarchy.h"
+#include "engine/core/jobs/workerPool.h"
+#include "engine/core/logger/logger.h"
+#include "engine/core/util/allocationMetrics.h"
 
 #include <atomic>
 #include <chrono>
@@ -162,9 +161,11 @@ struct LogCapture
   {
     Logger::flush();
     int found = 0;
+
     for (const auto& [at, line] : lines)
       if (at == level && line.find(part) != std::string::npos)
         ++found;
+
     return found;
   }
 };
@@ -192,6 +193,7 @@ protected:
   void create() override
   {
     ++creates;
+
     if (m_setUp)
       m_setUp(*this);
   }
@@ -235,14 +237,17 @@ protected:
   void create() override
   {
     registerComponent<Task>();
+
     if (m_setUp)
       m_setUp(*this);
   }
   void update(double) override
   {
     seen.clear();
+
     for (const Entity& entity : getEntities())
       seen.push_back(entity);
+
     if (body)
       body(*this);
   }
@@ -268,35 +273,12 @@ protected:
       routes.push_back(task.route);
       const bool was = task.progress >= 1.0f;
       task.progress += 0.5f;
+
       if (!was && task.progress >= 1.0f)
         send(guard, PatrolFinishedEvent{});
     }
   }
 };
-
-// One step of a headless host: the frame boundary, then services before the
-// systems.
-void step(Registry& registry, std::initializer_list<System*> systems = {})
-{
-  registry.flushEntities();
-  registry.events().update();
-  registry.runServices();
-  for (System* system : systems)
-    registry.updateSystem(*system, 0.0);
-}
-
-// Whether allocations are counted in this build (a static engine build).
-bool tracking()
-{
-  MemoryMetrics& metrics = getMemoryMetrics();
-  const std::size_t probe = metrics.allocationCount.load();
-  {
-    ScopedMemoryTracking track(MemoryTrackingPhase::Update);
-    int* volatile block = new int(1);
-    delete block;
-  }
-  return metrics.allocationCount.load() != probe;
-}
 
 // Set by the destruction test's system and read by its service.
 std::atomic<bool> g_systemGone{false};
@@ -365,6 +347,31 @@ private:
   // goes.
   std::unique_ptr<WorkerPool> m_pool;
 };
+
+// One step of a headless host: the frame boundary, then services before the
+// systems.
+void step(Registry& registry, std::initializer_list<System*> systems = {})
+{
+  registry.flushEntities();
+  registry.events().update();
+  registry.runServices();
+
+  for (System* system : systems)
+    registry.updateSystem(*system, 0.0);
+}
+
+// Whether allocations are counted in this build (a static engine build).
+bool tracking()
+{
+  MemoryMetrics& metrics = getMemoryMetrics();
+  const std::size_t probe = metrics.allocationCount.load();
+  {
+    ScopedMemoryTracking track(MemoryTrackingPhase::Update);
+    int* volatile block = new int(1);
+    delete block;
+  }
+  return metrics.allocationCount.load() != probe;
+}
 
 } // namespace
 
@@ -455,8 +462,10 @@ int main()
               [](const Entity& guard, const PatrolFinishedEvent&)
               {
                 const Guard* state = guard.getComponent<Guard>();
+
                 if (!state)
                   return;
+
                 guard.addComponent<PatrolTask>(PatrolTask{state->nextRoute});
               });
         });
@@ -464,8 +473,10 @@ int main()
     const Entity guard = registry.createEntity();
     guard.addComponent<Guard>(Guard{1, 2});
     registry.events().send(guard, GuardIdleEvent{});
+
     for (int i = 0; i < 4; ++i)
       step(registry, {&patrol});
+
     // Route 1 twice (finished on the second), route 2 from the next step.
     CHECK((patrol.routes == std::vector<int>{1, 1, 2, 2}));
     CHECK(guard.getComponent<PatrolTask>()->progress >= 1.0f);
@@ -509,6 +520,7 @@ int main()
                         while (!responder.superseded())
                           std::this_thread::sleep_for(
                               std::chrono::milliseconds(1));
+
                         sawSuperseded = true;
                         ++jobsDone;
                       });
@@ -540,15 +552,19 @@ int main()
     step(registry, {&worker});
     CHECK((found == std::vector<int>{1}));
     CHECK((failed == std::vector<int>{3}));
+
     for (int i = 0; i < 2000 && jobsDone.load() < 1; ++i)
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
     registry.events().takeIn();
     registry.updateSystem(worker, 0.0);
     CHECK((found == std::vector<int>{1, 2}));
     CHECK(legs == 1);
     asker.cancel(d);
+
     for (int i = 0; i < 2000 && jobsDone.load() < 2; ++i)
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
     CHECK(sawSuperseded.load());
   }
 
@@ -609,8 +625,10 @@ int main()
                 static_assert(
                     std::is_same_v<decltype(h.sceneData<const Clock>()),
                                    const Clock*>);
+
                 if (const Clock* clock = h.sceneData<const Clock>())
                   readTime = clock->time;
+
                 if (Tally* tally = h.sceneData<Tally>())
                   ++tally->handled;
               });
@@ -653,6 +671,7 @@ int main()
                   h.destroyEntity(made.front());
                   made.erase(made.begin());
                 }
+
                 ++h.sceneData<Tally>()->handled;
               });
         });
@@ -721,9 +740,11 @@ int main()
               {
                 if (const Health* health = look.at.getComponent<Health>())
                   values.push_back(health->value);
+
                 for (const Entity& child : hierarchy::childrenOf(look.at))
                   if (const Health* health = child.getComponent<Health>())
                     values.push_back(health->value);
+
                 if (const Holder* holder = look.at.getComponent<Holder>())
                   if (const Health* health =
                           holder->target.getComponent<Health>())
@@ -756,11 +777,13 @@ int main()
               [&](const DisabledEvent& e) { got.push_back(e.value); });
         });
     host.setEnabled(false);
+
     for (int i = 0; i < 3; ++i)
     {
       registry.events().send(DisabledEvent{i});
       step(registry);
     }
+
     CHECK(got.empty());
     host.setEnabled(true);
     registry.setPaused(true);
@@ -934,8 +957,10 @@ int main()
       registry.events().send(key, TaskEvent{1});
       step(registry, {&worker});
     };
+
     for (int i = 0; i < 8; ++i)
       once();
+
     if (!tracking())
       std::printf("      note: allocation tracking is off in this build\n");
     else
@@ -944,11 +969,13 @@ int main()
       const std::size_t before = metrics.allocationCount.load();
       {
         ScopedMemoryTracking track(MemoryTrackingPhase::Update);
+
         for (int i = 0; i < 1000; ++i)
           once();
       }
       CHECK(metrics.allocationCount.load() == before);
     }
+
     CHECK(handled > 0);
   }
 

@@ -1,11 +1,15 @@
 #pragma once
 
+#include "engine/runtime/ui/picture.h"
 #include "engine/runtime/ui/ui.h"
 
+#include <concepts>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -46,7 +50,9 @@ struct Placeholder<std::string>
   {
     if (!text.empty())
       return;
+
     text = std::string(name);
+
     if (item > 0)
       text += " " + std::to_string(item);
   }
@@ -71,13 +77,16 @@ struct Placeholder<std::shared_ptr<P>>
   {
     if (picture)
       return;
+
     auto made = std::make_shared<Picture>(16, 16);
+
     for (int y = 0; y < 16; ++y)
       for (int x = 0; x < 16; ++x)
         made->set(x,
                   y,
                   ((x / 4 + y / 4) % 2) != 0 ? Color::rgb(150, 150, 150, 0.6f)
                                              : Color::rgb(90, 90, 90, 0.6f));
+
     picture = std::move(made);
   }
 };
@@ -91,6 +100,7 @@ struct Placeholder<std::vector<T, Allocator>>
       if (items.empty())
       {
         items.resize(2);
+
         for (int i = 0; i < 2; ++i)
           placeholder(items[i], name, i + 1);
       }

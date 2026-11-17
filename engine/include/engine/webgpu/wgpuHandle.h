@@ -19,33 +19,37 @@ class Handle
 public:
   Handle() = default;
   explicit Handle(T handle) : m_handle(handle) {}
-  ~Handle() { reset(); }
 
   Handle(const Handle&) = delete;
-  Handle& operator=(const Handle&) = delete;
 
   Handle(Handle&& other) noexcept
       : m_handle(std::exchange(other.m_handle, nullptr))
   {
   }
 
+  ~Handle() { reset(); }
+
+  Handle& operator=(const Handle&) = delete;
+
   Handle& operator=(Handle&& other) noexcept
   {
     if (this != &other)
       reset(std::exchange(other.m_handle, nullptr));
+
     return *this;
   }
+
+  T get() const { return m_handle; }
+  explicit operator bool() const { return m_handle != nullptr; }
 
   /** Release the current object (if any) and take ownership of `handle`. */
   void reset(T handle = nullptr)
   {
     if (m_handle)
       Releaser{}(m_handle);
+
     m_handle = handle;
   }
-
-  T get() const { return m_handle; }
-  explicit operator bool() const { return m_handle != nullptr; }
 
 private:
   T m_handle = nullptr;

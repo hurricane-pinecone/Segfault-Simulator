@@ -10,9 +10,9 @@ class RunDirector;
 class RunHud : public sfs::ui::Layer
 {
 public:
-  void setDirector(RunDirector* director) { m_director = director; }
-
   sfs::ui::View body() override;
+
+  void setDirector(RunDirector* director) { m_director = director; }
 
 private:
   RunDirector* m_director = nullptr; // the one that made it
@@ -23,6 +23,7 @@ private:
 inline sfs::ui::View RunHud::body()
 {
   using namespace sfs::ui;
+
   if (!m_director)
     return Empty();
 
@@ -39,6 +40,7 @@ inline sfs::ui::View RunHud::body()
           .font(Font::headline())
           .color(cyan),
   };
+
   if (m_director->combo() > 1)
     stats.push_back(
         VStack({Text("COMBO x" + std::to_string(m_director->combo()))
@@ -47,6 +49,7 @@ inline sfs::ui::View RunHud::body()
                 ProgressBar(m_director->comboLeft()).frame(160, 6)},
                Alignment::Leading)
             .spacing(4));
+
   if (m_director->best() > 0)
     stats.push_back(Text("BEST " + std::to_string(m_director->best()))
                         .font(Font::caption())
@@ -76,5 +79,6 @@ inline sfs::ui::View RunHud::body()
                          .color(cyan)
                          .opacity(1.0f - m_director->clock() / 2.0f)
                          .align(Alignment::Center));
+
   return ZStack(std::move(layers));
 }

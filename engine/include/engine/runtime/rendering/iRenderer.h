@@ -1,12 +1,16 @@
 #pragma once
 
+#include "engine/core/rendering/aabb.h"
 #include "engine/core/rendering/debugLines.h"
 #include "engine/core/rendering/deformation.h"
+#include "engine/core/rendering/grass.h"
 #include "engine/core/rendering/mesh.h"
 #include "engine/core/rendering/puddles.h"
 #include "engine/runtime/rendering/frame.h"
 #include "engine/runtime/rendering/uiDraw.h"
-#include "glm/glm/ext/vector_int2.hpp"
+
+#include <glm/glm/ext/matrix_float4x4.hpp>
+#include <glm/glm/ext/vector_int2.hpp>
 
 #include <cstdint>
 #include <memory>
@@ -46,15 +50,47 @@ public:
   virtual ~IRenderer() = default;
 
   /**
+   * Film a camera feed this frame: `view` drawn into `into` (a RenderTexture's,
+   * UiTexture::gpu) with the frame's light, shadows and sky, from the draws'
+   * feedInstances (MeshBatch) and the frame's grass. Between beginFrame() and
+   * the draws. A backend that can't draws nothing (the picture stays as it
+   * was).
+   */
+  virtual void beginFeed(const FeedView& view, const UiTexture& into)
+  {
+    (void)view;
+    (void)into;
+  }
+
+  /** Start a frame. Draws issued before this are ignored. */
+  virtual void beginFrame(const FrameParams& frame) = 0;
+
+  /** What it can draw. Everything, unless a backend says otherwise. */
+  virtual RendererCapabilities capabilities() const { return {}; }
+
+  /**
+   * Upload the ground a grass field grows on (see grass.h), to draw with
+   * drawGrass(). Its maps start unpainted, and nothing's flattened.
+   * @return a handle, or an invalid one if the ground is empty or the upload
+   * failed.
+   */
+  virtual GrassHandle createGrass(const GrassGround& ground) = 0;
+
+  /**
+   * Upload a material (and its textures) for objects to use in place of a
+   * mesh section's own (see MeshBatch::materials).
+   *
+   * @return a handle, or an invalid handle if the upload failed.
+   */
+  virtual MaterialHandle createMaterial(const MeshMaterial& material) = 0;
+
+  /**
    * Upload a mesh to the GPU.
    *
    * @return a handle for drawing it, or an invalid handle if the mesh is empty
    * or the upload failed.
    */
   virtual MeshHandle createMesh(const MeshData& mesh) = 0;
-
-  /** Free a mesh. Unknown or invalid handles are ignored. */
-  virtual void destroyMesh(MeshHandle mesh) = 0;
 
   /**
    * A copy of a skinned mesh (one made from MeshData with a skin) that
@@ -72,6 +108,43 @@ public:
     return {};
   }
 
+  /** Free a grass field. Unknown or invalid handles are ignored. */
+  virtual void destroyGrass(GrassHandle grass) = 0;
+
+  /** Free a material. Unknown or invalid handles are ignored. */
+  virtual void destroyMaterial(MaterialHandle material) = 0;
+
+  /** Free a mesh. Unknown or invalid handles are ignored. */
+  virtual void destroyMesh(MeshHandle mesh) = 0;
+
+  /** Queue a grass field (its blades in view, thinning with distance). */
+  virtual void drawGrass(const GrassBatch& batch) = 0;
+
+  /**
+   * Queue debug lines (see DebugLines): each pair of vertices a line, drawn
+   * in the scene with what's opaque (hidden behind what's in front of it),
+   * a pixel wide, in its own colour (not lit, and kept as seen through the
+   * frame's exposure). All of a frame's in one draw. The span need only live
+   * until the call returns. A backend without them draws none.
+   */
+  virtual void drawLines(std::span<const DebugLineVertex> vertices)
+  {
+    (void)vertices;
+  }
+
+  /** Queue one mesh's instances. The spans need only live until the call
+   * returns. */
+  virtual void drawMesh(const MeshBatch& batch) = 0;
+
+  /**
+   * Queue UI to draw over the finished frame (after bloom and depth of
+   * field), back to front. Its textures must live until endFrame().
+   */
+  virtual void drawUi(const UiDrawList& list) = 0;
+
+  /** Render everything queued since beginFrame(). */
+  virtual void endFrame() = 0;
+
   /**
    * A skinned copy's pose: its palette (a matrix a joint of its skin, see
    * skinPalette()) and the bounds it has posed (its own space), shown from
@@ -85,53 +158,6 @@ public:
     (void)skinned;
     (void)palette;
     (void)bounds;
-  }
-
-  /**
-   * Upload a material (and its textures) for objects to use in place of a
-   * mesh section's own (see MeshBatch::materials).
-   *
-   * @return a handle, or an invalid handle if the upload failed.
-   */
-  virtual MaterialHandle createMaterial(const MeshMaterial& material) = 0;
-
-  /** Change a material in place: everything drawn with it changes. */
-  virtual void updateMaterial(MaterialHandle handle,
-                              const MeshMaterial& material) = 0;
-
-  /** Free a material. Unknown or invalid handles are ignored. */
-  virtual void destroyMaterial(MaterialHandle material) = 0;
-
-  /**
-   * A texture's pixels changed in a rectangle (`from` inclusive, `to`
-   * exclusive): show them, on every material using it. For textures edited
-   * as a game or the editor runs (a terrain's splat map being painted); only
-   * those uploaded without mipmaps (splat maps) change; others keep what they
-   * showed until a material using them is made again. Nothing if the
-   * texture isn't uploaded.
-   */
-  virtual void updateTexture(const std::shared_ptr<const TextureData>& texture,
-                             glm::ivec2 from,
-                             glm::ivec2 to)
-  {
-    (void)texture;
-    (void)from;
-    (void)to;
-  }
-
-  /**
-   * Where water stands on the ground drawn with a terrain material (see
-   * PuddleModule and puddles.h): the window to find it in, the ground under
-   * it and its settings, kept with the material through its updates until
-   * set again (empty: none). The renderer finds the puddles again (on the
-   * GPU) when they change, or the material's deformation window moves.
-   * Ignored for other materials.
-   */
-  virtual void setTerrainPuddles(MaterialHandle material,
-                                 const TerrainPuddles& puddles)
-  {
-    (void)material;
-    (void)puddles;
   }
 
   /**
@@ -151,26 +177,32 @@ public:
   }
 
   /**
-   * One tile of a terrain material's deformation window (setTerrainDeformation
-   * first): DeformationMap::kTile square from world texel `from` (a multiple
-   * of the tile), as half floats (DeformationMap::halves()).
+   * Where water stands on the ground drawn with a terrain material (see
+   * PuddleModule and puddles.h): the window to find it in, the ground under
+   * it and its settings, kept with the material through its updates until
+   * set again (empty: none). The renderer finds the puddles again (on the
+   * GPU) when they change, or the material's deformation window moves.
+   * Ignored for other materials.
    */
-  virtual void writeTerrainDeformation(MaterialHandle material,
-                                       glm::ivec2 from,
-                                       std::span<const uint16_t> halves)
+  virtual void setTerrainPuddles(MaterialHandle material,
+                                 const TerrainPuddles& puddles)
   {
     (void)material;
-    (void)from;
-    (void)halves;
+    (void)puddles;
   }
 
+  /** Edge length of the square sun shadow map, in texels. */
+  virtual uint32_t shadowMapResolution() const = 0;
+
   /**
-   * Upload the ground a grass field grows on (see grass.h), to draw with
-   * drawGrass(). Its maps start unpainted, and nothing's flattened.
-   * @return a handle, or an invalid one if the ground is empty or the upload
-   * failed.
+   * Whether a UI drew from GPU-drawn texture `id` (UiTexture::gpu) in the
+   * last couple of frames: a camera feed's filmed only while it's shown.
    */
-  virtual GrassHandle createGrass(const GrassGround& ground) = 0;
+  virtual bool textureShown(uint32_t id) const
+  {
+    (void)id;
+    return false;
+  }
 
   /**
    * The field grows on another ground now (a big mesh's grass, as its window
@@ -201,71 +233,43 @@ public:
   {
   }
 
-  /** Free a grass field. Unknown or invalid handles are ignored. */
-  virtual void destroyGrass(GrassHandle grass) = 0;
+  /** Change a material in place: everything drawn with it changes. */
+  virtual void updateMaterial(MaterialHandle handle,
+                              const MeshMaterial& material) = 0;
 
-  /** What it can draw. Everything, unless a backend says otherwise. */
-  virtual RendererCapabilities capabilities() const { return {}; }
+  /**
+   * A texture's pixels changed in a rectangle (`from` inclusive, `to`
+   * exclusive): show them, on every material using it. For textures edited
+   * as a game or the editor runs (a terrain's splat map being painted); only
+   * those uploaded without mipmaps (splat maps) change; others keep what they
+   * showed until a material using them is made again. Nothing if the
+   * texture isn't uploaded.
+   */
+  virtual void updateTexture(const std::shared_ptr<const TextureData>& texture,
+                             glm::ivec2 from,
+                             glm::ivec2 to)
+  {
+    (void)texture;
+    (void)from;
+    (void)to;
+  }
 
   /** Size of the render target in pixels; zero while minimised. */
   virtual glm::ivec2 viewportSize() const = 0;
 
-  /** Edge length of the square sun shadow map, in texels. */
-  virtual uint32_t shadowMapResolution() const = 0;
-
-  /** Start a frame. Draws issued before this are ignored. */
-  virtual void beginFrame(const FrameParams& frame) = 0;
-
-  /** Queue one mesh's instances. The spans need only live until the call
-   * returns. */
-  virtual void drawMesh(const MeshBatch& batch) = 0;
-
-  /** Queue a grass field (its blades in view, thinning with distance). */
-  virtual void drawGrass(const GrassBatch& batch) = 0;
-
   /**
-   * Queue UI to draw over the finished frame (after bloom and depth of
-   * field), back to front. Its textures must live until endFrame().
+   * One tile of a terrain material's deformation window (setTerrainDeformation
+   * first): DeformationMap::kTile square from world texel `from` (a multiple
+   * of the tile), as half floats (DeformationMap::halves()).
    */
-  virtual void drawUi(const UiDrawList& list) = 0;
-
-  /**
-   * Queue debug lines (see DebugLines): each pair of vertices a line, drawn
-   * in the scene with what's opaque (hidden behind what's in front of it),
-   * a pixel wide, in its own colour (not lit, and kept as seen through the
-   * frame's exposure). All of a frame's in one draw. The span need only live
-   * until the call returns. A backend without them draws none.
-   */
-  virtual void drawLines(std::span<const DebugLineVertex> vertices)
+  virtual void writeTerrainDeformation(MaterialHandle material,
+                                       glm::ivec2 from,
+                                       std::span<const uint16_t> halves)
   {
-    (void)vertices;
+    (void)material;
+    (void)from;
+    (void)halves;
   }
-
-  /**
-   * Film a camera feed this frame: `view` drawn into `into` (a RenderTexture's,
-   * UiTexture::gpu) with the frame's light, shadows and sky, from the draws'
-   * feedInstances (MeshBatch) and the frame's grass. Between beginFrame() and
-   * the draws. A backend that can't draws nothing (the picture stays as it
-   * was).
-   */
-  virtual void beginFeed(const FeedView& view, const UiTexture& into)
-  {
-    (void)view;
-    (void)into;
-  }
-
-  /**
-   * Whether a UI drew from GPU-drawn texture `id` (UiTexture::gpu) in the
-   * last couple of frames: a camera feed's filmed only while it's shown.
-   */
-  virtual bool textureShown(uint32_t id) const
-  {
-    (void)id;
-    return false;
-  }
-
-  /** Render everything queued since beginFrame(). */
-  virtual void endFrame() = 0;
 };
 
 } // namespace sfs

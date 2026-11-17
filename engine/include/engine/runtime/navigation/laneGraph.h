@@ -2,6 +2,8 @@
 
 #include "engine/runtime/navigation/geometry.h"
 
+#include <glm/glm/ext/vector_float2.hpp>
+
 #include <cstdint>
 #include <optional>
 #include <vector>
@@ -60,13 +62,6 @@ public:
                            // is left out (the searches either side join it)
   };
 
-  int addNode(glm::vec2 at);
-  /** A lane (its line needs two points or more); its index. */
-  int addLane(Lane lane);
-
-  const std::vector<glm::vec2>& nodes() const { return m_nodes; }
-  const std::vector<Lane>& lanes() const { return m_lanes; }
-
   /** Where a point is nearest a lane: which, how far along it, how far. */
   struct Spot
   {
@@ -74,8 +69,18 @@ public:
     float along = 0.0f;
     float distance = 0.0f;
   };
+
+  /** A lane (its line needs two points or more); its index. */
+  int addLane(Lane lane);
+
+  int addNode(glm::vec2 at);
+
+  const std::vector<Lane>& lanes() const { return m_lanes; }
+
   /** The nearest lane to `p` within `within` (lane -1: none). */
   Spot nearest(glm::vec2 p, float within) const;
+
+  const std::vector<glm::vec2>& nodes() const { return m_nodes; }
 
   /**
    * The way along the lanes from `from` to `to` (the cheapest, A*). Nothing
@@ -90,6 +95,7 @@ private:
   // ways along a road).
   std::vector<Spot> near(glm::vec2 p, float reach, float slack) const;
   glm::vec2 pointAt(int lane, float along) const;
+
   std::vector<glm::vec2> m_nodes;
   std::vector<Lane> m_lanes;
   std::vector<std::vector<float>> m_along; // per lane: metres at each point

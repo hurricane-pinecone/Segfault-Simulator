@@ -1,6 +1,12 @@
 #include "formatLines.h"
 
+#include <tree_sitter/api.h>
+
+#include <cstdint>
 #include <cstring>
+#include <string>
+#include <string_view>
+#include <utility>
 
 namespace sfs::lsp::format
 {

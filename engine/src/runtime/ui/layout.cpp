@@ -1,11 +1,26 @@
 #include "engine/runtime/ui/layout.h"
 
-#include "glm/glm/common.hpp"
+#include "engine/runtime/rendering/uiDraw.h"
+#include "engine/runtime/ui/ui.h"
+
+#include <glm/glm/common.hpp>
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_float4.hpp>
+#include <glm/glm/vector_relational.hpp>
 
 #include <algorithm>
 #include <bit>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <memory>
 #include <numbers>
+#include <string>
+#include <string_view>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 
 namespace sfs::ui
 {
@@ -16,16 +31,16 @@ namespace
 using Kind = Node::Kind;
 
 // A toggle's switch, in points.
-constexpr glm::vec2 kSwitch{36.0f, 20.0f};
+constexpr glm::vec2 SWITCH{36.0f, 20.0f};
 // A disclosure group's chevron, and the gap after it, in points.
-constexpr float kChevron = 10.0f;
-constexpr float kChevronGap = 8.0f;
+constexpr float CHEVRON = 10.0f;
+constexpr float CHEVRON_GAP = 8.0f;
 // How long a disclosure group takes to open or close, in seconds.
-constexpr float kDisclosureTime = 0.2f;
+constexpr float DISCLOSURE_TIME = 0.2f;
 // How quickly a scroll view eases to where it's scrolled to (per second).
-constexpr float kScrollEase = 16.0f;
+constexpr float SCROLL_EASE = 16.0f;
 // How many kinds of view there are.
-constexpr std::size_t kKinds = static_cast<std::size_t>(Kind::Disclosure) + 1;
+constexpr std::size_t KINDS = static_cast<std::size_t>(Kind::Disclosure) + 1;
 
 // Mixing values into a hash (splitmix's finaliser, then combined).
 uint64_t mixed(uint64_t hash, uint64_t value)
@@ -56,66 +71,16 @@ uint64_t mixed(uint64_t hash, Rect rect)
 }
 
 // Ids: the body's, and a step down from a view to one inside it.
-constexpr Id kRoot = 0x5F5u;
-Id step(Id path, char tag) { return mixed(path, static_cast<uint64_t>(tag)); }
-// A stack's child: by its id(), or its kind and how many of that kind came
-// before it in the stack (so inserting a Text doesn't move a scroll view's
-// state).
-Id childPath(Id path, const Node& child, uint32_t sameKind)
-{
-  if (!child.id.empty())
-    return mixed(mixed(path, uint64_t{'#'}), std::string_view(child.id));
-  return mixed(mixed(path, static_cast<uint64_t>(child.kind) + 0x100u),
-               static_cast<uint64_t>(sameKind));
-}
-// A scroll view's or disclosure group's key in the State.
-Id stateKey(const Node& node, Id path)
-{
-  return node.id.empty() ? path : idKey(node.id);
-}
-
-bool scrollsAlong(const Node& node, int axis)
-{
-  const auto axes = static_cast<uint8_t>(node.axes);
-  return (axes & (axis == 0 ? static_cast<uint8_t>(Axis::Horizontal)
-                            : static_cast<uint8_t>(Axis::Vertical))) != 0;
-}
-
-float smooth(float t)
-{
-  t = std::clamp(t, 0.0f, 1.0f);
-  return t * t * (3.0f - 2.0f * t);
-}
+constexpr Id ROOT = 0x5F5u;
 
 // Everywhere: what's laid out without a scroll view round it is cut to.
-constexpr Rect kEverywhere{-1.0e9f, -1.0e9f, 2.0e9f, 2.0e9f};
+constexpr Rect EVERYWHERE{-1.0e9f, -1.0e9f, 2.0e9f, 2.0e9f};
 
 bool inside(const Rect& rect, const Rect& clip)
 {
   return rect.x >= clip.x && rect.y >= clip.y &&
          rect.x + rect.width <= clip.x + clip.width &&
          rect.y + rect.height <= clip.y + clip.height;
-}
-
-glm::vec4 toVec(Color color, float opacity)
-{
-  return {color.r, color.g, color.b, color.a * opacity};
-}
-
-uint64_t themeHash(const Theme& theme)
-{
-  uint64_t hash = mixed(uint64_t{0x7E}, std::string_view(theme.font));
-  for (const Color& color : {theme.text,
-                             theme.button,
-                             theme.buttonHovered,
-                             theme.buttonPressed,
-                             theme.buttonText,
-                             theme.accent,
-                             theme.track,
-                             theme.scrollThumb,
-                             theme.scrollThumbHovered})
-    hash = mixed(hash, color);
-  return mixed(hash, theme.buttonRadius);
 }
 
 // What a node inherits from those around it.
@@ -166,6 +131,60 @@ struct Measure
 {
   glm::vec2 size{0.0f};
 };
+
+Id step(Id path, char tag) { return mixed(path, static_cast<uint64_t>(tag)); }
+// A stack's child: by its id(), or its kind and how many of that kind came
+// before it in the stack (so inserting a Text doesn't move a scroll view's
+// state).
+Id childPath(Id path, const Node& child, uint32_t sameKind)
+{
+  if (!child.id.empty())
+    return mixed(mixed(path, uint64_t{'#'}), std::string_view(child.id));
+
+  return mixed(mixed(path, static_cast<uint64_t>(child.kind) + 0x100u),
+               static_cast<uint64_t>(sameKind));
+}
+// A scroll view's or disclosure group's key in the State.
+Id stateKey(const Node& node, Id path)
+{
+  return node.id.empty() ? path : idKey(node.id);
+}
+
+bool scrollsAlong(const Node& node, int axis)
+{
+  const auto axes = static_cast<uint8_t>(node.axes);
+  return (axes & (axis == 0 ? static_cast<uint8_t>(Axis::Horizontal)
+                            : static_cast<uint8_t>(Axis::Vertical))) != 0;
+}
+
+float smooth(float t)
+{
+  t = std::clamp(t, 0.0f, 1.0f);
+  return t * t * (3.0f - 2.0f * t);
+}
+
+glm::vec4 toVec(Color color, float opacity)
+{
+  return {color.r, color.g, color.b, color.a * opacity};
+}
+
+uint64_t themeHash(const Theme& theme)
+{
+  uint64_t hash = mixed(uint64_t{0x7E}, std::string_view(theme.font));
+
+  for (const Color& color : {theme.text,
+                             theme.button,
+                             theme.buttonHovered,
+                             theme.buttonPressed,
+                             theme.buttonText,
+                             theme.accent,
+                             theme.track,
+                             theme.scrollThumb,
+                             theme.scrollThumbHovered})
+    hash = mixed(hash, color);
+
+  return mixed(hash, theme.buttonRadius);
+}
 
 } // namespace
 
@@ -231,8 +250,10 @@ public:
   {
     if (!node.keepsState())
       return;
+
     if (node.kind == Kind::Scroll || node.kind == Kind::Disclosure)
       m_keys.emplace(&node, stateKey(node, path));
+
     switch (node.kind)
     {
     case Kind::Group:
@@ -240,7 +261,7 @@ public:
     case Kind::HStack:
     case Kind::ZStack:
     {
-      uint32_t sameKind[kKinds] = {};
+      uint32_t sameKind[KINDS] = {};
       forEachChild(
           node,
           0,
@@ -259,6 +280,7 @@ public:
       // (A styled button's looks are all in the label's place.)
       for (const View& child : node.children)
         findKeys(*child.node(), step(path, 'l'));
+
       break;
     case Kind::Padding:
     case Kind::Background:
@@ -271,6 +293,7 @@ public:
                       : node.kind == Kind::Background ? 'b'
                       : node.kind == Kind::Frame      ? 'f'
                                                       : 's'));
+
       break;
     case Kind::Disclosure:
       if (node.children.size() == 3)
@@ -279,6 +302,7 @@ public:
         findKeys(*node.children[1].node(), step(path, 'c'));
         findKeys(*node.children[2].node(), step(path, 'a'));
       }
+
       break;
     default:
       break;
@@ -290,10 +314,13 @@ public:
   glm::vec2 fitted(const Node& node, glm::vec2 size, const Env& env)
   {
     glm::vec2 natural = measure(node, size, env);
+
     if (flexible(node, true))
       natural.x = size.x;
+
     if (flexible(node, false))
       natural.y = size.y;
+
     return glm::min(natural, size);
   }
 
@@ -311,9 +338,11 @@ public:
   static Env envOf(const Node& node, const Env& outer)
   {
     Env env = outer;
+
     if (!node.font && !node.color && node.opacity == 1.0f && !node.disabled &&
         !node.mask && !node.interpolation)
       return env;
+
     if (node.font)
     {
       if (!node.font->file.empty() && node.font->file != env.font)
@@ -321,15 +350,20 @@ public:
         env.font = node.font->file;
         env.fontKey = std::hash<std::string>()(env.font);
       }
+
       env.fontSize = node.font->size;
     }
+
     if (node.color)
       env.color = *node.color;
+
     env.opacity *= node.opacity;
     env.disabled = env.disabled || node.disabled;
     env.mask = env.mask || node.mask;
+
     if (node.interpolation)
       env.nearest = *node.interpolation == Interpolation::Nearest;
+
     env.rehash();
     return env;
   }
@@ -340,13 +374,16 @@ public:
   static void forEachChild(const Node& node, uint32_t index, Visit&& visit)
   {
     uint32_t at = index + 1;
+
     for (const View& each : node.children)
     {
       const Node& child = *each.node();
+
       if (child.kind == Kind::Group)
         forEachChild(child, at, visit);
       else if (child.kind != Kind::Empty)
         visit(child, at);
+
       at += child.count();
     }
   }
@@ -356,9 +393,11 @@ public:
   static bool flexible(const Node& node, bool horizontal)
   {
     const uint8_t known = horizontal ? 1 : 4, yes = horizontal ? 2 : 8;
+
     if ((node.m_layoutBits & known) == 0)
       node.m_layoutBits = static_cast<uint8_t>(
           node.m_layoutBits | known | (isFlexible(node, horizontal) ? yes : 0));
+
     return (node.m_layoutBits & yes) != 0;
   }
 
@@ -375,8 +414,10 @@ public:
     {
       const float max = horizontal ? node.maxWidth : node.maxHeight;
       const float fixed = horizontal ? node.width : node.height;
+
       if (std::isinf(max))
         return true;
+
       return fixed <= 0.0f && max <= 0.0f && !node.children.empty() &&
              flexible(*node.children[0].node(), horizontal);
     }
@@ -423,6 +464,7 @@ public:
   {
     if (node.kind == Kind::Empty)
       return {0.0f, 0.0f};
+
     const bool stateful = node.keepsState();
     const uint64_t key =
         mixed(mixed(mixed(mixed(stateful ? reinterpret_cast<uintptr_t>(&node)
@@ -433,8 +475,10 @@ public:
               uint64_t{outer.fontKey});
     std::unordered_map<uint64_t, Measure>& measures =
         stateful ? m_ownMeasures : *m_measures;
+
     if (const auto found = measures.find(key); found != measures.end())
       return found->second.size;
+
     if (m_last && !stateful)
       if (const auto found = m_last->measures.find(key);
           found != m_last->measures.end())
@@ -442,11 +486,14 @@ public:
         measures.emplace(key, found->second);
         return found->second.size;
       }
+
     const bool waiting = m_waiting;
     m_waiting = false;
     const glm::vec2 size = measureNode(node, offer, outer);
+
     if (!m_waiting)
       measures.emplace(key, Measure{size});
+
     m_waiting = m_waiting || waiting;
     return size;
   }
@@ -455,6 +502,7 @@ public:
   {
     const Env env = envOf(node, outer);
     const float s = m_scale;
+
     switch (node.kind)
     {
     case Kind::Empty:
@@ -471,9 +519,11 @@ public:
       if (node.buttonStyle == ButtonStyle::Kind::Plain &&
           !node.children.empty())
         return measure(*node.children[0].node(), offer, env);
+
       if (node.buttonStyle == ButtonStyle::Kind::Custom &&
           node.children.size() == 5)
         return measure(*node.children[1].node(), offer, env);
+
       const glm::vec2 pad = buttonPadding();
       const glm::vec2 label = node.children.empty()
                                   ? glm::vec2(0.0f)
@@ -490,7 +540,7 @@ public:
     case Kind::Toggle:
     {
       // The switch, a gap, and its label.
-      const float lead = (kSwitch.x + 8.0f) * s;
+      const float lead = (SWITCH.x + 8.0f) * s;
       const glm::vec2 label =
           node.children.empty()
               ? glm::vec2(0.0f)
@@ -535,6 +585,7 @@ public:
       // The content's, up to the room it's offered.
       if (node.children.empty())
         return {0.0f, 0.0f};
+
       const glm::vec2 content =
           measure(*node.children[0].node(), contentOffer(node, offer), env);
       return glm::min(content, offer);
@@ -542,6 +593,7 @@ public:
     case Kind::Disclosure:
       return disclosureSize(node, offer, env);
     }
+
     return {0.0f, 0.0f};
   }
 
@@ -552,6 +604,7 @@ public:
     for (int axis = 0; axis < 2; ++axis)
       if (scrollsAlong(node, axis))
         offer[axis] = infinity;
+
     return offer;
   }
 
@@ -572,12 +625,14 @@ public:
   {
     Openness out;
     const bool given = node.value > 0.5f;
+
     if (!m_state)
     {
       out.open = given;
       out.shown = given ? 1.0f : 0.0f;
       return out;
     }
+
     out.key = key;
     auto [entry, fresh] = m_state->disclosures.try_emplace(key);
     State::Disclosure& state = entry->second;
@@ -586,22 +641,28 @@ public:
         node.group.empty() ? 0 : mixed(uint64_t{0x67}, node.group);
     state.bound = node.bound;
     state.group = group;
+
     if (node.bound && state.want != given)
     {
       state.want = given;
       ++m_state->changes; // eases there from the next frame
     }
+
     if (fresh)
     {
       ++m_state->changes;
       state.open = given;
       state.want = given;
+
       if (group != 0 && given && !node.bound)
         m_state->openInGroup.try_emplace(group, key);
     }
+
     out.open = m_state->opening(key, state);
+
     if (fresh)
       state.progress = out.open ? 1.0f : 0.0f;
+
     out.shown = smooth(state.progress);
     return out;
   }
@@ -625,9 +686,11 @@ public:
   {
     const float s = m_scale;
     Header header;
+
     if (node.children.size() < 3)
       return header;
-    const float lead = (kChevron + kChevronGap) * s;
+
+    const float lead = (CHEVRON + CHEVRON_GAP) * s;
     header.accessory = measure(*node.children[2].node(), offer, env);
     const float gap = header.accessory.x > 0.0f ? 8.0f * s : 0.0f;
     header.label = measure(*node.children[0].node(),
@@ -635,8 +698,7 @@ public:
                            env);
     header.size = {
         lead + header.label.x + gap + header.accessory.x,
-        std::max({header.label.y, header.accessory.y, kChevron * s}) +
-            6.0f * s};
+        std::max({header.label.y, header.accessory.y, CHEVRON * s}) + 6.0f * s};
     return header;
   }
 
@@ -645,6 +707,7 @@ public:
     const Header header = headerOf(node, offer, env);
     glm::vec2 size = header.size;
     const Openness open = openness(node);
+
     if (open.shown > 0.0f && node.children.size() == 3)
     {
       const float gap = node.spacing * m_scale;
@@ -654,6 +717,7 @@ public:
       size.x = std::max(size.x, content.x);
       size.y += (gap + content.y) * open.shown;
     }
+
     return size;
   }
 
@@ -666,11 +730,15 @@ public:
     {
       if (fixed > 0.0f)
         return fixed * s;
+
       float value = room;
+
       if (max > 0.0f && std::isfinite(max))
         value = std::min(value, max * s);
+
       if (min > 0.0f)
         value = std::max(value, min * s);
+
       return value;
     };
     const glm::vec2 inner(
@@ -686,11 +754,15 @@ public:
     {
       if (fixed > 0.0f)
         return fixed * s;
+
       float value = std::isinf(max) && std::isfinite(room) ? room : childSize;
+
       if (max > 0.0f && std::isfinite(max))
         value = std::min(value, max * s);
+
       if (min > 0.0f)
         value = std::max(value, min * s);
+
       return value;
     };
     return {
@@ -713,8 +785,10 @@ public:
                  {
                    const glm::vec2 size = measure(child, offer, env);
                    total += size[along];
+
                    if (givesWay(child, horizontal))
                      yielding += size[along];
+
                    widest = std::max(widest, size[across]);
                    grows = grows || flexible(child, horizontal);
                    // (A spacer only stretches along the stack.)
@@ -722,11 +796,14 @@ public:
                                      flexible(child, !horizontal));
                    ++count;
                  });
+
     if (count > 0)
       total += node.spacing * m_scale * static_cast<float>(count - 1);
+
     // Short of room: its scroll views give theirs up first.
     if (std::isfinite(offer[along]) && total > offer[along])
       total -= std::min(total - offer[along], yielding);
+
     glm::vec2 size;
     size[along] = grows && std::isfinite(offer[along])
                       ? std::max(offer[along], total)
@@ -750,11 +827,15 @@ public:
                             {node.pictureWidth, node.pictureHeight}};
       return &m_picture;
     }
+
     if (!m_images || node.placeholder)
       return nullptr;
+
     const SourceImage* image = m_images->image(node.text, node.meshIcon);
+
     if (!image)
       m_waiting = true;
+
     return image;
   }
 
@@ -768,13 +849,17 @@ public:
                          ? glm::vec2(32.0f * m_scale)
                      : image ? glm::vec2(image->size()) * m_scale
                              : glm::vec2(0.0f);
+
     if (size.x <= 0.0f || size.y <= 0.0f)
       return glm::vec2(0.0f);
+
     const float across = std::isfinite(offer.x) ? offer.x / size.x : infinity;
     const float down = std::isfinite(offer.y) ? offer.y / size.y : infinity;
     float fit = std::min(across, down);
+
     if (!node.resizable || !std::isfinite(fit))
       fit = std::min(fit, 1.0f);
+
     return size * std::max(fit, 0.0f);
   }
 
@@ -793,10 +878,13 @@ public:
       box(square, toVec(faint, env.opacity), side * 0.22f);
       return;
     }
+
     const SourceImage* image = imageOf(node);
+
     if (!image || !image->texture || image->size().x <= 0 ||
         image->size().y <= 0)
       return;
+
     // Its shape kept, in the middle of its rect, on whole pixels (so a small
     // icon drawn from a level its size is crisp), from the level nearest the
     // size it's drawn.
@@ -837,13 +925,16 @@ public:
   static void forEachLine(std::string_view text, Visit&& visit)
   {
     std::size_t start = 0;
+
     while (true)
     {
       const std::size_t end = text.find('\n', start);
       visit(text.substr(
           start, end == std::string_view::npos ? end : end - start));
+
       if (end == std::string_view::npos)
         break;
+
       start = end + 1;
     }
   }
@@ -874,6 +965,7 @@ public:
     // Scrolled out of sight: not drawn, laid out or clickable.
     if (!rect.overlaps(m_clip) && rect.width > 0.0f && rect.height > 0.0f)
       return;
+
     if (m_placed)
       m_placed->push_back({rect,
                            node.kind,
@@ -881,7 +973,9 @@ public:
                            node.kind == Kind::Text || node.kind == Kind::Image
                                ? node.text
                                : std::string()});
+
     ++m_depth;
+
     if (m_next && inside(rect, m_clip))
       placeKept(node, rect, outer, path, index);
     else
@@ -889,6 +983,7 @@ public:
       ++m_stats.placed;
       placeNode(node, rect, outer, path, index);
     }
+
     --m_depth;
   }
 
@@ -905,9 +1000,11 @@ private:
   {
     if (readState && (!m_state || m_state->changes != m_last->stamp))
       return false;
+
     for (uint32_t i = entry.sense; i < entry.sense + entry.senses; ++i)
       if (senseOf(m_last->senses[i].id) != m_last->senses[i].bits)
         return false;
+
     return true;
   }
 
@@ -919,6 +1016,7 @@ private:
   {
     const uint64_t key =
         mixed(mixed(mixed(mixed(node.hash(), path), rect), outer.hash), m_clip);
+
     if (const auto found = m_last->entries.find(key);
         found != m_last->entries.end() &&
         usable(found->second, node.keepsState()))
@@ -926,6 +1024,7 @@ private:
       reuse(found->second, key, index);
       return;
     }
+
     const auto quad = static_cast<uint32_t>(m_quads.size());
     const auto hit = static_cast<uint32_t>(m_hits.size());
     const auto sense = static_cast<uint32_t>(m_next->senses.size());
@@ -934,6 +1033,7 @@ private:
     m_waiting = false;
     ++m_stats.placed;
     placeNode(node, rect, outer, path, index);
+
     if (!m_waiting)
     {
       m_next->entries[key] =
@@ -947,6 +1047,7 @@ private:
                 inside};
       m_next->recorded.push_back(key);
     }
+
     m_waiting = m_waiting || waiting;
   }
 
@@ -965,11 +1066,13 @@ private:
     m_quads.insert(m_quads.end(),
                    quads.begin() + entry.quad,
                    quads.begin() + entry.quad + entry.quads);
+
     for (uint32_t i = entry.hit; i < entry.hit + entry.hits; ++i)
     {
       m_hits.push_back(m_last->hits[i]);
       m_hits.back().source = m_hits.back().source - entry.source + index;
     }
+
     m_next->senses.insert(m_next->senses.end(),
                           m_last->senses.begin() + entry.sense,
                           m_last->senses.begin() + entry.sense + entry.senses);
@@ -983,11 +1086,14 @@ private:
       kept.inside = kept.inside - entry.inside + inside;
       return kept;
     };
+
     for (uint32_t i = entry.inside; i < m_last->recorded.size(); ++i)
     {
       const uint64_t each = m_last->recorded[i];
+
       if (each == key)
         break;
+
       if (const auto found = m_last->entries.find(each);
           found != m_last->entries.end())
       {
@@ -995,6 +1101,7 @@ private:
         m_next->recorded.push_back(each);
       }
     }
+
     m_next->entries[key] = moved(entry);
     m_next->recorded.push_back(key);
   }
@@ -1031,6 +1138,7 @@ private:
                  uint32_t index)
   {
     const Env env = envOf(node, outer);
+
     if (!node.help.empty())
       addHit(path, rect, index).help = node.help;
 
@@ -1048,17 +1156,20 @@ private:
       break;
     case Kind::ZStack:
     {
-      uint32_t sameKind[kKinds] = {};
+      uint32_t sameKind[KINDS] = {};
       forEachChild(
           node,
           index,
           [&](const Node& child, uint32_t at)
           {
             glm::vec2 size = measure(child, {rect.width, rect.height}, env);
+
             if (flexible(child, true))
               size.x = rect.width;
+
             if (flexible(child, false))
               size.y = rect.height;
+
             place(child,
                   aligned(rect, size, child.alignment),
                   env,
@@ -1090,10 +1201,12 @@ private:
       box(rect, toVec(m_theme.track, env.opacity), radius);
       Rect filled = rect;
       filled.width = rect.width * std::clamp(node.value, 0.0f, 1.0f);
+
       if (filled.width > 0.5f)
         box(filled,
             toVec(m_theme.accent, env.opacity),
             std::min(radius, filled.width * 0.5f));
+
       break;
     }
     case Kind::Padding:
@@ -1109,23 +1222,29 @@ private:
         inner.height = std::max(inner.height, 0.0f);
         place(*node.children[0].node(), inner, env, step(path, 'p'), index + 1);
       }
+
       break;
     case Kind::Background:
       drawFill(node.fill, rect, env);
       // Covers the scene: clicks on it are the UI's.
       addHit(path, rect, index);
+
       if (!node.children.empty())
         place(*node.children[0].node(), rect, env, step(path, 'b'), index + 1);
+
       break;
     case Kind::Frame:
       if (!node.children.empty())
       {
         const Node& child = *node.children[0].node();
         glm::vec2 size = measure(child, {rect.width, rect.height}, env);
+
         if (flexible(child, true))
           size.x = rect.width;
+
         if (flexible(child, false))
           size.y = rect.height;
+
         size = glm::min(size, glm::vec2(rect.width, rect.height));
         place(child,
               aligned(rect, size, node.alignment),
@@ -1133,6 +1252,7 @@ private:
               step(path, 'f'),
               index + 1);
       }
+
       break;
     case Kind::Scroll:
       placeScroll(node, rect, env, path, index);
@@ -1167,6 +1287,7 @@ private:
     // How many were kept before each (to move kept views' ranges by).
     m_keptQuads.assign(1, 0);
     std::size_t to = firstQuad;
+
     for (std::size_t i = firstQuad; i < m_quads.size(); ++i)
     {
       UiQuad& quad = m_quads[i];
@@ -1181,46 +1302,60 @@ private:
                                            quad.clip.y,
                                            quad.clip.z - quad.clip.x,
                                            quad.clip.w - quad.clip.y});
+
       if (!outside)
         m_quads[to++] = quad;
+
       m_keptQuads.push_back(static_cast<uint32_t>(to - firstQuad));
     }
+
     const bool droppedQuads = to != m_quads.size();
     m_quads.resize(to);
     m_keptHits.assign(1, 0);
     to = firstHit;
+
     for (std::size_t i = firstHit; i < m_hits.size(); ++i)
     {
       Hit& hit = m_hits[i];
       hit.rect = hit.rect.intersect(clip);
+
       if (hit.rect.width > 0.0f && hit.rect.height > 0.0f)
       {
         if (to != i)
           m_hits[to] = std::move(hit);
+
         ++to;
       }
+
       m_keptHits.push_back(static_cast<uint32_t>(to - firstHit));
     }
+
     const bool droppedHits = to != m_hits.size();
     m_hits.erase(
         m_hits.begin() + static_cast<std::ptrdiff_t>(to), m_hits.end());
+
     if (!m_next || (!droppedQuads && !droppedHits))
       return;
+
     for (std::size_t r = firstKept; r < m_next->recorded.size(); ++r)
     {
       const auto found = m_next->entries.find(m_next->recorded[r]);
+
       if (found == m_next->entries.end())
         continue;
+
       Entry& entry = found->second;
       const uint32_t quadFrom = m_keptQuads[entry.quad - firstQuad];
       const uint32_t quadTo = m_keptQuads[entry.quad + entry.quads - firstQuad];
       const uint32_t hitFrom = m_keptHits[entry.hit - firstHit];
       const uint32_t hitTo = m_keptHits[entry.hit + entry.hits - firstHit];
+
       if (quadTo - quadFrom != entry.quads || hitTo - hitFrom != entry.hits)
       {
         m_next->entries.erase(found);
         continue;
       }
+
       entry.quad = static_cast<uint32_t>(firstQuad) + quadFrom;
       entry.hit = static_cast<uint32_t>(firstHit) + hitFrom;
     }
@@ -1237,10 +1372,12 @@ private:
   {
     if (node.children.empty())
       return;
+
     const Node& content = *node.children[0].node();
     const glm::vec2 view(rect.width, rect.height);
     glm::vec2 size = measure(content, contentOffer(node, view), env);
     glm::vec2 furthest(0.0f);
+
     for (int axis = 0; axis < 2; ++axis)
     {
       // Content smaller than the view (or not scrolled that way) and
@@ -1248,6 +1385,7 @@ private:
       if (flexible(content, axis == 0) &&
           (!scrollsAlong(node, axis) || size[axis] < view[axis]))
         size[axis] = view[axis];
+
       if (!scrollsAlong(node, axis))
         size[axis] = std::min(size[axis], view[axis]);
       else
@@ -1260,10 +1398,12 @@ private:
     State::Scroll* state = &local;
     const int main = scrollsAlong(node, 1) ? 1 : 0;
     const float first = std::max(node.scrollOffset, 0.0f) * m_scale;
+
     if (m_state)
     {
       auto [entry, fresh] = m_state->scrolls.try_emplace(stateKey(node, path));
       state = &entry->second;
+
       if (fresh)
       {
         ++m_state->changes;
@@ -1272,8 +1412,10 @@ private:
     }
     else
       state->offset[main] = state->target[main] = first;
+
     if (m_state && state->furthest != furthest)
       ++m_state->changes;
+
     state->furthest = furthest;
     state->target = glm::clamp(state->target, glm::vec2(0.0f), furthest);
     state->offset = glm::clamp(state->offset, glm::vec2(0.0f), furthest);
@@ -1286,24 +1428,31 @@ private:
     // It covers the scene, and the wheel over it scrolls it (its content's
     // hits in front of it).
     Hit& hit = addHit(path, rect, index);
+
     if (m_state)
       hit.scroll = [all = m_state, state, axes = node.axes](glm::vec2 delta)
       {
         // Scrolling only sideways: the wheel goes along it.
         if (axes == Axis::Horizontal && delta.x == 0.0f)
           delta = {delta.y, 0.0f};
+
         if (axes == Axis::Horizontal)
           delta.y = 0.0f;
+
         if (axes == Axis::Vertical)
           delta.x = 0.0f;
+
         const glm::vec2 to = scrolled(state->target, delta, state->furthest);
+
         if (glm::all(
                 glm::lessThan(glm::abs(to - state->target), glm::vec2(0.01f))))
           return false;
+
         state->target = to;
         ++all->changes;
         return true;
       };
+
     m_clip = clip;
     place(content,
           {rect.x - offset.x, rect.y - offset.y, size.x, size.y},
@@ -1315,6 +1464,7 @@ private:
 
     // Its bars, over the content, where it's bigger than the view.
     const bool both = furthest.x > 0.5f && furthest.y > 0.5f;
+
     for (int axis = 0; axis < 2; ++axis)
       if (furthest[axis] > 0.5f)
         scrollBar(
@@ -1355,15 +1505,18 @@ private:
       return axis == 1 ? Rect{across(width), from, width, along}
                        : Rect{from, across(width), along, width};
     };
+
     if (over)
       box(bar(start, length, thick),
           toVec(m_theme.scrollThumb, 0.35f),
           thick * 0.5f);
+
     box(bar(start + thumb.x, thumb.y, thick),
         toVec(over ? m_theme.scrollThumbHovered : m_theme.scrollThumb, 1.0f),
         thick * 0.5f);
 
     Hit& hit = addHit(id, bar(start, length, reach + inset), index);
+
     if (m_state)
     {
       State::Scroll* scroll = &state;
@@ -1374,6 +1527,7 @@ private:
       {
         ++all->changes;
         const float along = at[axis] - start;
+
         if (along >= thumb.x && along <= thumb.x + thumb.y)
           scroll->grab = along - thumb.x;
         else
@@ -1389,6 +1543,7 @@ private:
       {
         if (scroll->grab < 0.0f)
           return;
+
         ++all->changes;
         const float room = std::max(length - thumb.y, 1.0f);
         const float t =
@@ -1410,6 +1565,7 @@ private:
   {
     if (node.children.size() < 3)
       return;
+
     const float s = m_scale;
     const Header header = headerOf(node, {rect.width, rect.height}, env);
     const Openness open = openness(node, stateKey(node, path));
@@ -1419,6 +1575,7 @@ private:
     const bool enabled = !env.disabled;
     const Id id = step(path, 'h');
     Hit& hit = addHit(id, top, index, enabled);
+
     if (enabled && node.bound && node.change)
       hit.action = [](const Node& source)
       {
@@ -1436,10 +1593,13 @@ private:
           Id& inGroup = all->openInGroup[state->group];
           inGroup = inGroup == key ? 0 : key;
         }
+
         ++all->changes;
       };
+
     const bool over = hit.action && hovered(id);
     const float opacity = env.opacity * (enabled ? 1.0f : 0.45f);
+
     if (over)
     {
       Color tint = env.color;
@@ -1450,7 +1610,7 @@ private:
     }
 
     // The chevron, turned down as it opens.
-    const float chevron = kChevron * s;
+    const float chevron = CHEVRON * s;
     UiQuad mark;
     mark.kind = UiQuad::Chevron;
     mark.rect = {
@@ -1469,7 +1629,7 @@ private:
     Env labelEnv = env;
     labelEnv.opacity = opacity;
     labelEnv.rehash();
-    const float lead = (kChevron + kChevronGap) * s;
+    const float lead = (CHEVRON + CHEVRON_GAP) * s;
     place(*node.children[0].node(),
           aligned({top.x + lead, top.y, header.label.x, top.height},
                   header.label,
@@ -1477,6 +1637,7 @@ private:
           labelEnv,
           step(path, 't'),
           labelAt);
+
     if (header.accessory.x > 0.0f)
       place(*node.children[2].node(),
             aligned({top.x + top.width - header.accessory.x,
@@ -1492,19 +1653,24 @@ private:
     // Its content below, as much as shows while it opens or closes.
     if (open.shown <= 0.0f)
       return;
+
     const Node& content = *node.children[1].node();
     const float gap = node.spacing * s;
     const float below = top.y + top.height + gap;
     glm::vec2 size = measure(content, {rect.width, infinity}, env);
+
     if (flexible(content, true))
       size.x = rect.width;
+
     size.x = std::min(size.x, rect.width);
     const Rect area{rect.x, below, size.x, size.y};
+
     if (open.shown >= 1.0f)
     {
       place(content, area, env, step(path, 'c'), contentAt);
       return;
     }
+
     const Rect clip = m_clip.intersect(
         {rect.x - 8.0f * s,
          top.y + top.height,
@@ -1535,22 +1701,27 @@ private:
                    m_children.push_back({&child, at, glm::vec2(0.0f)});
                  });
     const std::size_t count = m_children.size() - first;
+
     if (count == 0)
       return;
+
     const int along = horizontal ? 0 : 1, across = 1 - along;
     const glm::vec2 room(rect.width, rect.height);
 
     // Each child's natural size; the flexible ones share what's left over.
     float fixed = node.spacing * m_scale * static_cast<float>(count - 1);
     int growing = 0;
+
     for (std::size_t i = first; i < first + count; ++i)
     {
       m_children[i].size = measure(*m_children[i].node, room, env);
+
       if (flexible(*m_children[i].node, horizontal))
         ++growing;
       else
         fixed += m_children[i].size[along];
     }
+
     // Short of room: its scroll views give theirs up first.
     for (std::size_t i = first; i < first + count && fixed > room[along]; ++i)
       if (givesWay(*m_children[i].node, horizontal))
@@ -1560,12 +1731,14 @@ private:
         m_children[i].size[along] -= cut;
         fixed -= cut;
       }
+
     const float share = growing > 0 ? std::max(room[along] - fixed, 0.0f) /
                                           static_cast<float>(growing)
                                     : 0.0f;
 
     float cursor = horizontal ? rect.x : rect.y;
-    uint32_t sameKind[kKinds] = {};
+    uint32_t sameKind[KINDS] = {};
+
     for (std::size_t i = first; i < first + count; ++i)
     {
       // (Copied: placing the child adds to the list.)
@@ -1573,21 +1746,26 @@ private:
           m_children[i].node, m_children[i].at, m_children[i].size};
       const Node& child = *each.node;
       glm::vec2 size = each.size;
+
       if (flexible(child, horizontal))
         size[along] = std::max(
             share, child.kind == Kind::Spacer ? child.value * m_scale : 0.0f);
+
       if (child.kind != Kind::Spacer && flexible(child, !horizontal))
         size[across] = room[across];
+
       size[across] = std::min(size[across], room[across]);
 
       // Lined up across the stack by its alignment.
       const float start = horizontal ? rect.y : rect.x;
       float offset = 0.0f;
       const float spare = room[across] - size[across];
+
       if (lineUp(node.stackAlignment, horizontal) == 1)
         offset = spare * 0.5f;
       else if (lineUp(node.stackAlignment, horizontal) == 2)
         offset = spare;
+
       Rect placed = horizontal ? Rect{cursor, start + offset, size.x, size.y}
                                : Rect{start + offset, cursor, size.x, size.y};
       place(child,
@@ -1598,6 +1776,7 @@ private:
             each.at);
       cursor += size[along] + node.spacing * m_scale;
     }
+
     m_children.resize(first);
   }
 
@@ -1625,6 +1804,7 @@ private:
     case Alignment::BottomTrailing:
       return 2;
     }
+
     return 1;
   }
 
@@ -1649,12 +1829,14 @@ private:
     const bool enabled = !env.disabled;
     Hit& hit = addHit(path, rect, index, enabled);
     hit.help = node.help;
+
     if (node.action)
       hit.action = [](const Node& source)
       {
         if (source.action)
           source.action();
       };
+
     // Its look (a label, a style's face) is placed over it, and what that
     // makes hit (a background covering the scene, a help) would be found
     // first, in front of it, and take its clicks: so it's made hit again, in
@@ -1675,17 +1857,20 @@ private:
     } inFront{m_hits, own};
     const bool over = enabled && hovered(path);
     const bool down = over && pressed(path);
+
     if (node.buttonStyle == ButtonStyle::Kind::Plain)
     {
       // Its label is the button: dimmed pressed, or disabled.
       if (node.children.empty())
         return;
+
       Env label = env;
       label.opacity *= !enabled ? 0.45f : down ? 0.6f : 1.0f;
       label.rehash();
       place(*node.children[0].node(), rect, label, step(path, 'l'), index + 1);
       return;
     }
+
     if (node.buttonStyle == ButtonStyle::Kind::Custom &&
         node.children.size() == 5)
     {
@@ -1693,8 +1878,10 @@ private:
       // children after the label), in the middle of its rect.
       const std::size_t look = !enabled ? 4 : down ? 3 : over ? 2 : 1;
       uint32_t at = index + 1;
+
       for (std::size_t i = 0; i < look; ++i)
         at += node.children[i].node()->count();
+
       const Node& face = *node.children[look].node();
       const glm::vec2 size = measure(face, {rect.width, rect.height}, env);
       place(face,
@@ -1706,18 +1893,22 @@ private:
             at);
       return;
     }
+
     const Color fill = down   ? m_theme.buttonPressed
                        : over ? m_theme.buttonHovered
                               : m_theme.button;
     const float opacity = env.opacity * (enabled ? 1.0f : 0.45f);
     const float radius = m_theme.buttonRadius * m_scale;
+
     // A soft shadow under it, less while pressed down.
     if (!down)
       shadow(rect, radius, 3.0f * m_scale, opacity * 0.5f);
+
     box(rect, toVec(fill, opacity), radius);
 
     if (node.children.empty())
       return;
+
     Env label = labelEnv(env);
     label.opacity = opacity;
     label.rehash();
@@ -1726,8 +1917,10 @@ private:
     const glm::vec2 size = measure(
         child, {rect.width - 2.0f * pad.x, rect.height - 2.0f * pad.y}, label);
     Rect labelRect = aligned(rect, size, Alignment::Center);
+
     if (down)
       labelRect.y += 1.0f * m_scale;
+
     place(child, labelRect, label, step(path, 'l'), index + 1);
   }
 
@@ -1759,21 +1952,26 @@ private:
 
     Hit& hit = addHit(path, rect, index, enabled);
     hit.help = node.help;
+
     if (enabled)
       hit.drag = [start, end](const Node& source, glm::vec2 at)
       {
         if (!source.change)
           return;
+
         const float low = source.low, high = source.high;
         const float t =
             end > start ? std::clamp((at.x - start) / (end - start), 0.0f, 1.0f)
                         : 0.0f;
         float value = low + t * (high - low);
+
         if (source.step > 0.0f)
           value = low + std::round((value - low) / source.step) * source.step;
+
         source.change(
             std::clamp(value, std::min(low, high), std::max(low, high)));
       };
+
     const bool down = enabled && pressed(path);
     const bool over = enabled && (down || hovered(path));
     const float opacity = env.opacity * (enabled ? 1.0f : 0.45f);
@@ -1783,10 +1981,12 @@ private:
     const Rect track{start, middle - 3.0f * s, end - start, 6.0f * s};
     box(track, toVec(trackColor(), opacity), 3.0f * s);
     const float at = start + (end - start) * fraction;
+
     if (at - start > 0.5f)
       box({start, track.y, at - start, track.height},
           toVec(m_theme.accent, opacity),
           3.0f * s);
+
     const Rect handle{at - knob * 0.5f, middle - knob * 0.5f, knob, knob};
     shadow(handle, knob * 0.5f, 3.0f * s, opacity * 0.5f);
     const Color fill = down   ? m_theme.buttonPressed
@@ -1806,17 +2006,19 @@ private:
     const bool on = node.value > 0.5f;
     Hit& hit = addHit(path, rect, index, enabled);
     hit.help = node.help;
+
     if (enabled)
       hit.action = [](const Node& source)
       {
         if (source.change)
           source.change(source.value > 0.5f ? 0.0f : 1.0f);
       };
+
     const bool over = enabled && hovered(path);
     const float opacity = env.opacity * (enabled ? 1.0f : 0.45f);
 
     // The switch: a pill, the accent's colour while on, its knob at that end.
-    const glm::vec2 size = kSwitch * s;
+    const glm::vec2 size = SWITCH * s;
     const Rect pill{
         rect.x, rect.y + (rect.height - size.y) * 0.5f, size.x, size.y};
     box(pill,
@@ -1834,11 +2036,12 @@ private:
 
     if (node.children.empty())
       return;
+
     Env label = env;
     label.opacity = opacity;
     label.rehash();
     const Node& child = *node.children[0].node();
-    const float lead = (kSwitch.x + 8.0f) * s;
+    const float lead = (SWITCH.x + 8.0f) * s;
     const Rect room{
         rect.x + lead, rect.y, std::max(rect.width - lead, 0.0f), rect.height};
     const glm::vec2 labelSize =
@@ -1878,10 +2081,13 @@ private:
   void drawFill(const Fill& fill, Rect rect, const Env& env)
   {
     const float radius = fill.cornerRadius * m_scale;
+
     if (fill.shadow > 0.0f)
       shadow(rect, radius, fill.shadow * m_scale, env.opacity * fill.color.a);
+
     if (fill.color.a <= 0.0f && fill.borderWidth <= 0.0f)
       return;
+
     UiQuad quad;
     quad.rect = {rect.x, rect.y, rect.width, rect.height};
     quad.color = toVec(fill.color, env.opacity);
@@ -1933,10 +2139,80 @@ private:
   Generation* m_next = nullptr;  // and this one's
   std::vector<Child> m_children; // stacks' children being placed
   std::vector<uint32_t> m_keptQuads, m_keptHits; // clipSince()'s
-  Rect m_clip = kEverywhere; // what's being laid out is cut to
+  Rect m_clip = EVERYWHERE; // what's being laid out is cut to
 };
 
 } // namespace
+
+void State::advance(float seconds)
+{
+  seconds = std::max(seconds, 0.0f);
+
+  for (auto& [key, scroll] : scrolls)
+    if (scroll.offset != scroll.target)
+    {
+      ++changes; // still easing
+      const float ease = 1.0f - std::exp(-SCROLL_EASE * seconds);
+      scroll.offset += (scroll.target - scroll.offset) * ease;
+
+      for (int axis = 0; axis < 2; ++axis)
+        if (std::abs(scroll.target[axis] - scroll.offset[axis]) < 0.5f)
+          scroll.offset[axis] = scroll.target[axis];
+    }
+
+  const float step = seconds / DISCLOSURE_TIME;
+
+  for (auto& [key, disclosure] : disclosures)
+  {
+    const float was = disclosure.progress;
+    disclosure.progress = opening(key, disclosure)
+                              ? std::min(disclosure.progress + step, 1.0f)
+                              : std::max(disclosure.progress - step, 0.0f);
+
+    if (disclosure.progress != was)
+      ++changes; // still easing
+  }
+}
+
+bool State::opening(Id key, const Disclosure& disclosure) const
+{
+  if (disclosure.bound)
+    return disclosure.want;
+
+  if (disclosure.group != 0)
+  {
+    const auto open = openInGroup.find(disclosure.group);
+    return open != openInGroup.end() && open->second == key;
+  }
+
+  return disclosure.open;
+}
+
+Cache::Cache() : m_data(std::make_unique<Data>()) {}
+Cache::~Cache() = default;
+
+void Cache::clear()
+{
+  for (Generation& frame : m_data->frames)
+  {
+    frame.entries.clear();
+    frame.measures.clear();
+  }
+
+  m_data->layerKey = 0;
+}
+
+const std::vector<Hit>& Cache::hits() const
+{
+  return m_data->frames[m_data->current].hits;
+}
+
+const std::shared_ptr<const std::vector<UiQuad>>& Cache::quads() const
+{
+  return m_data->shown;
+}
+
+const Cache::Stats& Cache::stats() const { return m_data->stats; }
 
 Id idKey(std::string_view id)
 {
@@ -1946,87 +2222,32 @@ Id idKey(std::string_view id)
 const Node* nodeAt(const Node& root, uint32_t index)
 {
   const Node* node = &root;
+
   while (index > 0)
   {
     --index; // past `node`, to its children
     const Node* inside = nullptr;
+
     for (const View& child : node->children)
     {
       const uint32_t count = child.node()->count();
+
       if (index < count)
       {
         inside = child.node().get();
         break;
       }
+
       index -= count;
     }
+
     if (!inside)
       return nullptr;
+
     node = inside;
   }
+
   return node;
-}
-
-bool State::opening(Id key, const Disclosure& disclosure) const
-{
-  if (disclosure.bound)
-    return disclosure.want;
-  if (disclosure.group != 0)
-  {
-    const auto open = openInGroup.find(disclosure.group);
-    return open != openInGroup.end() && open->second == key;
-  }
-  return disclosure.open;
-}
-
-void State::advance(float seconds)
-{
-  seconds = std::max(seconds, 0.0f);
-  for (auto& [key, scroll] : scrolls)
-    if (scroll.offset != scroll.target)
-    {
-      ++changes; // still easing
-      const float ease = 1.0f - std::exp(-kScrollEase * seconds);
-      scroll.offset += (scroll.target - scroll.offset) * ease;
-      for (int axis = 0; axis < 2; ++axis)
-        if (std::abs(scroll.target[axis] - scroll.offset[axis]) < 0.5f)
-          scroll.offset[axis] = scroll.target[axis];
-    }
-  const float step = seconds / kDisclosureTime;
-  for (auto& [key, disclosure] : disclosures)
-  {
-    const float was = disclosure.progress;
-    disclosure.progress = opening(key, disclosure)
-                              ? std::min(disclosure.progress + step, 1.0f)
-                              : std::max(disclosure.progress - step, 0.0f);
-    if (disclosure.progress != was)
-      ++changes; // still easing
-  }
-}
-
-Cache::Cache() : m_data(std::make_unique<Data>()) {}
-Cache::~Cache() = default;
-
-const std::shared_ptr<const std::vector<UiQuad>>& Cache::quads() const
-{
-  return m_data->shown;
-}
-
-const std::vector<Hit>& Cache::hits() const
-{
-  return m_data->frames[m_data->current].hits;
-}
-
-const Cache::Stats& Cache::stats() const { return m_data->stats; }
-
-void Cache::clear()
-{
-  for (Generation& frame : m_data->frames)
-  {
-    frame.entries.clear();
-    frame.measures.clear();
-  }
-  m_data->layerKey = 0;
 }
 
 namespace
@@ -2043,10 +2264,31 @@ void layBody(Layout& laying, const Node& node, glm::vec2 size)
                   (size.y - natural.y) * 0.5f * static_cast<float>(row),
                   natural.x,
                   natural.y};
-  laying.place(node, rect, env, kRoot, 0);
+  laying.place(node, rect, env, ROOT, 0);
 }
 
 } // namespace
+
+Rect Rect::intersect(const Rect& other) const
+{
+  const float left = std::max(x, other.x);
+  const float top = std::max(y, other.y);
+  const float right = std::min(x + width, other.x + other.width);
+  const float bottom = std::min(y + height, other.y + other.height);
+  return {
+      left, top, std::max(right - left, 0.0f), std::max(bottom - top, 0.0f)};
+}
+
+const SourceImage::Level& SourceImage::levelFor(float pixels) const
+{
+  int at = 0;
+
+  while (at + 1 < std::min(levels, kMostLevels) &&
+         static_cast<float>(level[at + 1].size.x) >= pixels - 0.01f)
+    ++at;
+
+  return level[at];
+}
 
 void layout(const View& root,
             glm::vec2 size,
@@ -2063,8 +2305,10 @@ void layout(const View& root,
   Layout laying(scale, theme, text, pointer, quads, hits, images, state);
   laying.m_placed = placed;
   const Node& node = *root.node();
+
   if (state)
-    laying.findKeys(node, kRoot);
+    laying.findKeys(node, ROOT);
+
   layBody(laying, node, size);
 }
 
@@ -2088,6 +2332,7 @@ void layout(const View& root,
       mixed(mixed(mixed(mixed(mixed(themeHash(theme), scale), size.x), size.y),
                   text.generation()),
             uint64_t{0x61});
+
   if (global != data.globalKey)
   {
     cache.clear();
@@ -2097,19 +2342,24 @@ void layout(const View& root,
   // The whole layer as it was: nothing to do (its fonts kept).
   Generation& last = data.frames[data.current];
   const uint64_t layerKey = mixed(node.hash(), global);
+
   if (!placed && layerKey == data.layerKey && !last.waiting &&
       (!last.readState || state.changes == last.stamp))
   {
     bool same = true;
+
     for (const Sense& sense : last.senses)
       same = same && static_cast<uint8_t>(
                          (pointer.hovered == sense.id ? 1 : 0) |
                          (pointer.pressed == sense.id ? 2 : 0)) == sense.bits;
+
     if (same)
     {
       data.stats.kept = true;
+
       for (const UiTexture* texture : data.textures)
         text.keep(texture);
+
       return;
     }
   }
@@ -2118,8 +2368,10 @@ void layout(const View& root,
   // this one.
   data.current ^= 1;
   Generation& next = data.frames[data.current];
+
   if (next.quads.use_count() > 1)
     next.quads = std::make_shared<std::vector<UiQuad>>();
+
   next.quads->clear();
   next.hits.clear();
   next.senses.clear();
@@ -2130,9 +2382,11 @@ void layout(const View& root,
   Layout laying(
       scale, theme, text, pointer, *next.quads, next.hits, images, &state);
   laying.m_placed = placed;
+
   if (!placed)
     laying.keep(last, next);
-  laying.findKeys(node, kRoot);
+
+  laying.findKeys(node, ROOT);
   layBody(laying, node, size);
 
   data.stats.placed = laying.m_stats.placed;
@@ -2143,17 +2397,21 @@ void layout(const View& root,
   // Glyphs' textures grew while it was drawn: drawn again next frame (some
   // of its quads are already wrong).
   data.layerKey = placed || text.generation() != generation ? 0 : layerKey;
+
   if (data.layerKey == 0)
     next.entries.clear();
+
   last.entries.clear();
   last.measures.clear();
   data.textures.clear();
+
   for (const UiQuad& quad : *next.quads)
     if (quad.kind == UiQuad::Glyph && quad.texture &&
         (data.textures.empty() || data.textures.back() != quad.texture) &&
         std::find(data.textures.begin(), data.textures.end(), quad.texture) ==
             data.textures.end())
       data.textures.push_back(quad.texture);
+
   data.shown = next.quads;
 }
 
@@ -2170,25 +2428,6 @@ glm::vec2 fit(const View& root,
   return laying.fitted(*root.node(), offer, laying.rootEnv());
 }
 
-const SourceImage::Level& SourceImage::levelFor(float pixels) const
-{
-  int at = 0;
-  while (at + 1 < std::min(levels, kMostLevels) &&
-         static_cast<float>(level[at + 1].size.x) >= pixels - 0.01f)
-    ++at;
-  return level[at];
-}
-
-Rect Rect::intersect(const Rect& other) const
-{
-  const float left = std::max(x, other.x);
-  const float top = std::max(y, other.y);
-  const float right = std::min(x + width, other.x + other.width);
-  const float bottom = std::min(y + height, other.y + other.height);
-  return {
-      left, top, std::max(right - left, 0.0f), std::max(bottom - top, 0.0f)};
-}
-
 glm::vec2 scrolled(glm::vec2 from, glm::vec2 delta, glm::vec2 furthest)
 {
   return glm::clamp(
@@ -2203,6 +2442,7 @@ glm::vec2 scrollThumb(float track,
 {
   if (track <= 0.0f || content <= view || content <= 0.0f)
     return {0.0f, std::max(track, 0.0f)};
+
   const float length =
       std::clamp(track * view / content, std::min(shortest, track), track);
   const float t = std::clamp(offset / (content - view), 0.0f, 1.0f);
@@ -2248,6 +2488,7 @@ const char* kindName(Node::Kind kind)
   case Node::Kind::Disclosure:
     return "DisclosureGroup";
   }
+
   return "?";
 }
 

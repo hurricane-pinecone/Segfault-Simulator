@@ -1,5 +1,6 @@
 #include "engine/core/ecs/service.h"
 
+#include "engine/core/ecs/entity.h"
 #include "engine/core/ecs/registry.h"
 #include "engine/core/logger/logger.h"
 
@@ -10,6 +11,7 @@ Entity Service::createEntity()
 {
   if (m_registry) [[likely]]
     return m_registry->createEntity();
+
   LOG_ERROR("A service created an entity before it was added to a registry; "
             "nothing created");
   return {};

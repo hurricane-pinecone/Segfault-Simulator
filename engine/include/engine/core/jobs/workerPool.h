@@ -24,15 +24,17 @@ class WorkerPool
 {
 public:
   explicit WorkerPool(unsigned threads = 2);
-  ~WorkerPool();
 
   WorkerPool(const WorkerPool&) = delete;
-  WorkerPool& operator=(const WorkerPool&) = delete;
 
-  void submit(std::function<void()> job);
+  ~WorkerPool();
+
+  WorkerPool& operator=(const WorkerPool&) = delete;
 
   /** Jobs queued or running. */
   std::size_t pending() const;
+
+  void submit(std::function<void()> job);
 
 private:
   void run();

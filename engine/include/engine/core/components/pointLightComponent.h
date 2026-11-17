@@ -1,6 +1,6 @@
 #pragma once
 
-#include "glm/glm/ext/vector_float3.hpp"
+#include <glm/glm/ext/vector_float3.hpp>
 
 namespace sfs
 {
@@ -31,16 +31,6 @@ namespace sfs
  */
 struct PointLightComponent
 {
-  [[sfs::color]] glm::vec3 color{1.0f, 0.85f, 0.6f};
-  [[sfs::range(0, 10)]] float intensity = 1.0f;
-  [[sfs::range(0, 100)]] float radius = 8.0f;
-  glm::vec3 offset{0.0f};
-  bool castsShadow = true;
-  [[sfs::range(0, 5)]] float sourceRadius = 0.05f;
-  bool spot = false;
-  [[sfs::range(0, 90)]] [[sfs::showIf(spot)]] float innerAngle = 20.0f;
-  [[sfs::range(0, 90)]] [[sfs::showIf(spot)]] float outerAngle = 30.0f;
-
   PointLightComponent() = default;
 
   PointLightComponent(glm::vec3 color,
@@ -50,6 +40,16 @@ struct PointLightComponent
       : color(color), intensity(intensity), radius(radius), offset(offset)
   {
   }
+
+  [[sfs::color]] glm::vec3 color{1.0f, 0.85f, 0.6f};
+  [[sfs::range(0, 10)]] float intensity = 1.0f;
+  [[sfs::range(0, 100)]] float radius = 8.0f;
+  glm::vec3 offset{0.0f};
+  bool castsShadow = true;
+  [[sfs::range(0, 5)]] float sourceRadius = 0.05f;
+  bool spot = false;
+  [[sfs::range(0, 90)]] [[sfs::showIf(spot)]] float innerAngle = 20.0f;
+  [[sfs::range(0, 90)]] [[sfs::showIf(spot)]] float outerAngle = 30.0f;
 };
 
 } // namespace sfs

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/core/scripting/luaSchema.h"
+
 #include <string>
 
 namespace sfs
@@ -26,17 +27,17 @@ class ILuaConfigurable
 public:
   virtual ~ILuaConfigurable() = default;
 
+  // The live object the schema's offsets apply to -- normally `this`, returned
+  // from the most-derived type so the offsets land correctly under multiple
+  // inheritance.
+  virtual void* luaConfigData() = 0;
+
   // Global table name this config is exposed under (e.g. "sun").
   virtual std::string luaConfigName() const = 0;
 
   // The editable field surface. The fields' member offsets are taken relative
   // to luaConfigData().
   virtual LuaSchema luaConfigSchema() const = 0;
-
-  // The live object the schema's offsets apply to -- normally `this`, returned
-  // from the most-derived type so the offsets land correctly under multiple
-  // inheritance.
-  virtual void* luaConfigData() = 0;
 
   // Called after a set{} writes the raw fields, so the object can clamp /
   // validate / react (the writes bypass any setters). Default: nothing.

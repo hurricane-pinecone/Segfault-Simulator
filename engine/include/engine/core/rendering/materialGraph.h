@@ -1,12 +1,13 @@
 #pragma once
 
-#include "glm/glm/ext/vector_float2.hpp"
-#include "glm/glm/ext/vector_float4.hpp"
-#include "nlohmann/json.hpp"
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_float4.hpp>
+#include <nlohmann/json.hpp>
 
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace sfs::materialGraph
@@ -22,6 +23,8 @@ using NodeId = uint32_t;
  */
 struct Node
 {
+  bool operator==(const Node&) const = default;
+
   NodeId id = 0;
   std::string type;         // a NodeType's id, e.g. "multiply"
   glm::vec2 position{0.0f}; // where it sits on the canvas, in canvas units
@@ -38,19 +41,17 @@ struct Node
   bool dataTexture = false;
   // A Global Parameter node's parameter: its name (see ShaderGlobals).
   std::string global;
-
-  bool operator==(const Node&) const = default;
 };
 
 /** A connection: a node's output feeding another node's input. */
 struct Link
 {
+  bool operator==(const Link&) const = default;
+
   NodeId fromNode = 0;
   uint32_t fromOutput = 0; // index into the source's outputs
   NodeId toNode = 0;
   uint32_t toInput = 0; // index into the destination's inputs
-
-  bool operator==(const Link&) const = default;
 };
 
 /**
@@ -77,14 +78,6 @@ struct Link
  */
 struct Graph
 {
-  std::vector<Node> nodes;
-  std::vector<Link> links;
-  NodeId nextId = 1;
-
-  /** A node by id; null if there's none. */
-  Node* find(NodeId id);
-  const Node* find(NodeId id) const;
-
   /**
    * Add a node of a known type (NodeType id) at a canvas position, its inputs
    * holding their defaults.
@@ -92,9 +85,6 @@ struct Graph
    * @return its id, or 0 (nothing added) for an unknown type.
    */
   NodeId add(std::string_view type, glm::vec2 position);
-
-  /** Remove a node and every link to or from it. */
-  void remove(NodeId id);
 
   /**
    * Connect `from`'s output to `to`'s input, replacing whatever fed that input
@@ -109,23 +99,12 @@ struct Graph
   /** Remove the link into a node's input, if it has one. */
   void disconnect(NodeId to, uint32_t input);
 
-  /** The link into a node's input; null if nothing is connected to it. */
-  const Link* linkInto(NodeId to, uint32_t input) const;
-
   /** Whether `from` feeds into `to`, through any chain of links. */
   bool feeds(NodeId from, NodeId to) const;
 
-  /** The id of the graph's (first) Material Output node; 0 if it has none. */
-  NodeId output() const;
-
-  /**
-   * A graph that looks like a fresh standard material: white (times the
-   * mesh's vertex colours, as untextured models carry their palette in them),
-   * matte, not metal.
-   */
-  static Graph makeDefault();
-
-  nlohmann::json toJson() const;
+  /** A node by id; null if there's none. */
+  Node* find(NodeId id);
+  const Node* find(NodeId id) const;
 
   /**
    * Read a graph saved by toJson(). Nodes of unknown types are kept (with
@@ -135,7 +114,29 @@ struct Graph
    */
   static std::optional<Graph> fromJson(const nlohmann::json& json);
 
+  /** The link into a node's input; null if nothing is connected to it. */
+  const Link* linkInto(NodeId to, uint32_t input) const;
+
+  /**
+   * A graph that looks like a fresh standard material: white (times the
+   * mesh's vertex colours, as untextured models carry their palette in them),
+   * matte, not metal.
+   */
+  static Graph makeDefault();
+
   bool operator==(const Graph&) const = default;
+
+  /** The id of the graph's (first) Material Output node; 0 if it has none. */
+  NodeId output() const;
+
+  /** Remove a node and every link to or from it. */
+  void remove(NodeId id);
+
+  nlohmann::json toJson() const;
+
+  std::vector<Node> nodes;
+  std::vector<Link> links;
+  NodeId nextId = 1;
 };
 
 } // namespace sfs::materialGraph

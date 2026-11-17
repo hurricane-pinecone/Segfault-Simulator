@@ -50,8 +50,6 @@ enum class EventKind : uint8_t
 template <typename T>
 struct EventTraits
 {
-  /** Its kind. */
-  static constexpr EventKind kind = EventKind::None;
   /** A request's success response: its final answer. */
   using Success = void;
   /** A request's progress response, partial answers; void when undeclared. */
@@ -60,6 +58,9 @@ struct EventTraits
   using Failure = void;
   /** Its event base types, nearest first, every level. */
   using Ancestors = TypeList<>;
+
+  /** Its kind. */
+  static constexpr EventKind kind = EventKind::None;
 };
 
 /**

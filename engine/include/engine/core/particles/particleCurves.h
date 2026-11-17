@@ -1,6 +1,6 @@
 #pragma once
 
-#include "glm/glm/ext/vector_float3.hpp"
+#include <glm/glm/ext/vector_float3.hpp>
 
 namespace sfs
 {
@@ -10,16 +10,19 @@ namespace sfs
 // Stops are assumed sorted by t; sampling clamps outside the first/last stop.
 struct Curve
 {
-  static constexpr int MaxStops = 8;
-
   struct Stop
   {
     float t = 0.0f;
     float value = 0.0f;
   };
 
-  Stop stops[MaxStops] = {};
-  int count = 0;
+  Curve& add(float t, float value)
+  {
+    if (count < MaxStops)
+      stops[count++] = {t, value};
+
+    return *this;
+  }
 
   static Curve constant(float v)
   {
@@ -38,19 +41,14 @@ struct Curve
     return c;
   }
 
-  Curve& add(float t, float value)
-  {
-    if (count < MaxStops)
-      stops[count++] = {t, value};
-    return *this;
-  }
-
   float sample(float t) const
   {
     if (count <= 0)
       return 0.0f;
+
     if (count == 1 || t <= stops[0].t)
       return stops[0].value;
+
     if (t >= stops[count - 1].t)
       return stops[count - 1].value;
 
@@ -66,22 +64,29 @@ struct Curve
 
     return stops[count - 1].value;
   }
+
+  static constexpr int MaxStops = 8;
+  Stop stops[MaxStops] = {};
+  int count = 0;
 };
 
 // Keyframed RGB gradient over normalized time t in [0,1]. Same POD shape as
 // Curve.
 struct Gradient
 {
-  static constexpr int MaxStops = 8;
-
   struct Stop
   {
     float t = 0.0f;
     glm::vec3 color{1.0f, 1.0f, 1.0f};
   };
 
-  Stop stops[MaxStops] = {};
-  int count = 0;
+  Gradient& add(float t, glm::vec3 color)
+  {
+    if (count < MaxStops)
+      stops[count++] = {t, color};
+
+    return *this;
+  }
 
   static Gradient constant(glm::vec3 color)
   {
@@ -91,28 +96,14 @@ struct Gradient
     return g;
   }
 
-  static Gradient twoStop(glm::vec3 start, glm::vec3 end)
-  {
-    Gradient g;
-    g.stops[0] = {0.0f, start};
-    g.stops[1] = {1.0f, end};
-    g.count = 2;
-    return g;
-  }
-
-  Gradient& add(float t, glm::vec3 color)
-  {
-    if (count < MaxStops)
-      stops[count++] = {t, color};
-    return *this;
-  }
-
   glm::vec3 sample(float t) const
   {
     if (count <= 0)
       return glm::vec3{1.0f};
+
     if (count == 1 || t <= stops[0].t)
       return stops[0].color;
+
     if (t >= stops[count - 1].t)
       return stops[count - 1].color;
 
@@ -128,6 +119,19 @@ struct Gradient
 
     return stops[count - 1].color;
   }
+
+  static Gradient twoStop(glm::vec3 start, glm::vec3 end)
+  {
+    Gradient g;
+    g.stops[0] = {0.0f, start};
+    g.stops[1] = {1.0f, end};
+    g.count = 2;
+    return g;
+  }
+
+  static constexpr int MaxStops = 8;
+  Stop stops[MaxStops] = {};
+  int count = 0;
 };
 
 } // namespace sfs

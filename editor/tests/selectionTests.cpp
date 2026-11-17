@@ -1,8 +1,9 @@
 #include "../../engine/tests/testHarness.h"
-
 #include "editorContext.h"
+#include "engine/core/ecs/entity.h"
+#include "engine/core/ecs/registry.h"
 
-#include <engine/core/ecs/registry.h>
+#include <vector>
 
 using namespace sfs;
 

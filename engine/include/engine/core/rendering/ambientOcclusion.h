@@ -1,6 +1,6 @@
 #pragma once
 
-#include "nlohmann/json.hpp"
+#include <nlohmann/json.hpp>
 
 #include <cstdint>
 
@@ -29,12 +29,6 @@ namespace sfs
  */
 struct AmbientOcclusionSettings
 {
-  bool enabled = false;
-  float radius = 1.0f;
-  float intensity = 1.0f;
-  uint32_t samples = 12;
-
-  nlohmann::json toJson() const;
   /** Missing keys keep `defaults`' values. */
   static AmbientOcclusionSettings
   fromJson(const nlohmann::json& json,
@@ -42,6 +36,12 @@ struct AmbientOcclusionSettings
   static AmbientOcclusionSettings fromJson(const nlohmann::json& json);
 
   bool operator==(const AmbientOcclusionSettings&) const = default;
+  nlohmann::json toJson() const;
+
+  bool enabled = false;
+  float radius = 1.0f;
+  float intensity = 1.0f;
+  uint32_t samples = 12;
 };
 
 /** The fewest and most samples AmbientOcclusionSettings::samples may be. */

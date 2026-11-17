@@ -3,7 +3,12 @@
 #include "sfs/codegen/generator.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
+#include <cstddef>
+#include <span>
+#include <string>
+#include <string_view>
 #include <vector>
 
 namespace sfs::codegen
@@ -16,7 +21,7 @@ using enum AttributeId;
 constexpr AttributeTarget F = AttributeTarget::Field;
 constexpr AttributeTarget T = AttributeTarget::Type;
 
-constexpr std::array<AttributeInfo, 17> kAttributes = {{
+constexpr std::array<AttributeInfo, 17> ATTRIBUTES = {{
     {Range,
      "range",
      F,
@@ -201,22 +206,24 @@ constexpr std::array<AttributeInfo, 17> kAttributes = {{
 
 constexpr bool inOrder()
 {
-  for (std::size_t i = 0; i < kAttributes.size(); ++i)
-    if (static_cast<std::size_t>(kAttributes[i].id) != i)
+  for (std::size_t i = 0; i < ATTRIBUTES.size(); ++i)
+    if (static_cast<std::size_t>(ATTRIBUTES[i].id) != i)
       return false;
+
   return true;
 }
-static_assert(inOrder(), "kAttributes must list every AttributeId in order");
+static_assert(inOrder(), "ATTRIBUTES must list every AttributeId in order");
 
 } // namespace
 
-std::span<const AttributeInfo> attributes() { return kAttributes; }
+std::span<const AttributeInfo> attributes() { return ATTRIBUTES; }
 
 const AttributeInfo* findAttribute(std::string_view name)
 {
-  for (const AttributeInfo& info : kAttributes)
+  for (const AttributeInfo& info : ATTRIBUTES)
     if (info.name == name)
       return &info;
+
   return nullptr;
 }
 
@@ -230,15 +237,18 @@ const AttributeInfo* closestAttribute(std::string_view name)
 {
   const AttributeInfo* best = nullptr;
   std::size_t bestDistance = 3;
-  for (const AttributeInfo& info : kAttributes)
+
+  for (const AttributeInfo& info : ATTRIBUTES)
   {
     const std::size_t distance = editDistance(name, info.name);
+
     if (distance < bestDistance)
     {
       best = &info;
       bestDistance = distance;
     }
   }
+
   return best;
 }
 
@@ -246,6 +256,7 @@ bool appliesTo(const AttributeInfo& info, std::string_view kind)
 {
   if (info.kinds[0].empty())
     return true;
+
   return std::find(info.kinds.begin(), info.kinds.end(), kind) !=
          info.kinds.end();
 }
@@ -254,17 +265,22 @@ std::string attributeFieldTypes(const AttributeInfo& info,
                                 std::string_view quote)
 {
   std::size_t count = 0;
+
   while (count < info.kinds.size() && !info.kinds[count].empty())
     ++count;
+
   std::string out;
+
   for (std::size_t i = 0; i < count; ++i)
   {
     if (i > 0)
       out += i + 1 == count ? " and " : ", ";
+
     out += quote;
     out += cppTypeOfKind(info.kinds[i]);
     out += quote;
   }
+
   return out;
 }
 
@@ -272,39 +288,49 @@ std::string attributeDocsTable()
 {
   std::string out = "| Attribute | On | Effect | Example |\n"
                     "| --- | --- | --- | --- |\n";
-  for (const AttributeInfo& info : kAttributes)
+
+  for (const AttributeInfo& info : ATTRIBUTES)
   {
     out += "| `[[sfs::";
     out += info.name;
     out += info.arguments;
     out += "]]` | ";
+
     if (info.target == AttributeTarget::Type)
       out += "A type";
     else if (info.kinds[0].empty())
       out += "Any field";
     else
       out += attributeFieldTypes(info, "`") + " fields";
+
     out += " | ";
     out += info.summary;
     out += " | ";
     // One code span per line: a table cell holds no code block.
     std::string_view example = info.example;
+
     while (!example.empty())
     {
       const std::size_t end = example.find('\n');
       std::string_view line = example.substr(0, end);
+
       while (!line.empty() && line.front() == ' ')
         line.remove_prefix(1);
+
       out += "`";
       out += line;
       out += "`";
+
       if (end == std::string_view::npos)
         break;
+
       out += "<br>";
       example.remove_prefix(end + 1);
     }
+
     out += " |\n";
   }
+
   return out;
 }
 
@@ -312,12 +338,15 @@ std::size_t editDistance(std::string_view a, std::string_view b)
 {
   // One row of the Levenshtein table at a time.
   std::vector<std::size_t> row(b.size() + 1);
+
   for (std::size_t j = 0; j <= b.size(); ++j)
     row[j] = j;
+
   for (std::size_t i = 1; i <= a.size(); ++i)
   {
     std::size_t diagonal = row[0];
     row[0] = i;
+
     for (std::size_t j = 1; j <= b.size(); ++j)
     {
       const std::size_t above = row[j];
@@ -327,6 +356,7 @@ std::size_t editDistance(std::string_view a, std::string_view b)
       diagonal = above;
     }
   }
+
   return row[b.size()];
 }
 

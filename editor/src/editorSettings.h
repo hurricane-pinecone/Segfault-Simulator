@@ -1,7 +1,7 @@
 #pragma once
 
-#include <filesystem>
 #include <string>
+#include <utility>
 #include <vector>
 
 class Panel;
@@ -26,11 +26,11 @@ public:
    */
   void load(SDL_Window* window, std::vector<Panel*> panels);
 
-  /** Each frame: note the window's size and place (saved when they change). */
-  void update();
-
   /** Open every panel (Window > Reset Layout). */
   void openAllPanels();
+
+  /** Each frame: note the window's size and place (saved when they change). */
+  void update();
 
 private:
   // The window as it was last, not maximised (what it goes back to).
@@ -45,8 +45,8 @@ private:
   };
 
   void readLine(const char* entry, const char* line);
-  std::string write() const;
   void restoreWindow();
+  std::string write() const;
 
   std::string m_iniPath; // UTF-8; ImGui keeps a pointer to it
   SDL_Window* m_window = nullptr;

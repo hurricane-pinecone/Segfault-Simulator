@@ -1,18 +1,13 @@
 #include "../../testHarness.h"
-#include "../rendering/mockRenderer.h"
+#include "engine/core/components/scriptComponent.h"
+#include "engine/core/components/transformComponent.h"
+#include "engine/core/reflection/reflection.h"
+#include "engine/runtime/assetStore/assetStore.h"
+#include "engine/runtime/game/gameObject.h"
+#include "engine/runtime/sceneManager/scene.h"
+#include "engine/runtime/scripting/scriptRegistry.h"
 
-#include <engine/core/components/scriptComponent.h>
-#include <engine/core/components/transformComponent.h>
-#include <engine/core/reflection/reflection.h>
-#include <engine/runtime/assetStore/assetStore.h>
-#include <engine/runtime/game/gameObject.h>
-#include <engine/runtime/rendering/standardScene.h>
-#include <engine/runtime/sceneManager/scene.h>
-#include <engine/runtime/sceneManager/sceneManager.h>
-#include <engine/runtime/scripting/scriptRegistry.h>
-
-#include <filesystem>
-#include <fstream>
+#include <memory>
 #include <vector>
 
 using namespace sfs;
@@ -72,6 +67,12 @@ public:
   static inline std::vector<float> speedsAtCreate;
 };
 
+struct World
+{
+  AssetStore store;
+  Scene scene{0, SceneBackends{.assetStore = store}};
+};
+
 void registerTestScripts()
 {
   ScriptType tick;
@@ -110,12 +111,6 @@ void registerTestScripts()
   moverType.fields.push_back(speed);
   reflect::types().add(moverType);
 }
-
-struct World
-{
-  AssetStore store;
-  Scene scene{0, SceneBackends{.assetStore = store}};
-};
 } // namespace
 
 int main()

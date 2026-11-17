@@ -1,41 +1,67 @@
 #include "panels/uiPreviewPanel.h"
 
 #include "editorContext.h"
+#include "engine/core/components/scriptComponent.h"
+#include "engine/core/ecs/entity.h"
+#include "engine/core/logger/logger.h"
+#include "engine/core/reflection/reflection.h"
+#include "engine/runtime/rendering/backend/iRenderBackend.h"
+#include "engine/runtime/rendering/commands.h"
+#include "engine/runtime/rendering/frame.h"
+#include "engine/runtime/rendering/modules/uiModule.h"
+#include "engine/runtime/rendering/renderContext.h"
+#include "engine/runtime/rendering/renderSystem.h"
+#include "engine/runtime/rendering/uiDraw.h"
+#include "engine/runtime/sceneManager/scene.h"
+#include "engine/runtime/scripting/scriptRegistry.h"
+#include "engine/runtime/serialization/sceneSerializer.h"
+#include "engine/runtime/ui/layer.h"
+#include "engine/runtime/ui/layout.h"
+#include "engine/runtime/ui/preview.h"
+#include "engine/runtime/ui/ui.h"
 #include "panels/codePanel.h"
+#include "panels/panel.h"
 #include "scene/editorScene.h"
 #include "widgets/theme.h"
 #include "widgets/widgets.h"
 
-#include "engine/core/components/scriptComponent.h"
-#include "engine/core/logger/logger.h"
-#include "engine/core/reflection/reflection.h"
-#include "engine/runtime/rendering/modules/uiModule.h"
-#include "engine/runtime/rendering/renderSystem.h"
-#include "engine/runtime/scripting/scriptRegistry.h"
-#include "engine/runtime/serialization/sceneSerializer.h"
-#include "engine/runtime/ui/layer.h"
-#include "engine/runtime/ui/preview.h"
-
-#include "imgui.h"
-#include "imgui_internal.h"
+#include <glm/glm/common.hpp>
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_int2.hpp>
+#include <imgui.h>
+#include <imgui_internal.h>
 
 #include <algorithm>
 #include <cstdio>
+#include <exception>
+#include <filesystem>
+#include <memory>
 #include <set>
+#include <string>
+#include <utility>
+#include <vector>
 
 namespace
 {
 // A layer's screen (in points), and the room round it, a share of it.
-constexpr glm::vec2 kScreen(1920.0f, 1080.0f);
-constexpr float kScreenRoom = 0.06f;
+constexpr glm::vec2 SCREEN(1920.0f, 1080.0f);
+constexpr float SCREEN_ROOM = 0.06f;
 // Round previews (points).
-constexpr float kRoom = 24.0f;
+constexpr float ROOM = 24.0f;
 // The tallest (and widest) the previews are drawn, in pixels: WebGPU's
 // default texture limit.
-constexpr float kMaxTarget = 8192.0f;
+constexpr float MAX_TARGET = 8192.0f;
 
 // The preview's scene: apart from the editor's (whose ids start at 1).
-constexpr sfs::SceneId kPreviewSceneId = 0xFFFF;
+constexpr sfs::SceneId PREVIEW_SCENE_ID = 0xFFFF;
+
+// Lays out a View for the UI module, which lays out layers.
+class ViewLayer : public sfs::ui::Layer
+{
+public:
+  sfs::ui::View body() override { return view; }
+  sfs::ui::View view;
+};
 
 // What a file's part of: its folder and name, without extensions, so a
 // view's .h, .ui.h and .cpp are one ("objects/Hud").
@@ -55,9 +81,11 @@ std::string nameOf(const std::string& unit)
 std::vector<std::string> layerNames()
 {
   std::vector<std::string> names;
+
   for (const sfs::ScriptType& type : sfs::scripts().types())
     if (type.kind == sfs::ScriptType::Kind::GameObject && type.uiLayer)
       names.push_back(type.name);
+
   return names;
 }
 
@@ -66,8 +94,10 @@ std::vector<std::string>
 shownUnits(const std::vector<const sfs::ui::Preview*>& previews)
 {
   std::set<std::string> units;
+
   for (const sfs::ui::Preview* preview : previews)
     units.insert(unitOf(preview->file()));
+
   std::vector<std::string> sorted(units.begin(), units.end());
   std::sort(sorted.begin(),
             sorted.end(),
@@ -75,14 +105,6 @@ shownUnits(const std::vector<const sfs::ui::Preview*>& previews)
             { return nameOf(a) < nameOf(b); });
   return sorted;
 }
-
-// Lays out a View for the UI module, which lays out layers.
-class ViewLayer : public sfs::ui::Layer
-{
-public:
-  sfs::ui::View body() override { return view; }
-  sfs::ui::View view;
-};
 
 ImU32 colour(int r, int g, int b, float a = 1.0f)
 {
@@ -94,13 +116,17 @@ std::vector<const T*> withOthers(const std::vector<const T*>& ours,
                                  const std::vector<const T*>& all)
 {
   std::set<std::string> units;
+
   for (const T* item : ours)
     units.insert(unitOf(item->file()));
+
   std::vector<const T*> merged = ours;
+
   for (const T* item : all)
     if (std::ranges::find(ours, item) == ours.end() &&
         !units.contains(unitOf(item->file())))
       merged.push_back(item);
+
   return merged;
 }
 
@@ -120,48 +146,13 @@ UiPreviewPanel::~UiPreviewPanel()
   dropPreviewModule();
 }
 
-void UiPreviewPanel::dropPreviewModule()
+void UiPreviewPanel::update(EditorContext&)
 {
-  // Nothing made by it may outlive it: the views laid out last frame hold
-  // its code (bodies, actions).
-  m_ui.reset();
-  m_modulePreviews.clear();
-  m_moduleStyles.clear();
-  m_previewModule.unload();
-}
+  // Every frame, shown or not: a UI file opened brings the tab forward.
+  if (m_follow && open())
+    followCode();
 
-void UiPreviewPanel::loadPreviewModule(const std::filesystem::path& module)
-{
-  dropPreviewModule();
-  m_previewModule.setQuiet(true);
-  // Its previews (and styles) are the ones made as it loads.
-  const std::vector<const sfs::ui::Preview*> before = sfs::ui::previews();
-  const std::vector<const sfs::ui::PreviewStyle*> stylesBefore =
-      sfs::ui::previewStyles();
-  if (!m_previewModule.load(
-          module, module.stem().string(), sfs::ModuleHost::Load::FromCopy))
-    return;
-  for (const sfs::ui::Preview* preview : sfs::ui::previews())
-    if (std::ranges::find(before, preview) == before.end())
-      m_modulePreviews.push_back(preview);
-  for (const sfs::ui::PreviewStyle* style : sfs::ui::previewStyles())
-    if (std::ranges::find(stylesBefore, style) == stylesBefore.end())
-      m_moduleStyles.push_back(style);
-  ++m_previewLoads;
-}
-
-std::vector<const sfs::ui::Preview*> UiPreviewPanel::allPreviews() const
-{
-  return withOthers(m_modulePreviews, sfs::ui::previews());
-}
-
-void UiPreviewPanel::dropObjects()
-{
-  // The module before the scene: it lays the copy out.
-  m_copy = nullptr;
-  m_copyOf.clear();
-  m_ui.reset();
-  m_scene.reset();
+  returnTab();
 }
 
 void UiPreviewPanel::beforeBegin()
@@ -172,211 +163,34 @@ void UiPreviewPanel::beforeBegin()
   {
     m_dockChecked = true;
     const ImGuiWindow* console = ImGui::FindWindowByName("Console");
+
     if (console && console->DockId &&
         !ImGui::FindWindowSettingsByID(ImHashStr(title())))
       ImGui::SetNextWindowDockID(console->DockId);
   }
+
   // A UI file opened: its tab to the front, without taking the keyboard
   // from the Code panel, remembering the tab it covers (the Inspector,
   // usually) to go back to.
   if (std::exchange(m_bringForward, false))
   {
     const std::string shown = widgets::shownTab(title());
+
     if (!m_tabBefore && !shown.empty() && shown != title())
     {
       m_tabBefore = shown;
       m_seenInFront = false;
       m_uiSeenOpen = false;
     }
+
     widgets::showTab(title());
   }
-}
-
-void UiPreviewPanel::update(EditorContext&)
-{
-  // Every frame, shown or not: a UI file opened brings the tab forward.
-  if (m_follow && open())
-    followCode();
-  returnTab();
-}
-
-void UiPreviewPanel::returnTab()
-{
-  if (!m_tabBefore || m_bringForward)
-    return;
-  // Another tab picked since this one came forward: it stays.
-  if (widgets::shownTab(title()) == title())
-    m_seenInFront = true;
-  else if (m_seenInFront)
-  {
-    m_tabBefore.reset();
-    return;
-  }
-  const bool uiOpen = std::ranges::any_of(
-      m_code.openScripts(),
-      [&](const std::filesystem::path& file)
-      {
-        const std::string name = file.filename().string();
-        return name.ends_with(".ui.h") || name.ends_with(".ui.cpp") ||
-               m_uiUnits.contains(unitOf(file));
-      });
-  // Neovim tells which files are open a moment after which is focused: the
-  // UI file's to have been seen open first.
-  m_uiSeenOpen |= uiOpen;
-  if (m_seenInFront && m_uiSeenOpen && !uiOpen)
-  {
-    widgets::showTab(*m_tabBefore);
-    m_tabBefore.reset();
-  }
-}
-
-void UiPreviewPanel::followCode()
-{
-  const std::filesystem::path& file = m_code.focusedScript();
-  // Checked again when the module changes (a file may be opened before the
-  // game's built, or its first preview written).
-  const std::size_t code = sfs::scripts().types().size() * 1000 +
-                           allPreviews().size() + m_previewLoads * 1000000;
-  if (file.empty() || (file == m_followed && code == m_codeSeen))
-    return;
-  const bool newFile = file != m_followed;
-  m_followed = file;
-  m_codeSeen = code;
-
-  const std::string unit = unitOf(file);
-  const std::vector<std::string> layers = layerNames();
-  const bool previewed =
-      std::ranges::any_of(allPreviews(),
-                          [&](const sfs::ui::Preview* preview)
-                          { return unitOf(preview->file()) == unit; });
-  const bool isLayer = std::ranges::find(layers, nameOf(unit)) != layers.end();
-  if (!previewed && !isLayer)
-    return; // not UI: keep showing what was
-  m_uiUnits.insert(unit);
-  if (newFile || unit != m_unit)
-    m_bringForward = true;
-  m_unit = unit;
-  m_layerName = isLayer ? nameOf(unit) : std::string();
-}
-
-std::vector<const sfs::ui::Preview*> UiPreviewPanel::shownPreviews() const
-{
-  std::vector<const sfs::ui::Preview*> shown;
-  for (const sfs::ui::Preview* preview : allPreviews())
-    if (unitOf(preview->file()) == m_unit)
-      shown.push_back(preview);
-  // The views (made in the .ui.h's order) before the declared previews.
-  std::ranges::stable_partition(shown,
-                                [](const sfs::ui::Preview* preview)
-                                { return preview->file().ends_with(".ui.h"); });
-  return shown;
-}
-
-sfs::ui::View UiPreviewPanel::styled(sfs::ui::View view) const
-{
-  const std::vector<const sfs::ui::PreviewStyle*> styles =
-      withOthers(m_moduleStyles, sfs::ui::previewStyles());
-  for (const sfs::ui::PreviewStyle* style : styles)
-    if (unitOf(style->file()) == m_unit)
-      view = style->apply(std::move(view));
-  return view;
-}
-
-sfs::ui::Layer* UiPreviewPanel::layer(EditorContext& context)
-{
-  if (m_layerName.empty() || !context.scene)
-    return nullptr;
-
-  // Playing: the game's own.
-  if (context.playing)
-    for (sfs::ui::Layer* layer : context.scene->findObjects<sfs::ui::Layer>())
-    {
-      const sfs::Entity& entity = layer->entity();
-      if (sfs::ScriptComponent* script =
-              entity.getComponent<sfs::ScriptComponent>();
-          script && script->script == m_layerName)
-        return layer;
-    }
-
-  // Otherwise a copy, on the preview's own scene.
-  if (m_copy && m_copyOf == m_layerName)
-    return dynamic_cast<sfs::ui::Layer*>(m_copy);
-  dropObjects();
-  m_copyOf = m_layerName;
-  const sfs::ScriptType* type = sfs::scripts().find(m_layerName);
-  if (!type || !type->createObject)
-    return nullptr;
-  m_scene =
-      std::make_unique<sfs::Scene>(kPreviewSceneId, m_backends, "UI Preview");
-  std::unique_ptr<sfs::GameObject> object = type->createObject();
-  // The values an entity in the scene gives it, if one has it.
-  if (const sfs::reflect::TypeInfo* info =
-          sfs::reflect::types().find(m_layerName))
-  {
-    const sfs::SceneSerializer serializer(
-        sfs::reflect::types(),
-        context.render ? &context.render->meshes() : nullptr);
-    for (sfs::ScriptComponent& script :
-         context.scene->query<sfs::ScriptComponent>())
-      if (script.script == m_layerName)
-      {
-        serializer.loadObject(*info, object.get(), script.fields);
-        break;
-      }
-  }
-  try
-  {
-    m_copy = &m_scene->adoptObject(std::move(object), m_scene->createEntity());
-  }
-  catch (const std::exception& error)
-  {
-    m_error = std::string("onCreate threw: ") + error.what();
-    return nullptr;
-  }
-  return dynamic_cast<sfs::ui::Layer*>(m_copy);
-}
-
-void UiPreviewPanel::drawToolbar()
-{
-  std::vector<std::string> units = shownUnits(allPreviews());
-  for (const std::string& name : layerNames())
-    if (std::ranges::none_of(units,
-                             [&](const std::string& unit)
-                             { return nameOf(unit) == name; }))
-      units.push_back("/" +
-                      name); // a layer with no previews: its folder isn't known
-  ImGui::SetNextItemWidth(200.0f);
-  if (ImGui::BeginCombo(
-          "##shown", m_unit.empty() ? "Nothing" : nameOf(m_unit).c_str()))
-  {
-    for (const std::string& unit : units)
-      if (ImGui::Selectable(
-              nameOf(unit).c_str(), nameOf(unit) == nameOf(m_unit)))
-      {
-        m_unit = unit;
-        const std::vector<std::string> layers = layerNames();
-        m_layerName = std::ranges::find(layers, nameOf(unit)) != layers.end()
-                          ? nameOf(unit)
-                          : std::string();
-        m_follow = false; // picked: stay on it
-      }
-    if (units.empty())
-      ImGui::TextDisabled("No previews or UI layers (build the game first)");
-    ImGui::EndCombo();
-  }
-  ImGui::SetItemTooltip("The previews (or UI layer) shown");
-  ImGui::SameLine();
-  ImGui::Checkbox("Follow Code", &m_follow);
-  ImGui::SetItemTooltip("Show the previews of the file open in the Code panel");
-  ImGui::SameLine();
-  ImGui::Checkbox("Outlines", &m_outlines);
-  ImGui::SetItemTooltip(
-      "Outline the view under the mouse, with its size in points");
 }
 
 void UiPreviewPanel::drawContents(EditorContext& context)
 {
   drawToolbar();
+
   if (m_buildFailed)
     ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.4f, 1.0f),
                        "%s",
@@ -387,6 +201,7 @@ void UiPreviewPanel::drawContents(EditorContext& context)
 
   const float dpi = std::max(ImGui::GetWindowDpiScale(), 1.0f);
   const std::vector<const sfs::ui::Preview*> previews = shownPreviews();
+
   if (!previews.empty())
   {
     // Each preview under its name, as big as its view.
@@ -402,21 +217,23 @@ void UiPreviewPanel::drawContents(EditorContext& context)
     sfs::UiModule& ui = uiModule(context);
     ui.setPixelsPerPoint(dpi);
     const float screenWidth =
-        std::max(ImGui::GetContentRegionAvail().x - 2.0f * kRoom, 960.0f);
+        std::max(ImGui::GetContentRegionAvail().x - 2.0f * ROOM, 960.0f);
     std::vector<sfs::ui::View> views;
     try
     {
       for (const sfs::ui::Preview* preview : previews)
       {
         sfs::ui::View view = styled(preview->make());
-        const glm::vec2 size = ui.fit(view, glm::vec2(kMaxTarget)) / dpi;
-        const bool wide = size.x * dpi >= kMaxTarget;
-        const bool tall = size.y * dpi >= kMaxTarget;
+        const glm::vec2 size = ui.fit(view, glm::vec2(MAX_TARGET)) / dpi;
+        const bool wide = size.x * dpi >= MAX_TARGET;
+        const bool tall = size.y * dpi >= MAX_TARGET;
+
         if (wide || tall)
         {
           const float width = wide ? screenWidth : size.x;
           view = view.frame(width, tall ? width * 9.0f / 16.0f : 0.0f);
         }
+
         views.push_back(sfs::ui::VStack(sfs::ui::Alignment::Leading,
                                         {
                                             sfs::ui::Text(preview->name())
@@ -437,19 +254,20 @@ void UiPreviewPanel::drawContents(EditorContext& context)
     }
     ViewLayer shown;
     shown.view = sfs::ui::VStack(std::move(views), sfs::ui::Alignment::Leading)
-                     .spacing(kRoom);
+                     .spacing(ROOM);
     // Under the toolbar, scrolling if they're taller than the panel.
     ImGui::BeginChild("##previews",
                       ImVec2(0.0f, 0.0f),
                       0,
                       ImGuiWindowFlags_HorizontalScrollbar);
-    drawUi(context, shown, glm::vec2(0.0f), dpi, kRoom * dpi, false);
+    drawUi(context, shown, glm::vec2(0.0f), dpi, ROOM * dpi, false);
     ImGui::EndChild();
     return;
   }
 
   sfs::ui::Layer* shown = layer(context);
   const bool live = shown && context.playing && shown != m_copy;
+
   if (m_unit.empty())
     ImGui::TextDisabled(
         "Open a UI file in the Code panel: its views show here");
@@ -463,41 +281,76 @@ void UiPreviewPanel::drawContents(EditorContext& context)
     ImGui::TextDisabled("%s as it is outside Play. Declare a ui::Preview with "
                         "sample data to see it filled in",
                         m_layerName.c_str());
+
   if (!shown)
     return;
 
   // A layer is a screen: one fitted in, with room round it.
   const ImVec2 avail = ImGui::GetContentRegionAvail();
   const float fit =
-      std::min(avail.x / (kScreen.x * (1.0f + 2.0f * kScreenRoom)),
-               avail.y / (kScreen.y * (1.0f + 2.0f * kScreenRoom)));
+      std::min(avail.x / (SCREEN.x * (1.0f + 2.0f * SCREEN_ROOM)),
+               avail.y / (SCREEN.y * (1.0f + 2.0f * SCREEN_ROOM)));
   const float userScale =
       context.render && context.render->module<sfs::UiModule>()
           ? context.render->module<sfs::UiModule>()->userScale()
           : 1.0f;
-  if (fit * kScreen.y >= 40.0f)
+
+  if (fit * SCREEN.y >= 40.0f)
     drawUi(context,
            *shown,
-           glm::round(kScreen * fit * dpi),
+           glm::round(SCREEN * fit * dpi),
            fit * dpi * userScale,
-           kScreen.x * kScreenRoom * fit * dpi,
+           SCREEN.x * SCREEN_ROOM * fit * dpi,
            true);
 }
 
-sfs::UiModule& UiPreviewPanel::uiModule(EditorContext& context)
+std::vector<const sfs::ui::Preview*> UiPreviewPanel::allPreviews() const
 {
-  if (!m_ui)
+  return withOthers(m_modulePreviews, sfs::ui::previews());
+}
+
+void UiPreviewPanel::drawToolbar()
+{
+  std::vector<std::string> units = shownUnits(allPreviews());
+
+  for (const std::string& name : layerNames())
+    if (std::ranges::none_of(units,
+                             [&](const std::string& unit)
+                             { return nameOf(unit) == name; }))
+      units.push_back("/" +
+                      name); // a layer with no previews: its folder isn't known
+
+  ImGui::SetNextItemWidth(200.0f);
+
+  if (ImGui::BeginCombo(
+          "##shown", m_unit.empty() ? "Nothing" : nameOf(m_unit).c_str()))
   {
-    if (!m_scene)
-      m_scene = std::make_unique<sfs::Scene>(
-          kPreviewSceneId, m_backends, "UI Preview");
-    m_ui = std::make_unique<sfs::UiModule>(*m_scene);
+    for (const std::string& unit : units)
+      if (ImGui::Selectable(
+              nameOf(unit).c_str(), nameOf(unit) == nameOf(m_unit)))
+      {
+        m_unit = unit;
+        const std::vector<std::string> layers = layerNames();
+        m_layerName = std::ranges::find(layers, nameOf(unit)) != layers.end()
+                          ? nameOf(unit)
+                          : std::string();
+        m_follow = false; // picked: stay on it
+      }
+
+    if (units.empty())
+      ImGui::TextDisabled("No previews or UI layers (build the game first)");
+
+    ImGui::EndCombo();
   }
-  // The scene's look (a game sets its font there).
-  if (context.render)
-    if (sfs::UiModule* game = context.render->module<sfs::UiModule>())
-      m_ui->theme() = game->theme();
-  return *m_ui;
+
+  ImGui::SetItemTooltip("The previews (or UI layer) shown");
+  ImGui::SameLine();
+  ImGui::Checkbox("Follow Code", &m_follow);
+  ImGui::SetItemTooltip("Show the previews of the file open in the Code panel");
+  ImGui::SameLine();
+  ImGui::Checkbox("Outlines", &m_outlines);
+  ImGui::SetItemTooltip(
+      "Outline the view under the mouse, with its size in points");
 }
 
 void UiPreviewPanel::drawUi(EditorContext& context,
@@ -509,18 +362,21 @@ void UiPreviewPanel::drawUi(EditorContext& context,
 {
   if (m_failed)
     return;
+
   if (!m_initialized)
   {
     m_renderer = m_backend.createRenderer(256);
     m_target = m_backend.createRenderTarget();
     m_initialized = m_renderer && m_target;
     m_failed = !m_initialized;
+
     if (m_failed)
     {
       LOG_ERROR("The UI preview can't draw");
       return;
     }
   }
+
   uiModule(context);
   m_ui->setLayers([&shown] { return std::vector<sfs::ui::Layer*>{&shown}; });
   m_ui->setPixelsPerPoint(pixelsPerPoint);
@@ -538,21 +394,27 @@ void UiPreviewPanel::drawUi(EditorContext& context,
       const glm::vec2 panel = glm::max(
           glm::vec2(avail.x, avail.y) * dpi - 2.0f * room, glm::vec2(1.0f));
       const sfs::ui::View body = shown.body();
-      screen = m_ui->fit(body, glm::vec2(kMaxTarget));
-      if (screen.x >= kMaxTarget)
-        screen = m_ui->fit(body, glm::vec2(panel.x, kMaxTarget));
-      if (screen.y >= kMaxTarget)
+      screen = m_ui->fit(body, glm::vec2(MAX_TARGET));
+
+      if (screen.x >= MAX_TARGET)
+        screen = m_ui->fit(body, glm::vec2(panel.x, MAX_TARGET));
+
+      if (screen.y >= MAX_TARGET)
         screen = m_ui->fit(body, glm::vec2(screen.x, panel.y));
+
       screen = glm::ceil(screen);
     }
-    screen = glm::min(screen, glm::vec2(kMaxTarget - 2.0f * room));
+
+    screen = glm::min(screen, glm::vec2(MAX_TARGET - 2.0f * room));
   }
   catch (const std::exception& error)
   {
     m_error = std::string("body() threw: ") + error.what();
   }
+
   if (screen.x < 1.0f || screen.y < 1.0f)
     return;
+
   const glm::ivec2 targetPixels = glm::ivec2(screen + 2.0f * room);
   const glm::vec2 canvas = glm::vec2(targetPixels) / dpi; // points
 
@@ -586,6 +448,7 @@ void UiPreviewPanel::drawUi(EditorContext& context,
   {
     m_error = std::string("body() threw: ") + error.what();
   }
+
   if (!m_error.empty())
     ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.4f, 1.0f), "%s", m_error.c_str());
 
@@ -599,6 +462,7 @@ void UiPreviewPanel::drawUi(EditorContext& context,
   back.rect = {room, room, screen.x, screen.y};
   back.color = {0.36f, 0.42f, 0.36f, 1.0f};
   list.quads.push_back(back);
+
   for (const sfs::UiDrawCommand& command : m_ui->commands())
     if (command.list)
       for (sfs::UiQuad quad : command.list->quads)
@@ -610,8 +474,10 @@ void UiPreviewPanel::drawUi(EditorContext& context,
       }
 
   m_target->resize(targetPixels);
+
   if (!m_target->valid())
     return;
+
   sfs::FrameParams frame;
   frame.shadows.enabled = false;
   m_backend.drawInto(*m_target,
@@ -631,6 +497,7 @@ void UiPreviewPanel::drawUi(EditorContext& context,
   // Guides, in points: a screen's edge and middle.
   const ImVec2 s0(min.x + room / dpi, min.y + room / dpi);
   const ImVec2 s1(s0.x + screen.x / dpi, s0.y + screen.y / dpi);
+
   if (screenGuides)
   {
     draw->AddRect(s0, s1, colour(255, 255, 255, 0.35f));
@@ -641,24 +508,30 @@ void UiPreviewPanel::drawUi(EditorContext& context,
     draw->AddLine(
         ImVec2(s0.x, midY), ImVec2(s1.x, midY), colour(255, 255, 255, 0.12f));
   }
+
   if (!m_outlines || !over)
     return;
 
   // The innermost view under the mouse, named, with its size.
   const sfs::ui::Placed* under = nullptr;
+
   for (const sfs::ui::Placed& view : m_ui->placed())
     if (view.rect.contains(mouse) && view.kind != sfs::ui::Node::Kind::Empty &&
         (!under || view.depth >= under->depth))
       under = &view;
+
   if (!under)
     return;
+
   const ImVec2 a(s0.x + under->rect.x / dpi, s0.y + under->rect.y / dpi);
   const ImVec2 b(a.x + under->rect.width / dpi, a.y + under->rect.height / dpi);
   draw->AddRect(a, b, colour(255, 200, 80, 0.95f), 0.0f, 0, 1.5f);
   std::string label = sfs::ui::kindName(under->kind);
+
   if (!under->label.empty())
     label += " \"" + under->label.substr(0, 24) +
              (under->label.size() > 24 ? "...\"" : "\"");
+
   char size[48];
   std::snprintf(size,
                 sizeof(size),
@@ -668,8 +541,10 @@ void UiPreviewPanel::drawUi(EditorContext& context,
   label += size;
   const ImVec2 textSize = ImGui::CalcTextSize(label.c_str());
   ImVec2 at(a.x, a.y - textSize.y - 4.0f);
+
   if (at.y < min.y)
     at.y = b.y + 2.0f;
+
   at.x = std::clamp(
       at.x, min.x, std::max(min.x, min.x + canvas.x - textSize.x - 6.0f));
   draw->AddRectFilled(
@@ -679,4 +554,222 @@ void UiPreviewPanel::drawUi(EditorContext& context,
       3.0f);
   draw->AddText(
       ImVec2(at.x + 3.0f, at.y + 1.0f), colour(255, 220, 140), label.c_str());
+}
+
+void UiPreviewPanel::dropObjects()
+{
+  // The module before the scene: it lays the copy out.
+  m_copy = nullptr;
+  m_copyOf.clear();
+  m_ui.reset();
+  m_scene.reset();
+}
+
+void UiPreviewPanel::dropPreviewModule()
+{
+  // Nothing made by it may outlive it: the views laid out last frame hold
+  // its code (bodies, actions).
+  m_ui.reset();
+  m_modulePreviews.clear();
+  m_moduleStyles.clear();
+  m_previewModule.unload();
+}
+
+void UiPreviewPanel::followCode()
+{
+  const std::filesystem::path& file = m_code.focusedScript();
+  // Checked again when the module changes (a file may be opened before the
+  // game's built, or its first preview written).
+  const std::size_t code = sfs::scripts().types().size() * 1000 +
+                           allPreviews().size() + m_previewLoads * 1000000;
+
+  if (file.empty() || (file == m_followed && code == m_codeSeen))
+    return;
+
+  const bool newFile = file != m_followed;
+  m_followed = file;
+  m_codeSeen = code;
+
+  const std::string unit = unitOf(file);
+  const std::vector<std::string> layers = layerNames();
+  const bool previewed =
+      std::ranges::any_of(allPreviews(),
+                          [&](const sfs::ui::Preview* preview)
+                          { return unitOf(preview->file()) == unit; });
+  const bool isLayer = std::ranges::find(layers, nameOf(unit)) != layers.end();
+
+  if (!previewed && !isLayer)
+    return; // not UI: keep showing what was
+
+  m_uiUnits.insert(unit);
+
+  if (newFile || unit != m_unit)
+    m_bringForward = true;
+
+  m_unit = unit;
+  m_layerName = isLayer ? nameOf(unit) : std::string();
+}
+
+sfs::ui::Layer* UiPreviewPanel::layer(EditorContext& context)
+{
+  if (m_layerName.empty() || !context.scene)
+    return nullptr;
+
+  // Playing: the game's own.
+  if (context.playing)
+    for (sfs::ui::Layer* layer : context.scene->findObjects<sfs::ui::Layer>())
+    {
+      const sfs::Entity& entity = layer->entity();
+
+      if (sfs::ScriptComponent* script =
+              entity.getComponent<sfs::ScriptComponent>();
+          script && script->script == m_layerName)
+        return layer;
+    }
+
+  // Otherwise a copy, on the preview's own scene.
+  if (m_copy && m_copyOf == m_layerName)
+    return dynamic_cast<sfs::ui::Layer*>(m_copy);
+
+  dropObjects();
+  m_copyOf = m_layerName;
+  const sfs::ScriptType* type = sfs::scripts().find(m_layerName);
+
+  if (!type || !type->createObject)
+    return nullptr;
+
+  m_scene =
+      std::make_unique<sfs::Scene>(PREVIEW_SCENE_ID, m_backends, "UI Preview");
+  std::unique_ptr<sfs::GameObject> object = type->createObject();
+
+  // The values an entity in the scene gives it, if one has it.
+  if (const sfs::reflect::TypeInfo* info =
+          sfs::reflect::types().find(m_layerName))
+  {
+    const sfs::SceneSerializer serializer(
+        sfs::reflect::types(),
+        context.render ? &context.render->meshes() : nullptr);
+
+    for (sfs::ScriptComponent& script :
+         context.scene->query<sfs::ScriptComponent>())
+      if (script.script == m_layerName)
+      {
+        serializer.loadObject(*info, object.get(), script.fields);
+        break;
+      }
+  }
+
+  try
+  {
+    m_copy = &m_scene->adoptObject(std::move(object), m_scene->createEntity());
+  }
+  catch (const std::exception& error)
+  {
+    m_error = std::string("onCreate threw: ") + error.what();
+    return nullptr;
+  }
+  return dynamic_cast<sfs::ui::Layer*>(m_copy);
+}
+
+void UiPreviewPanel::loadPreviewModule(const std::filesystem::path& module)
+{
+  dropPreviewModule();
+  m_previewModule.setQuiet(true);
+  // Its previews (and styles) are the ones made as it loads.
+  const std::vector<const sfs::ui::Preview*> before = sfs::ui::previews();
+  const std::vector<const sfs::ui::PreviewStyle*> stylesBefore =
+      sfs::ui::previewStyles();
+
+  if (!m_previewModule.load(
+          module, module.stem().string(), sfs::ModuleHost::Load::FromCopy))
+    return;
+
+  for (const sfs::ui::Preview* preview : sfs::ui::previews())
+    if (std::ranges::find(before, preview) == before.end())
+      m_modulePreviews.push_back(preview);
+
+  for (const sfs::ui::PreviewStyle* style : sfs::ui::previewStyles())
+    if (std::ranges::find(stylesBefore, style) == stylesBefore.end())
+      m_moduleStyles.push_back(style);
+
+  ++m_previewLoads;
+}
+
+void UiPreviewPanel::returnTab()
+{
+  if (!m_tabBefore || m_bringForward)
+    return;
+
+  // Another tab picked since this one came forward: it stays.
+  if (widgets::shownTab(title()) == title())
+    m_seenInFront = true;
+  else if (m_seenInFront)
+  {
+    m_tabBefore.reset();
+    return;
+  }
+
+  const bool uiOpen = std::ranges::any_of(
+      m_code.openScripts(),
+      [&](const std::filesystem::path& file)
+      {
+        const std::string name = file.filename().string();
+        return name.ends_with(".ui.h") || name.ends_with(".ui.cpp") ||
+               m_uiUnits.contains(unitOf(file));
+      });
+  // Neovim tells which files are open a moment after which is focused: the
+  // UI file's to have been seen open first.
+  m_uiSeenOpen |= uiOpen;
+
+  if (m_seenInFront && m_uiSeenOpen && !uiOpen)
+  {
+    widgets::showTab(*m_tabBefore);
+    m_tabBefore.reset();
+  }
+}
+
+std::vector<const sfs::ui::Preview*> UiPreviewPanel::shownPreviews() const
+{
+  std::vector<const sfs::ui::Preview*> shown;
+
+  for (const sfs::ui::Preview* preview : allPreviews())
+    if (unitOf(preview->file()) == m_unit)
+      shown.push_back(preview);
+
+  // The views (made in the .ui.h's order) before the declared previews.
+  std::ranges::stable_partition(shown,
+                                [](const sfs::ui::Preview* preview)
+                                { return preview->file().ends_with(".ui.h"); });
+  return shown;
+}
+
+sfs::ui::View UiPreviewPanel::styled(sfs::ui::View view) const
+{
+  const std::vector<const sfs::ui::PreviewStyle*> styles =
+      withOthers(m_moduleStyles, sfs::ui::previewStyles());
+
+  for (const sfs::ui::PreviewStyle* style : styles)
+    if (unitOf(style->file()) == m_unit)
+      view = style->apply(std::move(view));
+
+  return view;
+}
+
+sfs::UiModule& UiPreviewPanel::uiModule(EditorContext& context)
+{
+  if (!m_ui)
+  {
+    if (!m_scene)
+      m_scene = std::make_unique<sfs::Scene>(
+          PREVIEW_SCENE_ID, m_backends, "UI Preview");
+
+    m_ui = std::make_unique<sfs::UiModule>(*m_scene);
+  }
+
+  // The scene's look (a game sets its font there).
+  if (context.render)
+    if (sfs::UiModule* game = context.render->module<sfs::UiModule>())
+      m_ui->theme() = game->theme();
+
+  return *m_ui;
 }

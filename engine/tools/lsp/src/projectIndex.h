@@ -1,7 +1,8 @@
 #pragma once
 
-#include <sfs/codegen/model.h>
+#include "sfs/codegen/model.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -229,20 +230,29 @@ void findQueryAliases(const TSTree* tree,
 class ProjectIndex
 {
 public:
-  /**
-   * Starts indexing a root: lists its script files (headers and sources), to
-   * be read by indexSlice(). Does nothing for a root that isn't an SFS
-   * project.
-   *
-   * @param root the workspace root
-   */
-  void start(const std::filesystem::path& root);
-
   /** Whether the root is a project, so the index is in use. */
   bool enabled() const { return m_enabled; }
 
-  /** Whether script files are still waiting to be read. */
-  bool pending() const { return !m_pending.empty(); }
+  /**
+   * The type `name` (unqualified) a script header declares, as codegen
+   * registers it; null when there's none.
+   */
+  const IndexEntry* find(std::string_view name) const;
+
+  /**
+   * The query alias `name` declared in class `owner` of a script header, else
+   * at namespace scope; null when there's none.
+   */
+  const QueryAlias* findAlias(std::string_view owner,
+                              std::string_view name) const;
+
+  /**
+   * The script header that declares the type `name` (unqualified), or empty.
+   */
+  std::filesystem::path headerOf(std::string_view name) const;
+
+  /** Reads every waiting script file (sfs-lsp --check). */
+  void indexAll(TSParser* parser);
 
   /**
    * Reads up to `count` waiting script files from disk.
@@ -252,8 +262,61 @@ public:
    */
   void indexSlice(TSParser* parser, std::size_t count);
 
-  /** Reads every waiting script file (sfs-lsp --check). */
-  void indexAll(TSParser* parser);
+  /**
+   * Whether `name` (unqualified) is one of the project's game objects:
+   * deriving from sfs::GameObject, or from another of its game objects.
+   */
+  bool isGameObject(std::string_view name) const;
+
+  /** Whether `path` is a script header of the project (codegen reads it). */
+  bool isScriptHeader(const std::filesystem::path& path) const;
+
+  /** Whether `path` is a script source (.cpp) of the project. */
+  bool isScriptSource(const std::filesystem::path& path) const;
+
+  /**
+   * Whether `name` (unqualified) is one of the project's services: deriving
+   * from sfs::Service, or from another of the project's services.
+   */
+  bool isService(std::string_view name) const;
+
+  /**
+   * Whether `name` (unqualified) is one of the project's systems: deriving
+   * from sfs::System, or from another of the project's systems.
+   */
+  bool isSystem(std::string_view name) const;
+
+  /** Whether script files are still waiting to be read. */
+  bool pending() const { return !m_pending.empty(); }
+
+  /**
+   * Looks for script files added or removed since the last look (one stat
+   * each).
+   */
+  void rescan();
+
+  /**
+   * How `qualifiedName` (e.g. "nav::PathFoundResponse") is known as a
+   * response type of the project's scripts.
+   */
+  ResponseKind responseKind(std::string_view qualifiedName) const;
+
+  /**
+   * The project's sends of the response type `qualifiedName`, each resolved
+   * and given the system it's sent for once, as the index changes; sends
+   * that are nobody's are left out.
+   */
+  std::span<const ResponseSender>
+  sendersOf(std::string_view qualifiedName) const;
+
+  /**
+   * Starts indexing a root: lists its script files (headers and sources), to
+   * be read by indexSlice(). Does nothing for a root that isn't an SFS
+   * project.
+   *
+   * @param root the workspace root
+   */
+  void start(const std::filesystem::path& root);
 
   /**
    * Refreshes one header's entries from codegen's reading of it (an open
@@ -281,69 +344,23 @@ public:
                     const TSTree* tree,
                     std::string_view source);
 
-  /**
-   * Looks for script files added or removed since the last look (one stat
-   * each).
-   */
-  void rescan();
-
-  /**
-   * Whether `name` (unqualified) is one of the project's systems: deriving
-   * from sfs::System, or from another of the project's systems.
-   */
-  bool isSystem(std::string_view name) const;
-
-  /**
-   * Whether `name` (unqualified) is one of the project's game objects:
-   * deriving from sfs::GameObject, or from another of its game objects.
-   */
-  bool isGameObject(std::string_view name) const;
-
-  /**
-   * Whether `name` (unqualified) is one of the project's services: deriving
-   * from sfs::Service, or from another of the project's services.
-   */
-  bool isService(std::string_view name) const;
-
-  /**
-   * The type `name` (unqualified) a script header declares, as codegen
-   * registers it; null when there's none.
-   */
-  const IndexEntry* find(std::string_view name) const;
-
-  /** Whether `path` is a script header of the project (codegen reads it). */
-  bool isScriptHeader(const std::filesystem::path& path) const;
-
-  /** Whether `path` is a script source (.cpp) of the project. */
-  bool isScriptSource(const std::filesystem::path& path) const;
-
-  /**
-   * How `qualifiedName` (e.g. "nav::PathFoundResponse") is known as a
-   * response type of the project's scripts.
-   */
-  ResponseKind responseKind(std::string_view qualifiedName) const;
-
-  /**
-   * The project's sends of the response type `qualifiedName`, each resolved
-   * and given the system it's sent for once, as the index changes; sends
-   * that are nobody's are left out.
-   */
-  std::span<const ResponseSender>
-  sendersOf(std::string_view qualifiedName) const;
-
-  /**
-   * The query alias `name` declared in class `owner` of a script header, else
-   * at namespace scope; null when there's none.
-   */
-  const QueryAlias* findAlias(std::string_view owner,
-                              std::string_view name) const;
-
-  /**
-   * The script header that declares the type `name` (unqualified), or empty.
-   */
-  std::filesystem::path headerOf(std::string_view name) const;
-
 private:
+  // Hashes std::string and std::string_view alike, so a map keyed by
+  // std::string is searched with a view.
+  struct NameHash
+  {
+    using is_transparent = void;
+
+    std::size_t operator()(std::string_view name) const;
+  };
+  template <typename T>
+  using NameMap = std::unordered_map<std::string, T, NameHash, std::equal_to<>>;
+
+  void buildLookup() const;
+  ScriptFile& fileAt(const std::filesystem::path& normal);
+  bool isScriptFile(const std::filesystem::path& path,
+                    std::string_view extension) const;
+  std::vector<std::filesystem::path> listFiles() const;
   void replace(const std::filesystem::path& header,
                const codegen::ParseResult& result,
                const TSTree* tree,
@@ -353,26 +370,10 @@ private:
                         const TSTree* tree,
                         std::string_view source,
                         const std::vector<codegen::EventModel>* events);
-  ScriptFile& fileAt(const std::filesystem::path& normal);
-  void buildLookup() const;
-  bool isScriptFile(const std::filesystem::path& path,
-                    std::string_view extension) const;
-  std::vector<std::filesystem::path> listFiles() const;
   codegen::TypeKind rootKind(std::string_view name) const;
 
   bool m_enabled = false;
   std::filesystem::path m_scripts;
-
-  // Hashes std::string and std::string_view alike, so a map keyed by
-  // std::string is searched with a view.
-  struct NameHash
-  {
-    using is_transparent = void;
-    std::size_t operator()(std::string_view name) const;
-  };
-  template <typename T>
-  using NameMap = std::unordered_map<std::string, T, NameHash, std::equal_to<>>;
-
   // Each script file's data, by its normalised path: re-reading a file
   // replaces its own entry only.
   NameMap<ScriptFile> m_files;

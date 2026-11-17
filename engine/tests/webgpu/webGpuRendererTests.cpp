@@ -1,23 +1,21 @@
 #include "../testHarness.h"
+#include "engine/core/animation/animation.h"
+#include "engine/core/logger/logger.h"
+#include "engine/core/rendering/materialGraphCompiler.h"
+#include "engine/core/rendering/meshPrimitives.h"
+#include "engine/core/rendering/sky.h"
+#include "engine/core/rendering/sunShadow.h"
+#include "engine/core/rendering/terrain.h"
+#include "engine/webgpu/webGpuContext.h"
+#include "engine/webgpu/webGpuRenderer.h"
+#include "engine/webgpu/wgpuHandle.h"
+#include "engine/webgpu/wgpuUtil.h"
 
-#include <engine/core/animation/animation.h>
-#include <engine/core/logger/logger.h>
-#include <engine/core/rendering/materialGraphCompiler.h>
-#include <engine/core/rendering/meshPrimitives.h>
-#include <engine/core/rendering/sky.h>
-#include <engine/core/rendering/sunShadow.h>
-#include <engine/core/rendering/terrain.h>
-#include <engine/webgpu/webGpuContext.h>
-#include <engine/webgpu/webGpuRenderer.h>
-#include <engine/webgpu/wgpuHandle.h>
-#include <engine/webgpu/wgpuUtil.h>
-
+#include <glm/glm/ext/matrix_clip_space.hpp>
+#include <glm/glm/ext/matrix_transform.hpp>
+#include <glm/glm/gtc/constants.hpp>
+#include <glm/glm/trigonometric.hpp>
 #include <webgpu/wgpu.h> // wgpuDevicePoll
-
-#include "glm/glm/ext/matrix_clip_space.hpp"
-#include "glm/glm/ext/matrix_transform.hpp"
-#include "glm/glm/gtc/constants.hpp"
-#include "glm/glm/trigonometric.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -35,7 +33,7 @@ namespace graph = sfs::materialGraph;
 namespace
 {
 
-constexpr glm::ivec2 kSize{64, 64};
+constexpr glm::ivec2 SIZE{64, 64};
 
 // Draws frames into an offscreen target, catching every error WebGPU (or the
 // renderer) logs.
@@ -56,11 +54,12 @@ struct Harness
   {
     if (!renderer.initialize())
       return false;
+
     WGPUTextureDescriptor desc = {};
     desc.usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_CopySrc;
     desc.dimension = WGPUTextureDimension_2D;
     desc.size = {
-        static_cast<uint32_t>(kSize.x), static_cast<uint32_t>(kSize.y), 1};
+        static_cast<uint32_t>(SIZE.x), static_cast<uint32_t>(SIZE.y), 1};
     desc.format = context.format();
     desc.mipLevelCount = 1;
     desc.sampleCount = 1;
@@ -76,7 +75,7 @@ struct Harness
   {
     const WGPUCommandEncoder encoder =
         wgpuDeviceCreateCommandEncoder(context.device(), nullptr);
-    renderer.setTarget(encoder, view.get(), kSize);
+    renderer.setTarget(encoder, view.get(), SIZE);
 
     FrameParams frame;
     frame.cameraPosition = {4.0f, 0.0f, 1.0f};
@@ -120,7 +119,7 @@ struct Harness
 // The plane the parity test draws: 2 x 2 at Z = 0, filling an orthographic
 // view from straight above, so pixel (x, y) shows UV ((x + 0.5) / size,
 // (y + 0.5) / size).
-constexpr glm::vec3 kParityCamera{0.0f, 0.0f, 5.0f};
+constexpr glm::vec3 PARITY_CAMERA{0.0f, 0.0f, 5.0f};
 
 // Draw `material` on the plane and read the pixels back (RGBA8, top row
 // first).
@@ -138,19 +137,21 @@ drawPlane(Harness& harness,
   WebGpuContext& context = harness.context;
   const WGPUCommandEncoder encoder =
       wgpuDeviceCreateCommandEncoder(context.device(), nullptr);
-  harness.renderer.setTarget(encoder, harness.view.get(), kSize);
+  harness.renderer.setTarget(encoder, harness.view.get(), SIZE);
 
   FrameParams frame;
-  frame.cameraPosition = kParityCamera;
+  frame.cameraPosition = PARITY_CAMERA;
   frame.view =
-      glm::lookAt(kParityCamera, glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+      glm::lookAt(PARITY_CAMERA, glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
   frame.projection = glm::orthoRH_ZO(-1.0f, 1.0f, -1.0f, 1.0f, 0.1f, 10.0f);
   frame.viewProjection = frame.projection * frame.view;
   frame.shadows.enabled = false;
   frame.time = time;
   frame.cameraForward = {0.0f, 0.0f, -1.0f};
+
   if (changeFrame)
     changeFrame(frame);
+
   harness.renderer.beginFrame(frame);
   const MaterialHandle materials[] = {material};
   MeshBatch batch;
@@ -158,20 +159,24 @@ drawPlane(Harness& harness,
   batch.materials = materials;
   batch.instances = {&instance, 1};
   harness.renderer.drawMesh(batch);
+
   for (const MeshBatch& other : more)
     harness.renderer.drawMesh(other);
+
   for (const GrassBatch& field : grass)
     harness.renderer.drawGrass(field);
+
   if (!ui.empty())
     harness.renderer.drawUi(
         UiDrawList{std::vector<UiQuad>(ui.begin(), ui.end())});
+
   harness.renderer.endFrame();
 
   // Rows padded to 256 bytes, as copies need.
   const uint32_t rowBytes = 256;
   wgpu::Buffer readback(
       wgpu::makeBuffer(context.device(),
-                       uint64_t(rowBytes) * kSize.y,
+                       uint64_t(rowBytes) * SIZE.y,
                        WGPUBufferUsage_CopyDst | WGPUBufferUsage_MapRead));
   WGPUTexelCopyTextureInfo source = {};
   source.texture = harness.target.get();
@@ -179,8 +184,8 @@ drawPlane(Harness& harness,
   WGPUTexelCopyBufferInfo destination = {};
   destination.buffer = readback.get();
   destination.layout.bytesPerRow = rowBytes;
-  destination.layout.rowsPerImage = kSize.y;
-  const WGPUExtent3D extent = {uint32_t(kSize.x), uint32_t(kSize.y), 1};
+  destination.layout.rowsPerImage = SIZE.y;
+  const WGPUExtent3D extent = {uint32_t(SIZE.x), uint32_t(SIZE.y), 1};
   wgpuCommandEncoderCopyTextureToBuffer(
       encoder, &source, &destination, &extent);
   const WGPUCommandBuffer commands = wgpuCommandEncoderFinish(encoder, nullptr);
@@ -198,18 +203,24 @@ drawPlane(Harness& harness,
   wgpuBufferMapAsync(readback.get(),
                      WGPUMapMode_Read,
                      0,
-                     uint64_t(rowBytes) * kSize.y,
+                     uint64_t(rowBytes) * SIZE.y,
                      callback);
+
   for (int i = 0; i < 100 && !mapped; ++i)
     wgpuDevicePoll(context.device(), true, nullptr);
+
   std::vector<uint8_t> pixels;
+
   if (!mapped)
     return pixels;
+
   const auto* data = static_cast<const uint8_t*>(wgpuBufferGetConstMappedRange(
-      readback.get(), 0, uint64_t(rowBytes) * kSize.y));
-  for (int y = 0; y < kSize.y; ++y)
+      readback.get(), 0, uint64_t(rowBytes) * SIZE.y));
+
+  for (int y = 0; y < SIZE.y; ++y)
     pixels.insert(
-        pixels.end(), data + y * rowBytes, data + y * rowBytes + kSize.x * 4);
+        pixels.end(), data + y * rowBytes, data + y * rowBytes + SIZE.x * 4);
+
   wgpuBufferUnmap(readback.get());
   return pixels;
 }
@@ -240,21 +251,25 @@ int main()
   {
     for (const std::string& error : errors)
       std::fprintf(stderr, "  logged: %s\n", error.c_str());
+
     const bool none = errors.empty();
     errors.clear();
     return none;
   };
 
   WebGpuContext context;
+
   if (!context.initHeadless())
   {
     std::fputs(
         "webGpuRendererTests: no WebGPU adapter here, skipped\n", stderr);
     return 77;
   }
+
   errors.clear();
 
   Harness harness(context);
+
   if (!harness.initialize())
   {
     // Nothing else can draw (logged why).
@@ -290,6 +305,7 @@ int main()
     bumps->rgba = {200, 128, 230, 255};
     bumps->linear = true;
     standard.normalTexture = bumps;
+
     for (const AlphaMode mode : {AlphaMode::Opaque,
                                  AlphaMode::Mask,
                                  AlphaMode::Blend,
@@ -301,6 +317,7 @@ int main()
       harness.draw(handle);
       harness.renderer.destroyMaterial(handle);
     }
+
     CHECK(reportErrors());
   }
 
@@ -310,6 +327,7 @@ int main()
     {
       if (type.id == graph::kOutputType)
         continue;
+
       for (uint32_t output = 0; output < type.outputs.size(); ++output)
       {
         graph::Graph g;
@@ -323,6 +341,7 @@ int main()
         CHECK(handle.valid());
         harness.draw(handle);
         harness.renderer.destroyMaterial(handle);
+
         if (!reportErrors())
         {
           std::fprintf(stderr,
@@ -343,6 +362,7 @@ int main()
     const graph::NodeId noise = g.add("noise", {});
     g.connect(texture, 5, g.output(), graph::kAlpha);
     g.connect(noise, 0, g.output(), graph::kEmission);
+
     for (const AlphaMode mode : {AlphaMode::Opaque,
                                  AlphaMode::Mask,
                                  AlphaMode::Blend,
@@ -362,6 +382,7 @@ int main()
       harness.draw(handle);
       harness.renderer.destroyMaterial(handle);
     }
+
     CHECK(reportErrors());
   }
 
@@ -418,19 +439,21 @@ int main()
     // A pixel's red and green, the target RGBA or BGRA.
     const auto colorAt = [&](int x, int y)
     {
-      const std::size_t i = (std::size_t(y) * kSize.x + x) * 4;
+      const std::size_t i = (std::size_t(y) * SIZE.x + x) * 4;
       return glm::ivec2(std::max(pixels[i], pixels[i + 2]), pixels[i + 1]);
     };
     const auto isRed = [](glm::ivec2 c) { return c.x > c.y + 60; };
     const auto isGreen = [](glm::ivec2 c) { return c.y > c.x + 60; };
-    CHECK(pixels.size() == std::size_t(kSize.x) * kSize.y * 4);
-    if (pixels.size() == std::size_t(kSize.x) * kSize.y * 4)
+    CHECK(pixels.size() == std::size_t(SIZE.x) * SIZE.y * 4);
+
+    if (pixels.size() == std::size_t(SIZE.x) * SIZE.y * 4)
     {
       CHECK(isRed(colorAt(16, 16)));
       CHECK(isGreen(colorAt(48, 16)));
       CHECK(isGreen(colorAt(16, 48)));
       CHECK(isRed(colorAt(48, 48)));
     }
+
     harness.renderer.destroyMesh(a);
     harness.renderer.destroyMesh(b);
     harness.renderer.destroyMaterial(red);
@@ -447,17 +470,20 @@ int main()
     // A smooth 4x4 gradient for the nodes that read an image.
     auto image = std::make_shared<TextureData>();
     image->width = image->height = 4;
+
     for (int y = 0; y < 4; ++y)
       for (int x = 0; x < 4; ++x)
         image->rgba.insert(
             image->rgba.end(),
             {uint8_t(x * 80), uint8_t(y * 80), uint8_t(200 - x * 40), 255});
-    constexpr float kTime = 1.25f;
+
+    constexpr float TIME = 1.25f;
 
     for (const graph::NodeType& type : graph::nodeTypes())
     {
       if (type.id == graph::kOutputType)
         continue;
+
       for (uint32_t output = 0; output < type.outputs.size(); ++output)
       {
         graph::Graph g;
@@ -474,9 +500,10 @@ int main()
 
         const MaterialHandle handle = harness.renderer.createMaterial(material);
         const std::vector<uint8_t> pixels =
-            drawPlane(harness, plane, handle, kTime);
+            drawPlane(harness, plane, handle, TIME);
         harness.renderer.destroyMaterial(handle);
-        CHECK(pixels.size() == std::size_t(kSize.x) * kSize.y * 4);
+        CHECK(pixels.size() == std::size_t(SIZE.x) * SIZE.y * 4);
+
         if (pixels.empty())
           continue;
 
@@ -484,36 +511,43 @@ int main()
         // Floor) can land either side by a rounding: a few pixels may differ.
         int compared = 0, differing = 0;
         float worst = 0.0f;
-        for (int y = 0; y < kSize.y; ++y)
-          for (int x = 0; x < kSize.x; ++x)
+
+        for (int y = 0; y < SIZE.y; ++y)
+          for (int x = 0; x < SIZE.x; ++x)
           {
             graph::SurfacePoint point;
-            point.uv = {(x + 0.5f) / kSize.x, (y + 0.5f) / kSize.y};
+            point.uv = {(x + 0.5f) / SIZE.x, (y + 0.5f) / SIZE.y};
             point.position = {
                 point.uv.x * 2.0f - 1.0f, 1.0f - point.uv.y * 2.0f, 0.0f};
             point.normal = {0.0f, 0.0f, 1.0f};
             point.tangent = {1.0f, 0.0f, 0.0f}; // +u along +x, up the image +y
             point.bitangent = {0.0f, 1.0f, 0.0f};
-            point.toView = glm::normalize(kParityCamera - point.position);
-            point.time = kTime;
+            point.toView = glm::normalize(PARITY_CAMERA - point.position);
+            point.time = TIME;
             const glm::vec3 expected =
                 compiled.shader->evaluate(point, compiled.parameters, textures)
                     .emission;
+
             if (!std::isfinite(expected.x) || !std::isfinite(expected.y) ||
                 !std::isfinite(expected.z))
               continue; // NaN (a square root of a negative...): either way
-            const uint8_t* pixel = &pixels[(std::size_t(y) * kSize.x + x) * 4];
+
+            const uint8_t* pixel = &pixels[(std::size_t(y) * SIZE.x + x) * 4];
             float difference = 0.0f;
+
             for (int c = 0; c < 3; ++c)
               difference =
                   std::max(difference,
                            std::abs(pixel[c] / 255.0f -
                                     std::clamp(expected[c], 0.0f, 1.0f)));
+
             ++compared;
             worst = std::max(worst, difference);
+
             if (difference > 0.03f)
               ++differing;
           }
+
         if (differing * 50 > compared) // more than 2%
         {
           std::fprintf(stderr,
@@ -527,6 +561,7 @@ int main()
         }
       }
     }
+
     CHECK(reportErrors());
   }
 
@@ -536,8 +571,10 @@ int main()
     // The plane with its texture coordinates gone: the frame comes from the
     // world's axes.
     MeshData bare = meshes::plane({2.0f, 2.0f});
+
     for (MeshVertex& vertex : bare.vertices)
       vertex.uv = glm::vec2(0.0f);
+
     const MeshHandle plane = harness.renderer.createMesh(bare);
     auto image = std::make_shared<TextureData>();
     image->width = image->height = 2;
@@ -575,12 +612,13 @@ int main()
     CHECK(!pixels.empty());
 
     int differing = 0;
-    for (int y = 0; y < kSize.y && !pixels.empty(); ++y)
-      for (int x = 0; x < kSize.x; ++x)
+
+    for (int y = 0; y < SIZE.y && !pixels.empty(); ++y)
+      for (int x = 0; x < SIZE.x; ++x)
       {
         graph::SurfacePoint point;
-        point.position = {(x + 0.5f) / kSize.x * 2.0f - 1.0f,
-                          1.0f - (y + 0.5f) / kSize.y * 2.0f,
+        point.position = {(x + 0.5f) / SIZE.x * 2.0f - 1.0f,
+                          1.0f - (y + 0.5f) / SIZE.y * 2.0f,
                           0.0f};
         point.normal = {0.0f, 0.0f, 1.0f};
         graph::tangentFrame(point.normal,
@@ -588,11 +626,12 @@ int main()
                             glm::vec3(0.0f),
                             point.tangent,
                             point.bitangent);
-        point.toView = glm::normalize(kParityCamera - point.position);
+        point.toView = glm::normalize(PARITY_CAMERA - point.position);
         const glm::vec3 expected =
             compiled.shader->evaluate(point, compiled.parameters, textures)
                 .emission;
-        const uint8_t* pixel = &pixels[(std::size_t(y) * kSize.x + x) * 4];
+        const uint8_t* pixel = &pixels[(std::size_t(y) * SIZE.x + x) * 4];
+
         for (int c = 0; c < 3; ++c)
           if (std::abs(pixel[c] / 255.0f -
                        std::clamp(expected[c], 0.0f, 1.0f)) > 0.03f)
@@ -601,7 +640,8 @@ int main()
             break;
           }
       }
-    CHECK(differing * 50 <= kSize.x * kSize.y);
+
+    CHECK(differing * 50 <= SIZE.x * SIZE.y);
     CHECK(reportErrors());
   }
 
@@ -638,13 +678,14 @@ int main()
     const std::vector<uint8_t> withBloom = drawGlow(true),
                                without = drawGlow(false);
     CHECK(!withBloom.empty() && !without.empty());
+
     if (!withBloom.empty() && !without.empty())
     {
       // Just outside the patch (it spans the middle 15%): black without
       // bloom, glowing with it; the patch itself full white either way.
       const auto red = [](const std::vector<uint8_t>& pixels, int x, int y)
-      { return int(pixels[(std::size_t(y) * kSize.x + x) * 4]); };
-      const int middle = kSize.x / 2, outside = middle + kSize.x * 15 / 100;
+      { return int(pixels[(std::size_t(y) * SIZE.x + x) * 4]); };
+      const int middle = SIZE.x / 2, outside = middle + SIZE.x * 15 / 100;
       CHECK(red(without, outside, middle) == 0);
       CHECK(red(withBloom, outside, middle) > 10);
       CHECK(red(withBloom, middle, middle) == 255);
@@ -671,6 +712,7 @@ int main()
       const std::vector<uint8_t> none = withAmount(0.0f),
                                  more = withAmount(3.0f);
       CHECK(!none.empty() && !more.empty());
+
       if (!none.empty() && !more.empty())
       {
         CHECK(red(none, outside, middle) == 0);
@@ -679,6 +721,7 @@ int main()
               red(withBloom, outside, middle) + 10);
       }
     }
+
     harness.renderer.destroyMaterial(glowing);
 
     // An ordinary lit surface (nothing above 1): the same with bloom or not.
@@ -721,8 +764,10 @@ int main()
     const graph::NodeId out = g.add(std::string(graph::kOutputType), {});
     g.find(out)->inputs[graph::kBaseColor] = glm::vec4(0.0f);
     g.find(out)->inputs[graph::kEmission] = glm::vec4(glm::vec3(light), 1.0f);
+
     if (surface)
       surface(g, out);
+
     const MaterialHandle material =
         harness.renderer.createMaterial(graphMaterial(g, AlphaMode::Opaque));
     const std::vector<uint8_t> pixels = drawPlane(harness,
@@ -738,10 +783,12 @@ int main()
                                                   });
     harness.renderer.destroyMaterial(material);
     Graded result;
+
     if (pixels.empty())
       return result;
+
     const std::size_t middle =
-        (std::size_t(kSize.y / 2) * kSize.x + kSize.x / 2) * 4;
+        (std::size_t(SIZE.y / 2) * SIZE.x + SIZE.x / 2) * 4;
     result.r = pixels[middle];
     result.g = pixels[middle + 1];
     result.b = pixels[middle + 2];
@@ -786,12 +833,14 @@ int main()
     CHECK(dim.r < white.r && white.r < bright.r && bright.r <= blazing.r);
     CHECK(white.r < whiteBelow); // rolled off, not clipped at white
     CHECK(bright.r > 200);
+
     if (dim.r < greyLow || dim.r > greyHigh || white.r >= whiteBelow)
       std::printf("    (tone mapper %d: 0.18 -> %d, 1 -> %d, 8 -> %d)\n",
                   static_cast<int>(mapper),
                   dim.r,
                   white.r,
                   bright.r);
+
     CHECK(reportErrors());
   };
 
@@ -921,12 +970,14 @@ int main()
          {0.0f, 1.6f, 0.0f},
          true},
     };
+
     for (const Case& test : cases)
       for (const bool shadows : {true, false})
       {
         // A backend without them (wgpu's OpenGL fallback) lights unshadowed.
         if (shadows && !harness.renderer.capabilities().pointLightShadows)
           continue;
+
         PointLight light;
         light.position = test.light;
         light.radius = 6.0f;
@@ -942,9 +993,11 @@ int main()
         casters.lightShadowInstances = {&caster, 1};
 
         MeshInstance surface;
+
         if (test.ceiling)
           surface.model = glm::rotate(
               glm::mat4(1.0f), glm::pi<float>(), glm::vec3(1.0f, 0.0f, 0.0f));
+
         glm::mat4 viewProjection(1.0f);
         const std::vector<uint8_t> pixels =
             drawPlane(harness,
@@ -972,16 +1025,18 @@ int main()
                       surface,
                       {&casters, 1});
         CHECK(!pixels.empty());
+
         if (pixels.empty())
           continue;
+
         const auto brightness = [&](const glm::vec3& world)
         {
           const glm::vec4 clip = viewProjection * glm::vec4(world, 1.0f);
           const int x = std::clamp(
-              int((clip.x / clip.w * 0.5f + 0.5f) * kSize.x), 0, kSize.x - 1);
+              int((clip.x / clip.w * 0.5f + 0.5f) * SIZE.x), 0, SIZE.x - 1);
           const int y = std::clamp(
-              int((0.5f - clip.y / clip.w * 0.5f) * kSize.y), 0, kSize.y - 1);
-          const uint8_t* p = &pixels[(std::size_t(y) * kSize.x + x) * 4];
+              int((0.5f - clip.y / clip.w * 0.5f) * SIZE.y), 0, SIZE.y - 1);
+          const uint8_t* p = &pixels[(std::size_t(y) * SIZE.x + x) * 4];
           return int(p[0]) + p[1] + p[2];
         };
         const glm::vec3 opposite(-test.spot.x, -test.spot.y, test.spot.z);
@@ -989,6 +1044,7 @@ int main()
         const bool right =
             shadows ? lit - shaded > 60 : std::abs(lit - shaded) < 12;
         CHECK(right);
+
         if (!right)
           std::fprintf(stderr,
                        "  %s, shadows %s: spot %d, opposite %d\n",
@@ -1033,12 +1089,13 @@ int main()
                     {&casters, 1});
       // Straight below the light, past the box: lit as brightly as beside it.
       CHECK(!pixels.empty());
+
       if (!pixels.empty())
       {
         const auto red = [&](int x, int y)
-        { return int(pixels[(std::size_t(y) * kSize.x + x) * 4]); };
-        const int below = red(kSize.x / 2 + 3, kSize.y / 2),
-                  beside = red(kSize.x / 2 - 3, kSize.y / 2);
+        { return int(pixels[(std::size_t(y) * SIZE.x + x) * 4]); };
+        const int below = red(SIZE.x / 2 + 3, SIZE.y / 2),
+                  beside = red(SIZE.x / 2 - 3, SIZE.y / 2);
         CHECK(std::abs(below - beside) < 6);
       }
     }
@@ -1071,18 +1128,21 @@ int main()
                        {
                          frame.lighting.ambient = 0.05f;
                          frame.lighting.sun.diffuseStrength = 0.0f;
+
                          if (lit)
                            frame.pointLights = {&light, 1};
+
                          frame.bloom.enabled = false;
                        });
     };
     const std::vector<uint8_t> dark = draw(false), shining = draw(true);
     CHECK(!dark.empty() && !shining.empty());
+
     if (!dark.empty() && !shining.empty())
     {
       // Under the light, where its highlight is: much brighter.
       const std::size_t middle =
-          (std::size_t(kSize.y / 2) * kSize.x + kSize.x / 2) * 4;
+          (std::size_t(SIZE.y / 2) * SIZE.x + SIZE.x / 2) * 4;
       CHECK(int(shining[middle]) > int(dark[middle]) + 80);
       // And in a dimmer light (the bright one's highlight is past white), the
       // metal's own colour: gold.
@@ -1101,8 +1161,10 @@ int main()
       light.sourceRadius = sourceRadius;
       const std::vector<uint8_t> pixels = draw(true);
       int bright = 0;
+
       for (std::size_t i = 0; i < pixels.size(); i += 4)
         bright += pixels[i] > 128;
+
       return bright;
     };
     const int speck = highlightPixels(0.0f), panel = highlightPixels(0.4f);
@@ -1117,8 +1179,10 @@ int main()
     // A 2 x 2 lawn seen from the side, low down, against a black sky.
     const MeshData lawn = meshes::plane({2.0f, 2.0f});
     std::vector<glm::vec3> positions;
+
     for (const MeshVertex& vertex : lawn.vertices)
       positions.push_back(vertex.position);
+
     const GrassGround ground =
         GrassGround::build(positions, lawn.indices, glm::mat4(1.0f));
     const GrassHandle grass = harness.renderer.createGrass(ground);
@@ -1173,31 +1237,38 @@ int main()
     {
       const glm::vec4 clip =
           viewProjection * glm::vec4(0.0f, 0.0f, above, 1.0f);
-      const int rowAt = int((0.5f - clip.y / clip.w * 0.5f) * kSize.y);
+      const int rowAt = int((0.5f - clip.y / clip.w * 0.5f) * SIZE.y);
       int count = 0;
+
       for (int y = 0; y < rowAt; ++y)
-        for (int x = 0; x < kSize.x; ++x)
-          count += pixels[(std::size_t(y) * kSize.x + x) * 4 + 1] > 20;
+        for (int x = 0; x < SIZE.x; ++x)
+          count += pixels[(std::size_t(y) * SIZE.x + x) * 4 + 1] > 20;
+
       return count;
     };
 
     const std::vector<uint8_t> still = draw(0.0f, 40.0f, material);
     CHECK(!still.empty());
+
     if (still.empty())
       return testing::report("webGpuRendererTests");
+
     const int upright = standing(still);
     CHECK(upright > 200);
 
     // In a gale: blades lean over, a different picture.
     const std::vector<uint8_t> windy = draw(1.0f, 40.0f, material);
     int differing = 0;
+
     for (std::size_t i = 0; i < still.size(); i += 4)
       differing += std::abs(int(still[i + 1]) - int(windy[i + 1])) > 10;
+
     CHECK(differing > 100);
 
     // Trampled flat all over: hardly anything stands.
     const glm::ivec2 size(8, 8);
     std::vector<uint8_t> flat(std::size_t(size.x) * size.y * 4);
+
     for (std::size_t i = 0; i < flat.size(); i += 4)
     {
       flat[i] = 255; // pressed toward +x
@@ -1205,6 +1276,7 @@ int main()
       flat[i + 2] = 255; // all the way down
       flat[i + 3] = 255;
     }
+
     harness.renderer.updateGrassTrample(
         grass, GrassTrampleImage{{-1.5f, -1.5f}, {1.5f, 1.5f}, size, flat});
     const int trampled = standing(draw(0.0f, 40.0f, material));
@@ -1284,8 +1356,10 @@ int main()
     // green where it covers it (the left half), white where it's bare.
     const MeshData lawn = meshes::plane({2.0f, 2.0f});
     std::vector<glm::vec3> positions;
+
     for (const MeshVertex& vertex : lawn.vertices)
       positions.push_back(vertex.position);
+
     const GrassGround ground =
         GrassGround::build(positions, lawn.indices, glm::mat4(1.0f));
     const GrassHandle grass = harness.renderer.createGrass(ground);
@@ -1297,9 +1371,11 @@ int main()
     const MaterialHandle whiteLook = harness.renderer.createMaterial(white);
     const MaterialHandle greenLook = harness.renderer.createMaterial(green);
     GrassMaps maps(ground.grid());
+
     for (int y = 0; y < maps.grid().size.y; ++y)
       for (int x = maps.grid().size.x / 2; x < maps.grid().size.x; ++x)
         maps.set(GrassMaps::Coverage, x, y, 0.0f);
+
     std::vector<uint8_t> shape, data;
     maps.pixels({0, 0}, maps.grid().size, shape, data);
     harness.renderer.updateGrassMaps(
@@ -1323,15 +1399,17 @@ int main()
                   {},
                   {&batch, 1});
     CHECK(!pixels.empty());
+
     if (!pixels.empty())
     {
       const auto at = [&](int x, int y)
-      { return &pixels[(std::size_t(y) * kSize.x + x) * 4]; };
-      const uint8_t* covered = at(kSize.x / 4, kSize.y / 2);
-      const uint8_t* bare = at(kSize.x * 3 / 4, kSize.y / 2);
+      { return &pixels[(std::size_t(y) * SIZE.x + x) * 4]; };
+      const uint8_t* covered = at(SIZE.x / 4, SIZE.y / 2);
+      const uint8_t* bare = at(SIZE.x * 3 / 4, SIZE.y / 2);
       CHECK(covered[1] > covered[0] + 60);               // green
       CHECK(std::abs(int(bare[0]) - int(bare[1])) < 12); // white (lit grey)
     }
+
     harness.renderer.destroyGrass(grass);
     harness.renderer.destroyMaterial(whiteLook);
     harness.renderer.destroyMaterial(greenLook);
@@ -1346,8 +1424,10 @@ int main()
     // and by a renderer that grows hidden grass too (SFS_GRASS_UNCULLED).
     const MeshData lawn = meshes::plane({20.0f, 20.0f});
     std::vector<glm::vec3> positions;
+
     for (const MeshVertex& vertex : lawn.vertices)
       positions.push_back(vertex.position);
+
     const GrassGround ground =
         GrassGround::build(positions, lawn.indices, glm::mat4(1.0f));
     MeshMaterial green;
@@ -1374,6 +1454,7 @@ int main()
                              0.0f,
                              40.0f};
       std::vector<uint8_t> pixels;
+
       // (A few frames, as a game would draw them.)
       for (int drawn = 0; drawn < 3; ++drawn)
         pixels = drawPlane(
@@ -1399,6 +1480,7 @@ int main()
             {},
             {&wallBatch, 1},
             {&batch, 1});
+
       on.renderer.destroyGrass(grass);
       on.renderer.destroyMaterial(look);
       return pixels;
@@ -1422,15 +1504,17 @@ int main()
     CHECK(made);
     const std::vector<uint8_t> grown = made ? picture(all) : culled;
     CHECK(!culled.empty() && culled.size() == grown.size());
+
     if (!culled.empty() && culled.size() == grown.size())
     {
       // Grass in front of the wall (low in the view, green), and the same
       // picture, but for the odd pixel where blades level with each other
       // were drawn in another order.
       const uint8_t* front =
-          &culled[(std::size_t(kSize.y - 4) * kSize.x + kSize.x / 2) * 4];
+          &culled[(std::size_t(SIZE.y - 4) * SIZE.x + SIZE.x / 2) * 4];
       CHECK(front[1] > front[0] + 20);
       std::size_t differ = 0;
+
       for (std::size_t i = 0; i < culled.size(); i += 4)
         for (std::size_t c = 0; c < 3; ++c)
           if (std::abs(int(culled[i + c]) - int(grown[i + c])) > 8)
@@ -1438,8 +1522,10 @@ int main()
             ++differ;
             break;
           }
+
       CHECK(differ * 200 < culled.size() / 4);
     }
+
     CHECK(reportErrors());
   }
 
@@ -1450,8 +1536,10 @@ int main()
     // as its Data 0: painted 1 on the left half, 0 on the right.
     const MeshData lawn = meshes::plane({2.0f, 2.0f});
     std::vector<glm::vec3> positions;
+
     for (const MeshVertex& vertex : lawn.vertices)
       positions.push_back(vertex.position);
+
     const GrassGround ground =
         GrassGround::build(positions, lawn.indices, glm::mat4(1.0f));
     const GrassHandle grass = harness.renderer.createGrass(ground);
@@ -1466,9 +1554,11 @@ int main()
     const MaterialHandle dataLook =
         harness.renderer.createMaterial(graphMaterial(g, AlphaMode::Opaque));
     GrassMaps maps(ground.grid());
+
     for (int y = 0; y < maps.grid().size.y; ++y)
       for (int x = 0; x < maps.grid().size.x / 2; ++x)
         maps.set(GrassMaps::Data0, x, y, 1.0f);
+
     std::vector<uint8_t> shape, data;
     maps.pixels({0, 0}, maps.grid().size, shape, data);
     harness.renderer.updateGrassMaps(
@@ -1493,25 +1583,31 @@ int main()
                        {},
                        {&batch, 1});
     };
+
     // The ground alone (blades too short to see), then blades over it.
     for (const float height : {0.001f, 0.3f})
     {
       const std::vector<uint8_t> pixels = draw(height);
       CHECK(!pixels.empty());
+
       if (pixels.empty())
         break;
+
       const auto brightness = [&](int x0, int x1)
       {
         int sum = 0;
-        for (int y = kSize.y / 4; y < kSize.y * 3 / 4; ++y)
+
+        for (int y = SIZE.y / 4; y < SIZE.y * 3 / 4; ++y)
           for (int x = x0; x < x1; ++x)
-            sum += pixels[(std::size_t(y) * kSize.x + x) * 4 + 1];
-        return sum / ((x1 - x0) * kSize.y / 2);
+            sum += pixels[(std::size_t(y) * SIZE.x + x) * 4 + 1];
+
+        return sum / ((x1 - x0) * SIZE.y / 2);
       };
-      const int wet = brightness(kSize.x / 8, kSize.x * 3 / 8);
-      const int dry = brightness(kSize.x * 5 / 8, kSize.x * 7 / 8);
+      const int wet = brightness(SIZE.x / 8, SIZE.x * 3 / 8);
+      const int dry = brightness(SIZE.x * 5 / 8, SIZE.x * 7 / 8);
       CHECK(wet > dry + 60);
     }
+
     harness.renderer.destroyGrass(grass);
     harness.renderer.destroyMaterial(greyLook);
     harness.renderer.destroyMaterial(dataLook);
@@ -1547,11 +1643,13 @@ int main()
         turned);
     CHECK(!pixels.empty());
     int inside = 0, between = 0;
+
     for (std::size_t i = 0; i < pixels.size(); i += 4)
     {
       inside += pixels[i] > 200;
       between += pixels[i] > 25 && pixels[i] < 175;
     }
+
     CHECK(inside > 300);
     // Without anti-aliasing every pixel is all square or all sky.
     CHECK(between > 40);
@@ -1574,8 +1672,10 @@ int main()
     texture.id = 7;
     texture.size = {2, 2};
     texture.pixels.assign(16, 255);
+
     for (int i = 0; i < 4; ++i)
       texture.pixels[i * 4 + 3] = 128; // half coverage
+
     UiQuad box;
     box.rect = {4.0f, 4.0f, 24.0f, 24.0f};
     box.color = {1.0f, 0.0f, 0.0f, 1.0f};
@@ -1602,22 +1702,26 @@ int main()
         {},
         quads);
     CHECK(!pixels.empty());
+
     if (!pixels.empty())
     {
       const auto at = [&](int x, int y)
-      { return &pixels[(std::size_t(y) * kSize.x + x) * 4]; };
+      { return &pixels[(std::size_t(y) * SIZE.x + x) * 4]; };
       CHECK(at(16, 16)[0] > 240 && at(16, 16)[1] < 15); // inside: red
       CHECK(at(30, 16)[0] < 15);                        // beside: not
       CHECK(at(4, 4)[0] < 60); // a rounded corner: (nearly) not
       // Partly covered along its rounded corner.
       bool soft = false;
+
       for (int i = 4; i < 12; ++i)
         soft = soft || (at(i, i)[0] > 30 && at(i, i)[0] < 220);
+
       CHECK(soft);
       // The glyph: white at half its coverage (as the screen shows it).
       CHECK(at(48, 48)[0] > 90 && at(48, 48)[0] < 230 &&
             std::abs(int(at(48, 48)[0]) - int(at(48, 48)[2])) < 10);
     }
+
     harness.renderer.destroyMaterial(material);
     CHECK(reportErrors());
   }
@@ -1646,13 +1750,15 @@ int main()
     const std::vector<uint8_t> clear = draw(0.0f);
     const std::vector<uint8_t> hazy = draw(1.0f);
     CHECK(!clear.empty() && !hazy.empty());
+
     if (!clear.empty() && !hazy.empty())
     {
       const std::size_t middle =
-          (std::size_t(kSize.y / 2) * kSize.x + kSize.x / 2) * 4;
+          (std::size_t(SIZE.y / 2) * SIZE.x + SIZE.x / 2) * 4;
       CHECK(clear[middle] > 100 && clear[middle + 2] < 30);
       CHECK(hazy[middle] < 20 && hazy[middle + 2] > 220);
     }
+
     harness.renderer.destroyMaterial(material);
     CHECK(reportErrors());
   }
@@ -1698,11 +1804,13 @@ int main()
                     {&squareBatch, 1});
       // The steepest step along the middle row.
       int steepest = 0;
-      const std::size_t row = std::size_t(kSize.y / 2) * kSize.x;
-      for (int x = 0; x + 1 < kSize.x; ++x)
+      const std::size_t row = std::size_t(SIZE.y / 2) * SIZE.x;
+
+      for (int x = 0; x + 1 < SIZE.x; ++x)
         steepest = std::max(steepest,
                             std::abs(int(pixels[(row + x) * 4]) -
                                      int(pixels[(row + x + 1) * 4])));
+
       return pixels.empty() ? -1 : steepest;
     };
     const int sharp = edge(5.0f, false);
@@ -1725,6 +1833,7 @@ int main()
     grey.baseColor = {0.6f, 0.6f, 0.6f, 1.0f};
     const MaterialHandle material = harness.renderer.createMaterial(grey);
     std::vector<PointLight> lights;
+
     for (int y = 0; y < 20; ++y)
       for (int x = 0; x < 20; ++x)
       {
@@ -1735,6 +1844,7 @@ int main()
         light.color = {1.0f, 1.0f, 1.0f};
         lights.push_back(light);
       }
+
     const std::vector<uint8_t> pixels =
         drawPlane(harness,
                   plane,
@@ -1752,28 +1862,33 @@ int main()
                     frame.bloom.enabled = false;
                   });
     CHECK(!pixels.empty());
+
     if (!pixels.empty())
     {
       // Each light's spot against the dark between it and the next.
       const auto brightness = [&](glm::vec2 world)
       {
-        const int x = std::clamp(
-            int((world.x + 20.0f) / 40.0f * kSize.x), 0, kSize.x - 1);
-        const int y = std::clamp(
-            int((20.0f - world.y) / 40.0f * kSize.y), 0, kSize.y - 1);
-        const uint8_t* p = &pixels[(std::size_t(y) * kSize.x + x) * 4];
+        const int x =
+            std::clamp(int((world.x + 20.0f) / 40.0f * SIZE.x), 0, SIZE.x - 1);
+        const int y =
+            std::clamp(int((20.0f - world.y) / 40.0f * SIZE.y), 0, SIZE.y - 1);
+        const uint8_t* p = &pixels[(std::size_t(y) * SIZE.x + x) * 4];
         return int(p[0]) + p[1] + p[2];
       };
       int lit = 0;
+
       for (const PointLight& light : lights)
         if (brightness(glm::vec2(light.position)) >
             brightness(glm::vec2(light.position) + glm::vec2(1.0f)) + 30)
           ++lit;
+
       CHECK(lit == int(lights.size()));
+
       if (lit != int(lights.size()))
         std::fprintf(
             stderr, "  %d of %zu lights lit their spot\n", lit, lights.size());
     }
+
     harness.renderer.destroyMaterial(material);
     CHECK(reportErrors());
   }
@@ -1796,10 +1911,12 @@ int main()
       const std::vector<uint8_t> pixels =
           drawPlane(harness, plane, handle, 0.0f);
       harness.renderer.destroyMaterial(handle);
+
       if (pixels.empty())
         return -1.0f;
+
       const std::size_t middle =
-          (std::size_t(kSize.y / 2) * kSize.x + kSize.x / 2) * 4;
+          (std::size_t(SIZE.y / 2) * SIZE.x + SIZE.x / 2) * 4;
       return float(pixels[middle]) + pixels[middle + 1] + pixels[middle + 2];
     };
     // Lighting tops out at full (so leaning toward the sun can't beat flat):
@@ -1852,7 +1969,8 @@ int main()
   {
     if (pixels.empty())
       return glm::ivec3(-1);
-    const std::size_t i = (std::size_t(y) * kSize.x + x) * 4;
+
+    const std::size_t i = (std::size_t(y) * SIZE.x + x) * 4;
     return glm::ivec3(pixels[i], pixels[i + 1], pixels[i + 2]);
   };
   const auto sunAt = [](float degrees, float azimuth = 0.0f)
@@ -1929,6 +2047,7 @@ int main()
     const glm::ivec3 night = pixelAt(look(sunAt(-20.0f), upward), 32, 32);
     CHECK(night.r >= 0 && night.r + night.g + night.b < 40);
     CHECK(night.b >= night.r);
+
     if (day.b <= day.r + 30 || glow.r <= glow.b + 30 ||
         night.r + night.g + night.b >= 40)
       std::printf("    (sky: day %d %d %d, dusk %d %d %d, night %d %d %d)\n",
@@ -1941,6 +2060,7 @@ int main()
                   night.r,
                   night.g,
                   night.b);
+
     CHECK(reportErrors());
   }
 
@@ -1975,6 +2095,7 @@ int main()
     const glm::ivec3 mirror = lit(sunAt(40.0f, 180.0f), chromeMaterial);
     CHECK(mirror.b > mirror.r + 20);
     harness.renderer.destroyMaterial(chromeMaterial);
+
     if (noon.g <= 120 || mirror.b <= mirror.r + 20)
       std::printf("    (lit: noon %d %d %d, dusk %d, night %d, mirror %d %d "
                   "%d)\n",
@@ -1986,6 +2107,7 @@ int main()
                   mirror.r,
                   mirror.g,
                   mirror.b);
+
     CHECK(reportErrors());
   }
 
@@ -2024,6 +2146,7 @@ int main()
         {
           if (physical)
             physicalSky(frame, lowSun);
+
           frame.bloom.enabled = false;
           frame.lighting.sun.direction = lowSun;
           frame.shadows.enabled = true;
@@ -2031,6 +2154,7 @@ int main()
           frame.shadows.distance = 3.0f;
           frame.lightViewProjection =
               fitSunShadow(lowSun, glm::vec3(0.0f), 3.0f, 256);
+
           if (cascades > 1)
           {
             CascadeView view;
@@ -2063,6 +2187,7 @@ int main()
     CHECK(cascadeShadow.g < cascadeSun.g - 20);
     CHECK(std::abs(cascadeShadow.g - inShadow.g) < 12);
     CHECK(std::abs(cascadeSun.g - inSun.g) < 4);
+
     if (inShadow.g >= inSun.g - 20 || cascadeShadow.g >= cascadeSun.g - 20)
       std::printf("    (shadow %d sun %d; cascaded shadow %d sun %d)\n",
                   inShadow.g,
@@ -2107,6 +2232,7 @@ int main()
         {
           if (physical)
             physicalSky(frame, sunAt(sunHeight, 200.0f));
+
           frame.bloom.enabled = false;
           frame.lighting.sun.direction = sunAt(sunHeight, 200.0f);
           frame.lighting.sun.diffuseStrength = 0.15f;
@@ -2132,8 +2258,8 @@ int main()
   const auto pixelOf = [&](const glm::vec3& world)
   {
     const glm::vec4 clip = cornerView * glm::vec4(world, 1.0f);
-    return glm::ivec2(int((clip.x / clip.w * 0.5f + 0.5f) * kSize.x),
-                      int((0.5f - clip.y / clip.w * 0.5f) * kSize.y));
+    return glm::ivec2(int((clip.x / clip.w * 0.5f + 0.5f) * SIZE.x),
+                      int((0.5f - clip.y / clip.w * 0.5f) * SIZE.y));
   };
 
   TEST("ambient occlusion should darken the ground at the foot of a wall and "
@@ -2144,6 +2270,7 @@ int main()
     occlusion.radius = 0.5f;
     occlusion.intensity = 1.5f;
     occlusion.samples = 16;
+
     for (const bool physical : {false, true})
     {
       const std::vector<uint8_t> open = corner({}, physical);
@@ -2160,6 +2287,7 @@ int main()
       CHECK(footOpen.g > 30);
       CHECK(footShaded.g < footOpen.g - darker);
       CHECK(std::abs(awayShaded.g - awayOpen.g) <= 3);
+
       if (footShaded.g >= footOpen.g - darker ||
           std::abs(awayShaded.g - awayOpen.g) > 3)
         std::printf("    (%s: foot %d -> %d, away %d -> %d)\n",
@@ -2169,6 +2297,7 @@ int main()
                     awayOpen.g,
                     awayShaded.g);
     }
+
     // Off again: exactly as before it was on.
     const std::vector<uint8_t> before = corner({}, false);
     corner(occlusion, false);
@@ -2193,6 +2322,7 @@ int main()
     const glm::ivec3 awayShaded = pixelAt(shaded, away.x, away.y);
     CHECK(footShaded.g < footOpen.g - 10);
     CHECK(std::abs(awayShaded.g - awayOpen.g) <= 3);
+
     if (footShaded.g >= footOpen.g - 10 ||
         std::abs(awayShaded.g - awayOpen.g) > 3)
       std::printf("    (foot %d -> %d, away %d -> %d)\n",
@@ -2200,6 +2330,7 @@ int main()
                   footShaded.g,
                   awayOpen.g,
                   awayShaded.g);
+
     // Under a flat sky they're not drawn: exactly as without them.
     CHECK(corner({}, false, contact, 35.0f) == corner({}, false, {}, 35.0f));
     CHECK(reportErrors());
@@ -2306,6 +2437,7 @@ int main()
     const glm::ivec3 clearSunward = look({}, towardSun);
     CHECK(sunward.r > behind.r + 20);
     CHECK(sunward != clearSunward);
+
     if (sunward.r <= behind.r + 20)
       std::printf("    (toward the sun %d %d %d, away %d %d %d)\n",
                   sunward.r,
@@ -2314,6 +2446,7 @@ int main()
                   behind.r,
                   behind.g,
                   behind.b);
+
     CHECK(reportErrors());
   }
 
@@ -2364,8 +2497,10 @@ int main()
     const auto column = [&](const std::vector<uint8_t>& pixels, int x)
     {
       std::vector<int> greens;
-      for (int y = 8; y < kSize.y - 8; ++y)
+
+      for (int y = 8; y < SIZE.y - 8; ++y)
         greens.push_back(pixelAt(pixels, x, y).g);
+
       std::nth_element(
           greens.begin(), greens.begin() + greens.size() / 2, greens.end());
       return greens[greens.size() / 2];
@@ -2380,12 +2515,14 @@ int main()
     CHECK(openDry > 40);
     CHECK(std::abs(shelteredWet - shelteredDry) <= 3);
     CHECK(openWet < openDry - 10);
+
     if (!(std::abs(shelteredWet - shelteredDry) <= 3 && openWet < openDry - 10))
       std::printf("    (sheltered %d -> %d, open %d -> %d)\n",
                   shelteredDry,
                   shelteredWet,
                   openDry,
                   openWet);
+
     // A downpour: every part of the rain drawn.
     CHECK(!draw(1.0f, 1.0f).empty());
     harness.renderer.destroyMesh(roof);
@@ -2401,15 +2538,19 @@ int main()
     {
       auto image = std::make_shared<TextureData>();
       image->width = image->height = 8;
+
       for (int i = 0; i < 64; ++i)
         image->rgba.insert(image->rgba.end(), {r, g, b, 255});
+
       return image;
     };
     // The left half the first layer (red), the right the second (green).
     auto splat = blankSplat(16);
+
     for (int y = 0; y < 16; ++y)
       for (int x = 8; x < 16; ++x)
         splat->rgba[(std::size_t(y) * 16 + x) * 4] = 255;
+
     for (const bool antiTiling : {false, true})
     {
       auto terrain = std::make_shared<TerrainMaterial>();
@@ -2439,6 +2580,7 @@ int main()
       const glm::ivec3 right = pixelAt(pixels, 56, 32);
       CHECK(left.r > 120 && left.g < 30);
       CHECK(right.g > 120 && right.r < 30);
+
       if (!(left.r > 120 && left.g < 30 && right.g > 120 && right.r < 30))
         std::printf("    (anti-tiling %d: left %d %d %d, right %d %d %d)\n",
                     antiTiling,
@@ -2459,8 +2601,10 @@ int main()
         const glm::ivec3 painted = pixelAt(draw(), 8, 32);
         CHECK(painted.g > 120 && painted.r < 30);
       }
+
       harness.renderer.destroyMaterial(material);
     }
+
     harness.renderer.destroyMesh(plane);
     CHECK(reportErrors());
   }
@@ -2476,8 +2620,10 @@ int main()
     // A white square 0.5 across over the middle, every vertex on one joint
     // bound where the mesh is.
     MeshData square = meshes::plane({0.5f, 0.5f});
+
     for (MeshVertex& vertex : square.vertices)
       vertex.position.z = 0.1f;
+
     MeshMaterial white;
     white.unlit = true;
     square.sections = {
@@ -2486,8 +2632,10 @@ int main()
     skin->joints = {"bone"};
     skin->inverseBind = {glm::mat4(1.0f)};
     square.skinWeights.resize(square.vertices.size());
+
     for (SkinWeights& weights : square.skinWeights)
       weights.weights = {1.0f, 0.0f, 0.0f, 0.0f};
+
     computeJointBounds(*skin, square.vertices, square.skinWeights);
     square.skin = skin;
     const MeshHandle base = harness.renderer.createMesh(square);
@@ -2513,7 +2661,7 @@ int main()
     };
     const auto bright = [](const std::vector<uint8_t>& pixels, int x, int y)
     {
-      const std::size_t i = (std::size_t(y) * kSize.x + x) * 4;
+      const std::size_t i = (std::size_t(y) * SIZE.x + x) * 4;
       return pixels[i] + pixels[i + 1] + pixels[i + 2];
     };
 
@@ -2529,19 +2677,22 @@ int main()
     harness.renderer.setSkinPose(copy, {&moved, 1}, posedBounds);
     const std::vector<uint8_t> posed = draw();
     CHECK(!posed.empty());
+
     if (!bound.empty() && !posed.empty())
     {
-      const int middle = kSize.x / 2;
-      const int right = kSize.x / 2 + kSize.x / 4;
-      CHECK(bright(bound, middle, kSize.y / 2) > 300);
-      CHECK(bright(bound, right + 4, kSize.y / 2) < 100);
-      CHECK(bright(posed, right, kSize.y / 2) > 300);
-      CHECK(bright(posed, middle - 6, kSize.y / 2) < 100);
-      if (bright(posed, right, kSize.y / 2) <= 300)
+      const int middle = SIZE.x / 2;
+      const int right = SIZE.x / 2 + SIZE.x / 4;
+      CHECK(bright(bound, middle, SIZE.y / 2) > 300);
+      CHECK(bright(bound, right + 4, SIZE.y / 2) < 100);
+      CHECK(bright(posed, right, SIZE.y / 2) > 300);
+      CHECK(bright(posed, middle - 6, SIZE.y / 2) < 100);
+
+      if (bright(posed, right, SIZE.y / 2) <= 300)
         std::printf("    (posed: middle %d, right %d)\n",
-                    bright(posed, middle, kSize.y / 2),
-                    bright(posed, right, kSize.y / 2));
+                    bright(posed, middle, SIZE.y / 2),
+                    bright(posed, right, SIZE.y / 2));
     }
+
     // The original is still as bound, and its copy goes with it.
     harness.renderer.destroyMesh(base);
     CHECK(!harness.renderer.hasMesh(copy));

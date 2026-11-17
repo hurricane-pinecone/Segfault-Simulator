@@ -1,8 +1,8 @@
 #pragma once
 
 #include "engine/core/rendering/aabb.h"
-#include "glm/glm/ext/vector_float2.hpp"
-#include "glm/glm/ext/vector_float3.hpp"
+
+#include <glm/glm/ext/vector_float2.hpp>
 
 namespace sfs
 {
@@ -27,17 +27,19 @@ public:
     bool planar = false;
   };
 
-  /** Point `camera` straight down at the plane, orthographic (a 2D game's). */
-  static void makePlanar(sfs::Camera& camera);
-  /** Back to a 3D view: looking down at an angle, in perspective. */
-  static void makeAngled(sfs::Camera& camera);
-
   /** Apply one frame of input. `viewportHeight` scales panning to pixels. */
-  void apply(sfs::Camera& camera, const Input& input, float viewportHeight) const;
+  void
+  apply(sfs::Camera& camera, const Input& input, float viewportHeight) const;
 
   /**
    * Frame a box: the camera turns its target to the box's centre and moves in
    * or out until the whole box fits, keeping its angle.
    */
   void focus(sfs::Camera& camera, const sfs::Aabb& bounds) const;
+
+  /** Back to a 3D view: looking down at an angle, in perspective. */
+  static void makeAngled(sfs::Camera& camera);
+
+  /** Point `camera` straight down at the plane, orthographic (a 2D game's). */
+  static void makePlanar(sfs::Camera& camera);
 };

@@ -1,21 +1,28 @@
 #include "build/moduleBuilder.h"
 
-#include "project/project.h"
-
+#include "build/childProcess.h"
 #include "engine/core/logger/logger.h"
+#include "project/project.h"
 
 #include <algorithm>
 #include <chrono>
-#include <fstream>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <memory>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <system_error>
 #include <thread>
+#include <utility>
+#include <vector>
 
 namespace
 {
-constexpr int kJobs = 3; // compiles at once
+constexpr int JOBS = 3; // compiles at once
 // Times a build goes again for sources saved while it ran, before it gives up.
-constexpr int kMaxRebuilds = 3;
+constexpr int MAX_REBUILDS = 3;
 
 // Compiler and CMake errors, worth highlighting among the build output.
 bool looksLikeError(const std::string& line)
@@ -27,7 +34,8 @@ bool looksLikeError(const std::string& line)
 }
 } // namespace
 
-std::filesystem::path ModuleBuilder::buildDirectory(const Project& project) const
+std::filesystem::path
+ModuleBuilder::buildDirectory(const Project& project) const
 {
   // Per platform, so a Linux and a Windows editor can share a project.
   return project.buildFolder() / m_environment.platformName();
@@ -39,12 +47,6 @@ std::filesystem::path ModuleBuilder::modulePath(const Project& project) const
          (project.moduleName() + m_environment.moduleSuffix());
 }
 
-std::filesystem::path ModuleBuilder::uiPreviewPath(const Project& project) const
-{
-  return buildDirectory(project) / "ui-preview" /
-         (project.moduleName() + "UiPreview" + m_environment.moduleSuffix());
-}
-
 bool ModuleBuilder::start(const Project& project, Target target)
 {
   if (busy())
@@ -52,6 +54,7 @@ bool ModuleBuilder::start(const Project& project, Target target)
     LOG_ERROR("A build is already running");
     return false;
   }
+
   if (!m_environment.engineShared())
   {
     LOG_ERROR("This editor's engine is static (built with ENGINE_SHARED=OFF), "
@@ -59,6 +62,7 @@ bool ModuleBuilder::start(const Project& project, Target target)
               "with a shared engine (build/Debug, build-win or the SDK)");
     return false;
   }
+
   if (!project.ensureBuildFiles())
     return false;
 
@@ -67,32 +71,52 @@ bool ModuleBuilder::start(const Project& project, Target target)
   const std::string build = m_environment.toBuildPath(buildDir);
 
   m_steps.clear();
+
   // Configure once; afterwards `cmake --build` re-runs configuration itself
   // when it needs to (new script files, a changed CMakeLists.txt).
   if (!std::filesystem::exists(buildDir / "CMakeCache.txt"))
-    m_steps.push_back({"cmake",
-                       "-S", source,
-                       "-B", build,
-                       "-G", m_environment.generator(),
-                       "-DCMAKE_BUILD_TYPE=" + m_environment.buildType(),
-                       "-DCMAKE_TOOLCHAIN_FILE=" + m_environment.toolchainFile(),
-                       "-DCMAKE_PREFIX_PATH=" + m_environment.enginePrefix(),
-                       "-DSFS_CODEGEN_EXECUTABLE=" + m_environment.codegen()});
+    m_steps.push_back(
+        {"cmake",
+         "-S",
+         source,
+         "-B",
+         build,
+         "-G",
+         m_environment.generator(),
+         "-DCMAKE_BUILD_TYPE=" + m_environment.buildType(),
+         "-DCMAKE_TOOLCHAIN_FILE=" + m_environment.toolchainFile(),
+         "-DCMAKE_PREFIX_PATH=" + m_environment.enginePrefix(),
+         "-DSFS_CODEGEN_EXECUTABLE=" + m_environment.codegen()});
+
   // A few compiles at a time: more can swamp the machine (WSL, especially)
   // for a module this size, and keep the editor from being usable meanwhile.
-  std::vector<std::string> buildStep = {"cmake", "--build", build, "--parallel", std::to_string(kJobs)};
+  std::vector<std::string> buildStep = {
+      "cmake", "--build", build, "--parallel", std::to_string(JOBS)};
+
   if (target == Target::UiPreview)
-    buildStep.insert(buildStep.end(), {"--target", project.moduleName() + "UiPreview"});
-  watch(buildDir, {project.scriptsFolder(), project.root() / "CMakeLists.txt"}, std::move(buildStep));
+    buildStep.insert(
+        buildStep.end(), {"--target", project.moduleName() + "UiPreview"});
+
+  watch(buildDir,
+        {project.scriptsFolder(), project.root() / "CMakeLists.txt"},
+        std::move(buildStep));
 
   m_percent = -1;
   m_target = target;
   m_heldOutput.reset();
+
   if (target == Target::UiPreview)
     m_heldOutput = std::make_shared<std::vector<std::string>>();
   else
     LOG_INFO("Building " + project.moduleName() + "...");
+
   return startNextStep();
+}
+
+std::filesystem::path ModuleBuilder::uiPreviewPath(const Project& project) const
+{
+  return buildDirectory(project) / "ui-preview" /
+         (project.moduleName() + "UiPreview" + m_environment.moduleSuffix());
 }
 
 namespace
@@ -101,8 +125,10 @@ namespace
 std::string quoted(const std::string& path)
 {
   std::string out = "'";
+
   for (const char c : path)
     out += c == '\'' ? std::string("'\\''") : std::string(1, c);
+
   return out + "'";
 }
 
@@ -121,6 +147,242 @@ std::vector<std::string> withEmscripten(const std::string& line)
 }
 } // namespace
 
+void ModuleBuilder::cancel()
+{
+  if (!m_process)
+    return;
+
+  m_steps.clear();
+
+  // On the build machine first (it runs on without its local process), then
+  // the local process.
+  if (const std::vector<std::string> stop = m_environment.stopCommand(m_group);
+      !stop.empty())
+  {
+    ChildProcess stopper;
+
+    if (stopper.start(stop, [](std::string_view) {}))
+      for (int i = 0; i < 300 && stopper.running(); ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+
+  m_process->terminate();
+  m_process.reset();
+  m_cancelled = true;
+  touchChangedNow();
+  LOG_INFO("Build stopped");
+}
+
+std::vector<std::filesystem::path>
+ModuleBuilder::changedSince(const std::filesystem::path& stamp,
+                            const std::vector<std::filesystem::path>& folders)
+{
+  namespace fs = std::filesystem;
+  std::error_code error;
+  const fs::file_time_type since = fs::last_write_time(stamp, error);
+
+  if (error)
+    return {};
+
+  std::vector<fs::path> changed;
+  const auto check = [&](const fs::path& file)
+  {
+    std::error_code timeError;
+    const fs::file_time_type written = fs::last_write_time(file, timeError);
+
+    if (!timeError && written > since)
+      changed.push_back(file);
+  };
+
+  for (const fs::path& folder : folders)
+  {
+    if (!fs::is_directory(folder, error))
+    {
+      if (fs::is_regular_file(folder, error))
+        check(folder);
+
+      continue;
+    }
+
+    for (auto it = fs::recursive_directory_iterator(folder, error);
+         !error && it != fs::recursive_directory_iterator();
+         it.increment(error))
+      if (std::error_code typeError; it->is_regular_file(typeError))
+        check(it->path());
+  }
+
+  std::sort(changed.begin(), changed.end());
+  return changed;
+}
+
+std::optional<bool> ModuleBuilder::poll()
+{
+  if (m_cancelled)
+  {
+    m_cancelled = false;
+    return false;
+  }
+
+  if (!m_process || m_process->running())
+    return std::nullopt;
+
+  const int exitCode = m_process->exitCode();
+  m_process.reset();
+
+  if (exitCode != 0)
+  {
+    m_steps.clear();
+    touchChangedNow();
+
+    if (m_heldOutput)
+    {
+      for (const std::string& line : *m_heldOutput)
+        if (looksLikeError(line))
+          LOG_ERROR(line);
+        else if (!line.empty())
+          LOG_INFO(line);
+    }
+
+    LOG_ERROR(std::string(m_target == Target::UiPreview ? "UI Preview build"
+                          : m_target == Target::Web     ? "Web build"
+                                                        : "Build") +
+              " failed (exit code " + std::to_string(exitCode) + ")");
+    return false;
+  }
+
+  // Built: unless a source was saved meanwhile (see changedSince()).
+  if (m_steps.empty() && !m_failAfterSteps && !m_buildStep.empty())
+    rebuildChanged();
+
+  if (!m_steps.empty())
+    return startNextStep() ? std::nullopt : std::optional<bool>(false);
+
+  m_buildStep.clear();
+
+  if (m_failAfterSteps)
+  {
+    m_failAfterSteps = false;
+    return false;
+  }
+
+  if (m_target != Target::UiPreview)
+    LOG_INFO("Build succeeded");
+
+  return true;
+}
+
+bool ModuleBuilder::rebuildChanged()
+{
+  const std::vector<std::filesystem::path> changed =
+      changedSince(m_stamp, m_sources);
+
+  if (changed.empty())
+    return false;
+
+  std::string names;
+
+  for (std::size_t i = 0; i < changed.size() && i < 3; ++i)
+    names += (i ? ", " : "") + changed[i].filename().string();
+
+  if (changed.size() > 3)
+    names += " and " + std::to_string(changed.size() - 3) + " more";
+
+  // Touched on the build machine: newer than every object, so everything
+  // that includes them compiles again (from what they say now).
+  std::vector<std::string> touch = {"cmake", "-E", "touch"};
+
+  for (const std::filesystem::path& file : changed)
+    touch.push_back(m_environment.toBuildPath(file));
+
+  m_steps.clear();
+  m_steps.push_back(std::move(touch));
+
+  if (m_rebuilds >= MAX_REBUILDS)
+  {
+    // Still touched, so the next build compiles them.
+    m_failAfterSteps = true;
+    LOG_ERROR("Scripts kept changing while the game built (" + names +
+              "): build again once they're saved");
+    return true;
+  }
+
+  ++m_rebuilds;
+  m_steps.push_back(stampStep());
+  m_steps.push_back(m_buildStep);
+  LOG_WARN(names + " changed while the game built: building again, so "
+                   "nothing's left compiled from before");
+  return true;
+}
+
+std::vector<std::string> ModuleBuilder::stampStep() const
+{
+  return {"cmake", "-E", "touch", m_environment.toBuildPath(m_stamp)};
+}
+
+bool ModuleBuilder::startNextStep()
+{
+  // Build output is text: log it line by line, errors highlighted.
+  auto lines = std::make_shared<LineSplitter>(
+      [this, held = m_heldOutput](const std::string& line)
+      {
+        // Where the build runs, so cancel() can stop it.
+        if (line.starts_with(BuildEnvironment::kGroupMarker))
+        {
+          m_group =
+              std::atoi(line.c_str() + BuildEnvironment::kGroupMarker.size());
+          return;
+        }
+
+        // CMake's generators start lines with "[ 42%]" as they go.
+        if (const std::size_t open = line.find('['), close = line.find("%]");
+            open != std::string::npos && close != std::string::npos &&
+            open < close)
+        {
+          int value = 0;
+          bool digits = false;
+
+          for (std::size_t i = open + 1; i < close; ++i)
+            if (line[i] >= '0' && line[i] <= '9')
+            {
+              value = value * 10 + (line[i] - '0');
+              digits = true;
+            }
+            else if (line[i] != ' ')
+            {
+              digits = false;
+              break;
+            }
+
+          if (digits && value <= 100)
+            m_percent = value;
+        }
+
+        if (held)
+          held->push_back(line); // read once the build's over
+        else if (looksLikeError(line))
+          LOG_ERROR(line);
+        else if (!line.empty())
+          LOG_INFO(line);
+      });
+
+  m_group = -1;
+  auto process = std::make_unique<ChildProcess>();
+  const bool started =
+      process->start(m_environment.stoppableCommand(m_steps.front()),
+                     [lines](std::string_view chunk) { lines->feed(chunk); });
+  m_steps.erase(m_steps.begin());
+
+  if (!started)
+  {
+    m_steps.clear();
+    m_process.reset();
+    return false;
+  }
+
+  m_process = std::move(process);
+  return true;
+}
+
 bool ModuleBuilder::startWeb(const Project& project,
                              const std::filesystem::path& output,
                              int width,
@@ -131,6 +393,7 @@ bool ModuleBuilder::startWeb(const Project& project,
     LOG_ERROR("A build is already running");
     return false;
   }
+
   if (m_environment.sourceDir().empty())
   {
     LOG_ERROR("This editor can't export for the web: it was built against an "
@@ -144,7 +407,8 @@ bool ModuleBuilder::startWeb(const Project& project,
   std::error_code error;
   std::filesystem::create_directories(source, error);
   std::ofstream(source / "CMakeLists.txt")
-      << "# Generated by the editor: builds the game for the web (File > Export).\n"
+      << "# Generated by the editor: builds the game for the web (File > "
+         "Export).\n"
          "cmake_minimum_required(VERSION 3.24)\n"
          "project("
       << project.moduleName()
@@ -154,9 +418,11 @@ bool ModuleBuilder::startWeb(const Project& project,
          "set(CMAKE_CXX_EXTENSIONS OFF)\n"
          "add_subdirectory(\""
       << m_environment.sourceDir() << "/engine\" engine)\n"
-      << "sfs_add_web_game(game PROJECT \"" << m_environment.toBuildPath(project.root())
-      << "\"\n    OUTPUT_DIR \"" << m_environment.toBuildPath(output) << "\"\n    WIDTH "
-      << width << " HEIGHT " << height << ")\n";
+      << "sfs_add_web_game(game PROJECT \""
+      << m_environment.toBuildPath(project.root()) << "\"\n    OUTPUT_DIR \""
+      << m_environment.toBuildPath(output) << "\"\n    WIDTH " << width
+      << " HEIGHT " << height << ")\n";
+
   if (error)
   {
     LOG_ERROR("Can't write " + source.string() + ": " + error.message());
@@ -165,14 +431,19 @@ bool ModuleBuilder::startWeb(const Project& project,
 
   const std::string build = quoted(m_environment.toBuildPath(buildDir));
   m_steps.clear();
+
   // Configured once, with the editor's host codegen (as the module is).
   if (!std::filesystem::exists(buildDir / "CMakeCache.txt"))
     m_steps.push_back(withEmscripten(
-        "emcmake cmake -S " + quoted(m_environment.toBuildPath(source)) + " -B " + build +
-        " -DCMAKE_BUILD_TYPE=Release -DSFS_CODEGEN_EXECUTABLE=" + quoted(m_environment.codegen())));
+        "emcmake cmake -S " + quoted(m_environment.toBuildPath(source)) +
+        " -B " + build +
+        " -DCMAKE_BUILD_TYPE=Release -DSFS_CODEGEN_EXECUTABLE=" +
+        quoted(m_environment.codegen())));
+
   watch(buildDir,
         {project.scriptsFolder(), project.root() / "CMakeLists.txt"},
-        withEmscripten("cmake --build " + build + " --parallel " + std::to_string(kJobs)));
+        withEmscripten("cmake --build " + build + " --parallel " +
+                       std::to_string(JOBS)));
 
   m_percent = -1;
   m_target = Target::Web;
@@ -181,38 +452,29 @@ bool ModuleBuilder::startWeb(const Project& project,
   return startNextStep();
 }
 
-std::vector<std::filesystem::path>
-ModuleBuilder::changedSince(const std::filesystem::path& stamp, const std::vector<std::filesystem::path>& folders)
+void ModuleBuilder::touchChangedNow()
 {
-  namespace fs = std::filesystem;
-  std::error_code error;
-  const fs::file_time_type since = fs::last_write_time(stamp, error);
-  if (error)
-    return {};
+  if (m_buildStep.empty())
+    return;
 
-  std::vector<fs::path> changed;
-  const auto check = [&](const fs::path& file)
-  {
-    std::error_code timeError;
-    const fs::file_time_type written = fs::last_write_time(file, timeError);
-    if (!timeError && written > since)
-      changed.push_back(file);
-  };
-  for (const fs::path& folder : folders)
-  {
-    if (!fs::is_directory(folder, error))
-    {
-      if (fs::is_regular_file(folder, error))
-        check(folder);
-      continue;
-    }
-    for (auto it = fs::recursive_directory_iterator(folder, error);
-         !error && it != fs::recursive_directory_iterator(); it.increment(error))
-      if (std::error_code typeError; it->is_regular_file(typeError))
-        check(it->path());
-  }
-  std::sort(changed.begin(), changed.end());
-  return changed;
+  m_buildStep.clear();
+  const std::vector<std::filesystem::path> changed =
+      changedSince(m_stamp, m_sources);
+
+  if (changed.empty())
+    return;
+
+  // The objects that did build are as stale as after a build that succeeded.
+  std::vector<std::string> touch = {"cmake", "-E", "touch"};
+
+  for (const std::filesystem::path& file : changed)
+    touch.push_back(m_environment.toBuildPath(file));
+
+  ChildProcess toucher;
+
+  if (toucher.start(m_environment.command(touch), [](std::string_view) {}))
+    for (int i = 0; i < 1000 && toucher.running(); ++i)
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
 }
 
 void ModuleBuilder::watch(const std::filesystem::path& buildDir,
@@ -230,188 +492,4 @@ void ModuleBuilder::watch(const std::filesystem::path& buildDir,
   m_failAfterSteps = false;
   m_steps.push_back(stampStep());
   m_steps.push_back(m_buildStep);
-}
-
-std::vector<std::string> ModuleBuilder::stampStep() const
-{
-  return {"cmake", "-E", "touch", m_environment.toBuildPath(m_stamp)};
-}
-
-bool ModuleBuilder::rebuildChanged()
-{
-  const std::vector<std::filesystem::path> changed = changedSince(m_stamp, m_sources);
-  if (changed.empty())
-    return false;
-
-  std::string names;
-  for (std::size_t i = 0; i < changed.size() && i < 3; ++i)
-    names += (i ? ", " : "") + changed[i].filename().string();
-  if (changed.size() > 3)
-    names += " and " + std::to_string(changed.size() - 3) + " more";
-
-  // Touched on the build machine: newer than every object, so everything
-  // that includes them compiles again (from what they say now).
-  std::vector<std::string> touch = {"cmake", "-E", "touch"};
-  for (const std::filesystem::path& file : changed)
-    touch.push_back(m_environment.toBuildPath(file));
-
-  m_steps.clear();
-  m_steps.push_back(std::move(touch));
-  if (m_rebuilds >= kMaxRebuilds)
-  {
-    // Still touched, so the next build compiles them.
-    m_failAfterSteps = true;
-    LOG_ERROR("Scripts kept changing while the game built (" + names +
-              "): build again once they're saved");
-    return true;
-  }
-  ++m_rebuilds;
-  m_steps.push_back(stampStep());
-  m_steps.push_back(m_buildStep);
-  LOG_WARN(names + " changed while the game built: building again, so nothing's left compiled from before");
-  return true;
-}
-
-void ModuleBuilder::touchChangedNow()
-{
-  if (m_buildStep.empty())
-    return;
-  m_buildStep.clear();
-  const std::vector<std::filesystem::path> changed = changedSince(m_stamp, m_sources);
-  if (changed.empty())
-    return;
-  // The objects that did build are as stale as after a build that succeeded.
-  std::vector<std::string> touch = {"cmake", "-E", "touch"};
-  for (const std::filesystem::path& file : changed)
-    touch.push_back(m_environment.toBuildPath(file));
-  ChildProcess toucher;
-  if (toucher.start(m_environment.command(touch), [](std::string_view) {}))
-    for (int i = 0; i < 1000 && toucher.running(); ++i)
-      std::this_thread::sleep_for(std::chrono::milliseconds(10));
-}
-
-bool ModuleBuilder::startNextStep()
-{
-  // Build output is text: log it line by line, errors highlighted.
-  auto lines = std::make_shared<LineSplitter>(
-      [this, held = m_heldOutput](const std::string& line)
-      {
-        // Where the build runs, so cancel() can stop it.
-        if (line.starts_with(BuildEnvironment::kGroupMarker))
-        {
-          m_group = std::atoi(line.c_str() + BuildEnvironment::kGroupMarker.size());
-          return;
-        }
-        // CMake's generators start lines with "[ 42%]" as they go.
-        if (const std::size_t open = line.find('['), close = line.find("%]");
-            open != std::string::npos && close != std::string::npos && open < close)
-        {
-          int value = 0;
-          bool digits = false;
-          for (std::size_t i = open + 1; i < close; ++i)
-            if (line[i] >= '0' && line[i] <= '9')
-            {
-              value = value * 10 + (line[i] - '0');
-              digits = true;
-            }
-            else if (line[i] != ' ')
-            {
-              digits = false;
-              break;
-            }
-          if (digits && value <= 100)
-            m_percent = value;
-        }
-        if (held)
-          held->push_back(line); // read once the build's over
-        else if (looksLikeError(line))
-          LOG_ERROR(line);
-        else if (!line.empty())
-          LOG_INFO(line);
-      });
-
-  m_group = -1;
-  auto process = std::make_unique<ChildProcess>();
-  const bool started = process->start(m_environment.stoppableCommand(m_steps.front()),
-                                      [lines](std::string_view chunk) { lines->feed(chunk); });
-  m_steps.erase(m_steps.begin());
-
-  if (!started)
-  {
-    m_steps.clear();
-    m_process.reset();
-    return false;
-  }
-  m_process = std::move(process);
-  return true;
-}
-
-void ModuleBuilder::cancel()
-{
-  if (!m_process)
-    return;
-  m_steps.clear();
-  // On the build machine first (it runs on without its local process), then
-  // the local process.
-  if (const std::vector<std::string> stop = m_environment.stopCommand(m_group); !stop.empty())
-  {
-    ChildProcess stopper;
-    if (stopper.start(stop, [](std::string_view) {}))
-      for (int i = 0; i < 300 && stopper.running(); ++i)
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-  }
-  m_process->terminate();
-  m_process.reset();
-  m_cancelled = true;
-  touchChangedNow();
-  LOG_INFO("Build stopped");
-}
-
-std::optional<bool> ModuleBuilder::poll()
-{
-  if (m_cancelled)
-  {
-    m_cancelled = false;
-    return false;
-  }
-  if (!m_process || m_process->running())
-    return std::nullopt;
-
-  const int exitCode = m_process->exitCode();
-  m_process.reset();
-
-  if (exitCode != 0)
-  {
-    m_steps.clear();
-    touchChangedNow();
-    if (m_heldOutput)
-    {
-      for (const std::string& line : *m_heldOutput)
-        if (looksLikeError(line))
-          LOG_ERROR(line);
-        else if (!line.empty())
-          LOG_INFO(line);
-    }
-    LOG_ERROR(std::string(m_target == Target::UiPreview ? "UI Preview build"
-                          : m_target == Target::Web     ? "Web build"
-                                                        : "Build") +
-              " failed (exit code " +
-              std::to_string(exitCode) + ")");
-    return false;
-  }
-  // Built: unless a source was saved meanwhile (see changedSince()).
-  if (m_steps.empty() && !m_failAfterSteps && !m_buildStep.empty())
-    rebuildChanged();
-  if (!m_steps.empty())
-    return startNextStep() ? std::nullopt : std::optional<bool>(false);
-  m_buildStep.clear();
-  if (m_failAfterSteps)
-  {
-    m_failAfterSteps = false;
-    return false;
-  }
-
-  if (m_target != Target::UiPreview)
-    LOG_INFO("Build succeeded");
-  return true;
 }

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "nlohmann/json.hpp"
+#include <nlohmann/json.hpp>
 
 namespace sfs
 {
@@ -31,18 +31,18 @@ namespace sfs
  */
 struct ContactShadowSettings
 {
-  bool enabled = false;
-  float length = 0.5f;
-  float thickness = 0.3f;
-  float strength = 0.8f;
-
-  nlohmann::json toJson() const;
   /** Missing keys keep `defaults`' values. */
   static ContactShadowSettings fromJson(const nlohmann::json& json,
                                         const ContactShadowSettings& defaults);
   static ContactShadowSettings fromJson(const nlohmann::json& json);
 
   bool operator==(const ContactShadowSettings&) const = default;
+  nlohmann::json toJson() const;
+
+  bool enabled = false;
+  float length = 0.5f;
+  float thickness = 0.3f;
+  float strength = 0.8f;
 };
 
 } // namespace sfs

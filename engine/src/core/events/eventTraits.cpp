@@ -18,6 +18,7 @@ const char* eventKindName(EventKind kind)
   case EventKind::None:
     break;
   }
+
   return "not an event";
 }
 

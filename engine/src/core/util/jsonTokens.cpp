@@ -1,8 +1,13 @@
 #include "engine/core/util/jsonTokens.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
 
 namespace sfs
 {
@@ -10,7 +15,7 @@ namespace sfs
 namespace
 {
 // Deeper nesting than this is refused rather than recursed into.
-constexpr int kMaxDepth = 512;
+constexpr int MAX_DEPTH = 512;
 
 class Scanner
 {
@@ -24,8 +29,10 @@ public:
   {
     skipSpace();
     std::string pointer;
+
     if (!value(pointer, 0))
       return false;
+
     skipSpace();
     return m_at == m_text.size();
   }
@@ -45,8 +52,10 @@ private:
   bool consume(char c)
   {
     skipSpace();
+
     if (m_at >= m_text.size() || m_text[m_at] != c)
       return false;
+
     ++m_at;
     return true;
   }
@@ -54,42 +63,54 @@ private:
   bool value(std::string& pointer, int depth)
   {
     const std::size_t begin = m_at;
+
     if (!anyValue(pointer, depth))
       return false;
+
     if (m_find && pointer == *m_find)
       found = JsonSpan{begin, m_at};
+
     return true;
   }
 
   bool anyValue(std::string& pointer, int depth)
   {
-    if (depth > kMaxDepth || m_at >= m_text.size())
+    if (depth > MAX_DEPTH || m_at >= m_text.size())
       return false;
+
     const char c = m_text[m_at];
+
     if (c == '{')
       return object(pointer, depth);
+
     if (c == '[')
       return array(pointer, depth);
+
     JsonToken token;
     token.pointer = pointer;
     token.begin = m_at;
+
     if (c == '"')
     {
       token.kind = JsonToken::Kind::String;
+
       if (!string(token.text))
         return false;
     }
     else if (c == '-' || (c >= '0' && c <= '9'))
     {
       token.kind = JsonToken::Kind::Number;
+
       if (!number())
         return false;
+
       token.text = m_text.substr(token.begin, m_at - token.begin);
     }
     else
     {
       token.kind = JsonToken::Kind::Literal;
       bool matched = false;
+
       for (const std::string_view word : {"true", "false", "null"})
         if (m_text.substr(m_at, word.size()) == word)
         {
@@ -98,9 +119,11 @@ private:
           matched = true;
           break;
         }
+
       if (!matched)
         return false;
     }
+
     token.end = m_at;
     tokens.push_back(std::move(token));
     return true;
@@ -109,31 +132,42 @@ private:
   bool object(std::string& pointer, int depth)
   {
     ++m_at;
+
     if (consume('}'))
       return true;
+
     const std::size_t base = pointer.size();
+
     do
     {
       skipSpace();
+
       if (m_at >= m_text.size() || m_text[m_at] != '"')
         return false;
+
       JsonToken key;
       key.kind = JsonToken::Kind::Key;
       key.begin = m_at;
+
       if (!string(key.text))
         return false;
+
       key.end = m_at;
       pointer.resize(base);
       pointer += '/';
       pointer += jsonPointerSegment(key.text);
       key.pointer = pointer;
       tokens.push_back(std::move(key));
+
       if (!consume(':'))
         return false;
+
       skipSpace();
+
       if (!value(pointer, depth + 1))
         return false;
     } while (consume(','));
+
     pointer.resize(base);
     return consume('}');
   }
@@ -141,19 +175,24 @@ private:
   bool array(std::string& pointer, int depth)
   {
     ++m_at;
+
     if (consume(']'))
       return true;
+
     const std::size_t base = pointer.size();
     std::size_t index = 0;
+
     do
     {
       pointer.resize(base);
       pointer += '/';
       pointer += std::to_string(index++);
       skipSpace();
+
       if (!value(pointer, depth + 1))
         return false;
     } while (consume(','));
+
     pointer.resize(base);
     return consume(']');
   }
@@ -164,30 +203,40 @@ private:
     const auto digits = [&]
     {
       const std::size_t from = m_at;
+
       while (m_at < m_text.size() && m_text[m_at] >= '0' && m_text[m_at] <= '9')
         ++m_at;
+
       return m_at > from;
     };
+
     if (m_text[m_at] == '-')
       ++m_at;
+
     if (m_at < m_text.size() && m_text[m_at] == '0')
       ++m_at;
     else if (!digits())
       return false;
+
     if (m_at < m_text.size() && m_text[m_at] == '.')
     {
       ++m_at;
+
       if (!digits())
         return false;
     }
+
     if (m_at < m_text.size() && (m_text[m_at] == 'e' || m_text[m_at] == 'E'))
     {
       ++m_at;
+
       if (m_at < m_text.size() && (m_text[m_at] == '+' || m_text[m_at] == '-'))
         ++m_at;
+
       if (!digits())
         return false;
     }
+
     return m_at > start;
   }
 
@@ -196,11 +245,14 @@ private:
   {
     if (m_at + 4 > m_text.size())
       return false;
+
     out = 0;
+
     for (int i = 0; i < 4; ++i)
     {
       const char c = m_text[m_at++];
       out <<= 4;
+
       if (c >= '0' && c <= '9')
         out |= static_cast<uint32_t>(c - '0');
       else if (c >= 'a' && c <= 'f')
@@ -210,6 +262,7 @@ private:
       else
         return false;
     }
+
     return true;
   }
 
@@ -241,20 +294,26 @@ private:
   bool string(std::string& out)
   {
     ++m_at;
+
     while (m_at < m_text.size())
     {
       const char c = m_text[m_at++];
+
       if (c == '"')
         return true;
+
       if (static_cast<unsigned char>(c) < 0x20)
         return false;
+
       if (c != '\\')
       {
         out += c;
         continue;
       }
+
       if (m_at >= m_text.size())
         return false;
+
       switch (m_text[m_at++])
       {
       case '"':
@@ -284,18 +343,23 @@ private:
       case 'u':
       {
         uint32_t code = 0;
+
         if (!hex4(code))
           return false;
+
         // A surrogate pair spells one code point past the first plane.
         if (code >= 0xD800 && code < 0xDC00 && m_at + 1 < m_text.size() &&
             m_text[m_at] == '\\' && m_text[m_at + 1] == 'u')
         {
           m_at += 2;
           uint32_t low = 0;
+
           if (!hex4(low) || low < 0xDC00 || low >= 0xE000)
             return false;
+
           code = 0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00);
         }
+
         appendUtf8(out, code);
         break;
       }
@@ -303,6 +367,7 @@ private:
         return false;
       }
     }
+
     return false;
   }
 
@@ -315,8 +380,10 @@ private:
 std::optional<std::vector<JsonToken>> scanJsonTokens(std::string_view text)
 {
   Scanner scanner(text);
+
   if (!scanner.document())
     return std::nullopt;
+
   return std::move(scanner.tokens);
 }
 
@@ -325,8 +392,10 @@ std::optional<JsonSpan> findJsonValue(std::string_view text,
 {
   Scanner scanner(text);
   scanner.find(pointer);
+
   if (!scanner.document())
     return std::nullopt;
+
   return scanner.found;
 }
 
@@ -334,6 +403,7 @@ std::string jsonPointerSegment(std::string_view segment)
 {
   std::string out;
   out.reserve(segment.size());
+
   for (const char c : segment)
   {
     if (c == '~')
@@ -343,6 +413,7 @@ std::string jsonPointerSegment(std::string_view segment)
     else
       out += c;
   }
+
   return out;
 }
 
@@ -356,14 +427,17 @@ std::optional<std::string> applyTextEdits(std::string_view text,
   std::string out;
   out.reserve(text.size());
   std::size_t at = 0;
+
   for (const TextEdit& edit : edits)
   {
     if (edit.begin < at || edit.end < edit.begin || edit.end > text.size())
       return std::nullopt;
+
     out.append(text.substr(at, edit.begin - at));
     out += edit.text;
     at = edit.end;
   }
+
   out.append(text.substr(at));
   return out;
 }

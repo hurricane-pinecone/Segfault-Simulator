@@ -1,7 +1,9 @@
 #pragma once
 
-#include <sfs/codegen/model.h>
-#include <sfs/lsp/protocol.h>
+#include "sfs/codegen/model.h"
+#include "sfs/lsp/protocol.h"
+
+#include <nlohmann/json.hpp>
 
 #include <chrono>
 #include <cstdint>
@@ -9,6 +11,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 struct TSParser;

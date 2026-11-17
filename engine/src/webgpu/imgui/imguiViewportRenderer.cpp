@@ -1,13 +1,15 @@
-#include "webgpu/imgui/imguiViewportRenderer.h"
-
 #include "engine/core/logger/logger.h"
 #include "engine/webgpu/webGpuContext.h"
 
-#include "imgui.h"
-#include "imgui/backends/imgui_impl_wgpu.h"
-
-#include <SDL.h>
+#include <imgui.h>
+#include <imgui/backends/imgui_impl_wgpu.h>
 #include <sdl2webgpu.h>
+#include <SDL_stdinc.h>
+#include <SDL_video.h>
+#include <webgpu/imgui/imguiViewportRenderer.h>
+
+#include <cstdint>
+#include <webgpu.h>
 
 namespace sfs::imguiViewports
 {
@@ -38,6 +40,7 @@ void configure(ViewportSurface& target, const ImVec2& size)
 {
   target.width = static_cast<int>(size.x);
   target.height = static_cast<int>(size.y);
+
   if (target.width > 0 && target.height > 0)
     g_context->configureSurface(target.surface, target.width, target.height);
 }
@@ -47,6 +50,7 @@ void createWindow(ImGuiViewport* viewport)
   // The SDL2 platform backend stores the window's ID, not the window.
   SDL_Window* window = SDL_GetWindowFromID(static_cast<Uint32>(
       reinterpret_cast<intptr_t>(viewport->PlatformHandle)));
+
   if (!window)
   {
     LOG_ERROR("ImGui viewport: no SDL window for the new platform window");
@@ -65,10 +69,13 @@ void destroyWindow(ImGuiViewport* viewport)
   {
     if (target->frame.texture)
       wgpuTextureRelease(target->frame.texture);
+
     if (target->surface)
       wgpuSurfaceRelease(target->surface);
+
     IM_DELETE(target);
   }
+
   viewport->RendererUserData = nullptr;
 }
 
@@ -81,10 +88,12 @@ void setWindowSize(ImGuiViewport* viewport, ImVec2 size)
 void renderWindow(ImGuiViewport* viewport, void*)
 {
   ViewportSurface* target = surfaceOf(viewport);
+
   if (!target || target->width <= 0 || target->height <= 0)
     return;
 
   wgpuSurfaceGetCurrentTexture(target->surface, &target->frame);
+
   if (target->frame.status !=
           WGPUSurfaceGetCurrentTextureStatus_SuccessOptimal &&
       target->frame.status !=
@@ -93,6 +102,7 @@ void renderWindow(ImGuiViewport* viewport, void*)
     // Lost or outdated (e.g. mid-resize): reconfigure and try next frame.
     if (target->frame.texture)
       wgpuTextureRelease(target->frame.texture);
+
     target->frame = {};
     configure(*target, viewport->Size);
     return;
@@ -132,6 +142,7 @@ void renderWindow(ImGuiViewport* viewport, void*)
 void swapBuffers(ImGuiViewport* viewport, void*)
 {
   ViewportSurface* target = surfaceOf(viewport);
+
   if (!target || !target->frame.texture)
     return;
 

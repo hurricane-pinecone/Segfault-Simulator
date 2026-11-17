@@ -23,8 +23,10 @@ inline constexpr const char* kEntityPayload = "SFS_ENTITY";
 /** Whether the asset can be placed in the scene: a prefab (or a model). */
 bool placeable(const sfs::AssetRecord& record);
 
-/** The asset a drag carries, or null (not an asset drag, or not in `assets`). */
-const sfs::AssetRecord* draggedAsset(const ImGuiPayload* payload, const sfs::AssetDatabase& assets);
+/** The asset a drag carries, or null (not an asset drag, or not in `assets`).
+ */
+const sfs::AssetRecord* draggedAsset(const ImGuiPayload* payload,
+                                     const sfs::AssetDatabase& assets);
 
 /** Whether the asset can go in a material slot: a material, or a texture. */
 bool fitsMaterialSlot(const sfs::AssetRecord& record);
@@ -34,9 +36,14 @@ bool fitsMaterialSlot(const sfs::AssetRecord& record);
  * itself, or for a texture a plain material with that texture (reusing one in
  * materials/ that is just that, else making one). Empty if it's neither.
  */
-std::string materialFor(sfs::AssetDatabase& assets, const sfs::AssetRecord& record);
+std::string materialFor(sfs::AssetDatabase& assets,
+                        const sfs::AssetRecord& record);
 
-/** Put a material in one slot of an entity's Mesh Renderer, as one undoable edit. */
-void setSlot(const sfs::Entity& entity, std::size_t slot, const std::string& material, EditorHistory* history);
+/** Put a material in one slot of an entity's Mesh Renderer, as one undoable
+ * edit. */
+void setSlot(const sfs::Entity& entity,
+             std::size_t slot,
+             const std::string& material,
+             EditorHistory* history);
 
 } // namespace assetDrop

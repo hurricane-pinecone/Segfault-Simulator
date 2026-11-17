@@ -1,15 +1,18 @@
 #include "../../testHarness.h"
+#include "engine/core/components/boxCollider3DComponent.h"
+#include "engine/core/components/cameraCollisionComponent.h"
+#include "engine/core/components/cameraComponent.h"
+#include "engine/core/components/cameraFollowComponent.h"
+#include "engine/core/components/rigidBody3DComponent.h"
+#include "engine/core/components/transformComponent.h"
+#include "engine/core/ecs/ecs.h"
+#include "engine/core/hierarchy/hierarchy.h"
+#include "engine/core/rendering/camera.h"
+#include "engine/runtime/systems/cameraSystem.h"
 
-#include <engine/core/components/boxCollider3DComponent.h>
-#include <engine/core/components/cameraCollisionComponent.h>
-#include <engine/core/components/cameraComponent.h>
-#include <engine/core/components/cameraFollowComponent.h>
-#include <engine/core/components/rigidBody3DComponent.h>
-#include <engine/core/components/transformComponent.h>
-#include <engine/core/ecs/ecs.h>
-#include <engine/core/hierarchy/hierarchy.h>
-#include <engine/core/rendering/camera.h>
-#include <engine/runtime/systems/cameraSystem.h>
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/geometric.hpp>
+#include <glm/glm/trigonometric.hpp>
 
 #include <cmath>
 
@@ -17,23 +20,6 @@ using namespace sfs;
 
 namespace
 {
-// The smoothing lerp the system applies in one step toward a desired point.
-float smoothed(float from, float to, float smoothing, float dt)
-{
-  const float t = 1.0f - std::exp(-smoothing * dt);
-  return from + (to - from) * t;
-}
-
-Entity addCamera(Registry& reg,
-                 glm::vec2 position,
-                 const CameraFollowComponent& follow)
-{
-  Entity e = reg.createEntity();
-  e.addComponent<TransformComponent>(TransformComponent{position});
-  e.addComponent<CameraComponent>();
-  e.addComponent<CameraFollowComponent>(follow);
-  return e;
-}
 // A camera 20 m from its pivot at the origin, 0.3 rad above level, with
 // camera collision, and blockers to put between them.
 struct Orbit
@@ -94,6 +80,24 @@ struct Orbit
   // The height of the eye's line to the pivot, `out` metres back.
   float lineAt(float out) const { return out * std::tan(pitch()); }
 };
+
+// The smoothing lerp the system applies in one step toward a desired point.
+float smoothed(float from, float to, float smoothing, float dt)
+{
+  const float t = 1.0f - std::exp(-smoothing * dt);
+  return from + (to - from) * t;
+}
+
+Entity addCamera(Registry& reg,
+                 glm::vec2 position,
+                 const CameraFollowComponent& follow)
+{
+  Entity e = reg.createEntity();
+  e.addComponent<TransformComponent>(TransformComponent{position});
+  e.addComponent<CameraComponent>();
+  e.addComponent<CameraFollowComponent>(follow);
+  return e;
+}
 } // namespace
 
 int main()
@@ -398,8 +402,10 @@ int main()
     // Eased by 1 - e^(-easeBack * dt) of the way.
     CHECK(testing::approx(
         easing - 0.3f, (lifted - 0.3f) * std::exp(-3.0f * 0.1f), 1e-3f));
+
     for (int i = 0; i < 100; ++i)
       orbit.sys.lateUpdate(0.1);
+
     CHECK(testing::approx(orbit.pitch(), 0.3f, 1e-3f));
   }
 
@@ -409,6 +415,7 @@ int main()
     orbit.box(10.0f, 8.0f);
     orbit.sys.lateUpdate(0.016);
     const float lifted = orbit.pitch();
+
     // The controller puts it back at its own pose each frame.
     for (int i = 0; i < 3; ++i)
     {

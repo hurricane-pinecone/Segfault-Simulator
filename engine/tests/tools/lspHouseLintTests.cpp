@@ -1,13 +1,23 @@
 #include "../testHarness.h"
+#include "document.h"
 #include "houseLints.h"
 #include "lintConfig.h"
 #include "lspTestSupport.h"
+#include "sfs/codegen/model.h"
+#include "sfs/codegen/rules.h"
 
 #include <array>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
+#include <ios>
+#include <memory>
 #include <sstream>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
 
 using namespace sfs::lsp;
 using sfs::codegen::RuleId;
@@ -29,6 +39,11 @@ struct Tree
 
   ~Tree() { std::filesystem::remove_all(root); }
 };
+
+constexpr std::string_view NESTED = "int pick(int a, int b)\n"
+                                    "{\n"
+                                    "  return a ? (b ? 1 : 2) : 3;\n"
+                                    "}\n";
 
 // The tree the lint tests share, with the house rules on.
 const Tree& houseTree()
@@ -60,6 +75,7 @@ bool sameText(const std::string& actual, const std::string& expected)
     std::printf("      got:\n%s\n      wanted:\n%s\n",
                 actual.c_str(),
                 expected.c_str());
+
   return actual == expected;
 }
 
@@ -86,15 +102,12 @@ std::string docsBlock(const std::filesystem::path& page, std::string_view name)
   const std::string end = "<!-- " + std::string(name) + ":end -->";
   const std::size_t from = text.find(begin);
   const std::size_t to = text.find(end);
+
   if (from == std::string::npos || to == std::string::npos || to < from)
     return {};
+
   return text.substr(from + begin.size(), to - from - begin.size());
 }
-
-constexpr std::string_view NESTED = "int pick(int a, int b)\n"
-                                    "{\n"
-                                    "  return a ? (b ? 1 : 2) : 3;\n"
-                                    "}\n";
 
 } // namespace
 
@@ -142,6 +155,7 @@ int main()
     CHECK(
         !config.disabled.test(static_cast<std::size_t>(RuleId::DuplicateType)));
     CHECK(warnings.size() == 5u);
+
     if (warnings.size() == 5u)
     {
       CHECK(warnings[0] == "/t/.sfs-lint:1: unknown key 'colour'");
@@ -259,11 +273,13 @@ int main()
                            "template <typename T>\nconstexpr T kPi = T(3);\n");
     CHECK(lspTest::count(*doc, RuleId::ConstexprName) == 5u);
     std::vector<std::string> flagged;
+
     for (const sfs::codegen::Diagnostic& d : doc->diagnostics)
       if (d.rule == RuleId::ConstexprName)
         flagged.push_back(doc->text.substr(
             countLines(doc->text)[d.range.startRow] + d.range.startColumn,
             d.range.endColumn - d.range.startColumn));
+
     CHECK(flagged == std::vector<std::string>{
                          "kMax", "maxSpeed", "kSize", "kLocal", "kPi"});
     const sfs::codegen::Diagnostic* first =
@@ -322,6 +338,33 @@ int main()
                    "void f()\n{\n  constexpr int SIZE = 2;\n"
                    "  Buffer buffer(SIZE);\n"
                    "  std::array<int, SIZE> items;\n}\n"));
+
+    // A constant declared once in each `#if` branch is renamed in every
+    // branch, with its uses, from either declaration's fix.
+    const char* const branches = "#ifdef WEB\nconstexpr int kMode = 1;\n#else\n"
+                                 "constexpr int kMode = 2;\n#endif\n"
+                                 "int f() { return kMode; }\n";
+    const char* const renamed = "#ifdef WEB\nconstexpr int MODE = 1;\n#else\n"
+                                "constexpr int MODE = 2;\n#endif\n"
+                                "int f() { return MODE; }\n";
+    const auto branchTwins = house(branches);
+    CHECK(lspTest::count(*branchTwins, RuleId::ConstexprName) == 2u);
+
+    for (const sfs::codegen::Diagnostic& d : branchTwins->diagnostics)
+      if (d.rule == RuleId::ConstexprName)
+        CHECK(sameText(lspTest::applyEdits(branchTwins->text, d.fix), renamed));
+
+    // The same in a block, where the first branch comes before the second's
+    // declaration.
+    const auto blockTwins = house("void f()\n{\n#if WEB\n"
+                                  "  constexpr int kStep = 1;\n#else\n"
+                                  "  constexpr int kStep = 2;\n#endif\n"
+                                  "  run(kStep);\n}\n");
+    CHECK(sameText(fixed(*blockTwins, RuleId::ConstexprName),
+                   "void f()\n{\n#if WEB\n"
+                   "  constexpr int STEP = 1;\n#else\n"
+                   "  constexpr int STEP = 2;\n#endif\n"
+                   "  run(STEP);\n}\n"));
   }
 
   TEST("constexpr-name should leave the fix out where renaming isn't safe")
@@ -337,8 +380,10 @@ int main()
     const auto twins =
         house("constexpr int kMax = 3;\nconstexpr int max = 4;\n");
     CHECK(lspTest::count(*twins, RuleId::ConstexprName) == 2u);
+
     for (const sfs::codegen::Diagnostic& d : twins->diagnostics)
       CHECK(d.fix.empty());
+
     // A name in a comment doesn't count as taken.
     const auto comment =
         house("// MAX is what kMax becomes.\nconstexpr int kMax = 3;\n");
@@ -354,6 +399,13 @@ int main()
           headerDiagnostic->message ==
               "A `constexpr` is named in UPPER_SNAKE_CASE: `kMax` would be "
               "`MAX`. Rename it with clangd, which finds every use.");
+    // A header's constant in `#if` branches is still the header's.
+    const auto headerBranches =
+        house("#pragma once\n#if WEB\ninline constexpr bool kWeb = true;\n"
+              "#else\ninline constexpr bool kWeb = false;\n#endif\n",
+              "Flags.h");
+    CHECK(lspTest::count(*headerBranches, RuleId::ConstexprName) == 2u);
+    CHECK(!hasFix(*headerBranches, RuleId::ConstexprName));
     // A block's constant in a header has its fix.
     const auto inline_ = house("#pragma once\ninline int f()\n{\n"
                                "  constexpr int kTwo = 2;\n  return kTwo;\n}\n",
@@ -361,6 +413,7 @@ int main()
     CHECK(sameText(fixed(*inline_, RuleId::ConstexprName),
                    "#pragma once\ninline int f()\n{\n"
                    "  constexpr int TWO = 2;\n  return TWO;\n}\n"));
+
     // A class's constant, an extern one, and uses that can't be renamed: one
     // its own namespace qualifies, a member of that name, a macro, a use
     // above, another declaration.
@@ -562,6 +615,7 @@ int main()
       CHECK(lspTest::count(*doc, RuleId::ElseAfterReturn) == 1u);
       CHECK(!hasFix(*doc, RuleId::ElseAfterReturn));
     }
+
     // An init-statement the else doesn't use is fine.
     const auto unused = house("void f()\n{\n  if (int v = get(); v > 1)\n"
                               "    return;\n  else\n    g();\n}\n");
@@ -575,6 +629,7 @@ int main()
     const std::array<RuleId, 3> house = {
         RuleId::ConstexprName, RuleId::NestedTernary, RuleId::ElseAfterReturn};
     std::size_t at = static_cast<std::size_t>(RuleId::BadIgnore);
+
     for (const RuleId id : house)
     {
       const RuleInfo& rule = sfs::codegen::rules()[++at];
@@ -589,6 +644,7 @@ int main()
       CHECK(sfs::codegen::houseRuleDocsTable().find(named) !=
             std::string::npos);
     }
+
     CHECK(at + 1 == static_cast<std::size_t>(RuleId::Count));
     CHECK(sfs::codegen::ruleInfo(RuleId::ConstexprName).name ==
           "constexpr-name");
@@ -596,6 +652,7 @@ int main()
           "nested-ternary");
     CHECK(sfs::codegen::ruleInfo(RuleId::ElseAfterReturn).name ==
           "else-after-return");
+
     for (const RuleInfo& rule : sfs::codegen::rules())
       if (rule.id < RuleId::ConstexprName)
         CHECK(!rule.house);
@@ -604,6 +661,7 @@ int main()
         std::filesystem::path(SFS_DOCS_DIR) / "editor/sfs-lsp/index.md",
         "sfs-house-rules");
     CHECK(block == sfs::codegen::houseRuleDocsTable());
+
     if (block != sfs::codegen::houseRuleDocsTable())
       std::fprintf(stderr,
                    "docs/editor/sfs-lsp/index.md should hold:\n%s",
@@ -638,6 +696,7 @@ int main()
                        "  return 2;\n}\n"));
     // Messages are plain sentences.
     const auto doc = lspTest::analysed(readText(source), source);
+
     for (const sfs::codegen::Diagnostic& d : doc->diagnostics)
       CHECK(!d.message.empty() && d.message.back() == '.');
 

@@ -1,8 +1,10 @@
 #pragma once
 
 #include "engine/core/events/eventTraits.h"
+#include "engine/core/util/typeList.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <type_traits>
 
 // The compile-time rules every call that sends or receives an event type
@@ -195,6 +197,7 @@ template <typename TRequest, ResponseRole kRole, typename TType>
 consteval bool checkRoleSent()
 {
   using Declared = RoleType<TRequest, kRole>;
+
   if constexpr (kRole == ResponseRole::Progress && std::is_void_v<Declared>)
     static_cast<void>(sizeof(RequestHasNoProgress<TRequest>));
   else if constexpr (kRole == ResponseRole::Failure && std::is_void_v<Declared>)
@@ -208,6 +211,7 @@ consteval bool checkRoleSent()
     else
       static_cast<void>(sizeof(NotTheFailureResponse<TRequest, TType>));
   }
+
   return true;
 }
 
@@ -232,6 +236,7 @@ consteval bool checkResponseType()
   else
     static_assert(std::is_class_v<TResponse> && !std::is_final_v<TResponse>,
                   "A response type is a struct, not final");
+
   return true;
 }
 
@@ -304,6 +309,7 @@ consteval bool checkEvent()
   {
     if constexpr (kRequest<T>)
       checkRoles<T>();
+
     return checkAncestors<T>(
         static_cast<typename EventTraits<T>::Ancestors*>(nullptr));
   }
@@ -315,6 +321,7 @@ consteval bool checkNotResponse()
 {
   if constexpr (kResponse<T>)
     static_cast<void>(sizeof(IsAResponse<T>));
+
   return true;
 }
 

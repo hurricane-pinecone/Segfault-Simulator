@@ -1,7 +1,7 @@
 #pragma once
 
-#include "glm/glm/ext/vector_float3.hpp"
-#include "nlohmann/json.hpp"
+#include <glm/glm/ext/vector_float3.hpp>
+#include <nlohmann/json.hpp>
 
 namespace sfs
 {
@@ -31,6 +31,14 @@ namespace sfs
  */
 struct FogSettings
 {
+  /** Missing keys keep `defaults`' values. */
+  static FogSettings fromJson(const nlohmann::json& json,
+                              const FogSettings& defaults);
+  static FogSettings fromJson(const nlohmann::json& json);
+
+  bool operator==(const FogSettings&) const = default;
+  nlohmann::json toJson() const;
+
   bool enabled = false;
   float density = 0.02f;
   float heightFalloff = 0.2f;
@@ -38,14 +46,6 @@ struct FogSettings
   float startDistance = 0.0f;
   float maxOpacity = 1.0f;
   float sunGlow = 0.5f;
-
-  nlohmann::json toJson() const;
-  /** Missing keys keep `defaults`' values. */
-  static FogSettings fromJson(const nlohmann::json& json,
-                              const FogSettings& defaults);
-  static FogSettings fromJson(const nlohmann::json& json);
-
-  bool operator==(const FogSettings&) const = default;
 };
 
 /** How forward fog scatters the sun's light (Henyey-Greenstein's g). */

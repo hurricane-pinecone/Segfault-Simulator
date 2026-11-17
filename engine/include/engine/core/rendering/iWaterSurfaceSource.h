@@ -1,6 +1,7 @@
 #pragma once
 
-#include "glm/glm/ext/vector_int2.hpp"
+#include <glm/glm/ext/vector_int2.hpp>
+
 #include <vector>
 
 namespace sfs

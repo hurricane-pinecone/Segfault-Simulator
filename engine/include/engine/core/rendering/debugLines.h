@@ -1,8 +1,8 @@
 #pragma once
 
-#include "glm/glm/ext/matrix_float4x4.hpp"
-#include "glm/glm/ext/vector_float3.hpp"
-#include "glm/glm/ext/vector_float4.hpp"
+#include <glm/glm/ext/matrix_float4x4.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
+#include <glm/glm/ext/vector_float4.hpp>
 
 #include <cstddef>
 #include <cstdint>
@@ -34,20 +34,22 @@ struct DebugLineVertex
 class DebugLines
 {
 public:
-  /** A colour (0..1, as seen, and alpha) packed for a vertex. */
-  static uint32_t pack(const glm::vec4& color);
-
-  void line(const glm::vec3& from, const glm::vec3& to, uint32_t color);
-  void line(const glm::vec3& from, const glm::vec3& to, const glm::vec4& color)
-  {
-    line(from, to, pack(color));
-  }
-
   /** A box's 12 edges: its centre and half its size, along placed's axes. */
   void box(const glm::mat4& placed,
            const glm::vec3& centre,
            const glm::vec3& half,
            uint32_t color);
+
+  /**
+   * A capsule along placed's z: its two end circles, four lines joining
+   * them and the rounded ends; `halfLength` from its centre to each end
+   * circle's (the straight part's half).
+   */
+  void capsule(const glm::mat4& placed,
+               const glm::vec3& centre,
+               float radius,
+               float halfLength,
+               uint32_t color);
 
   /**
    * A circle in the plane of unit axes u and v, or the arc of it from
@@ -62,30 +64,30 @@ public:
               float start = 0.0f,
               float end = 1.0f);
 
+  /** Drop every line (keeping the room for the next frame's). */
+  void clear() { m_vertices.clear(); }
+
+  bool empty() const { return m_vertices.empty(); }
+
+  void line(const glm::vec3& from, const glm::vec3& to, uint32_t color);
+  void line(const glm::vec3& from, const glm::vec3& to, const glm::vec4& color)
+  {
+    line(from, to, pack(color));
+  }
+
+  std::size_t lineCount() const { return m_vertices.size() / 2; }
+
+  /** A colour (0..1, as seen, and alpha) packed for a vertex. */
+  static uint32_t pack(const glm::vec4& color);
+
   /** A sphere as three circles, one around each axis. */
   void sphere(const glm::mat4& placed,
               const glm::vec3& centre,
               float radius,
               uint32_t color);
 
-  /**
-   * A capsule along placed's z: its two end circles, four lines joining
-   * them and the rounded ends; `halfLength` from its centre to each end
-   * circle's (the straight part's half).
-   */
-  void capsule(const glm::mat4& placed,
-               const glm::vec3& centre,
-               float radius,
-               float halfLength,
-               uint32_t color);
-
   /** Every line's two ends, in order. */
   std::span<const DebugLineVertex> vertices() const { return m_vertices; }
-  std::size_t lineCount() const { return m_vertices.size() / 2; }
-  bool empty() const { return m_vertices.empty(); }
-
-  /** Drop every line (keeping the room for the next frame's). */
-  void clear() { m_vertices.clear(); }
 
   // Segments a whole circle is drawn with.
   static constexpr int kCircleSegments = 24;

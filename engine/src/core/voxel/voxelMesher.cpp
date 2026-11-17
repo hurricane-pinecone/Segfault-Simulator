@@ -1,10 +1,20 @@
 #include "engine/core/voxel/voxelMesher.h"
 
+#include "engine/core/rendering/vertices.h"
+#include "engine/core/voxel/blockType.h"
 #include "engine/core/voxel/voxelChunk.h"
-#include "glm/glm/common.hpp"
+#include "engine/core/voxel/voxelView.h"
+
+#include <glm/glm/common.hpp>
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
+#include <glm/glm/ext/vector_float4.hpp>
+#include <glm/glm/ext/vector_int3.hpp>
 
 #include <string>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 
 namespace sfs
 {
@@ -14,7 +24,7 @@ namespace
 
 // Elevation's weight in the painter sort-key, matching BlockGeometry and the
 // billboard tile sort so voxels interleave with sprites the same way.
-constexpr float kElevationSortWeight = 0.5f;
+constexpr float ELEVATION_SORT_WEIGHT = 0.5f;
 
 // Fractional coordinate within a block's sprite. The cube sprite (block.png)
 // packs a 2:1 top diamond over the +y (screen-left) and +x (screen-right) side
@@ -25,20 +35,20 @@ struct UvF
   float y;
 };
 
-constexpr UvF kDiamondTop{0.5f, 0.0f};
-constexpr UvF kDiamondRight{1.0f, 0.25f};
-constexpr UvF kDiamondBottom{0.5f, 0.5f};
-constexpr UvF kDiamondLeft{0.0f, 0.25f};
+constexpr UvF DIAMOND_TOP{0.5f, 0.0f};
+constexpr UvF DIAMOND_RIGHT{1.0f, 0.25f};
+constexpr UvF DIAMOND_BOTTOM{0.5f, 0.5f};
+constexpr UvF DIAMOND_LEFT{0.0f, 0.25f};
 
-constexpr UvF kLeftTopOuter{0.0f, 0.25f};
-constexpr UvF kLeftTopInner{0.5f, 0.5f};
-constexpr UvF kLeftBotInner{0.5f, 1.0f};
-constexpr UvF kLeftBotOuter{0.0f, 0.75f};
+constexpr UvF LEFT_TOP_OUTER{0.0f, 0.25f};
+constexpr UvF LEFT_TOP_INNER{0.5f, 0.5f};
+constexpr UvF LEFT_BOT_INNER{0.5f, 1.0f};
+constexpr UvF LEFT_BOT_OUTER{0.0f, 0.75f};
 
-constexpr UvF kRightTopInner{0.5f, 0.5f};
-constexpr UvF kRightTopOuter{1.0f, 0.25f};
-constexpr UvF kRightBotOuter{1.0f, 0.75f};
-constexpr UvF kRightBotInner{0.5f, 1.0f};
+constexpr UvF RIGHT_TOP_INNER{0.5f, 0.5f};
+constexpr UvF RIGHT_TOP_OUTER{1.0f, 0.25f};
+constexpr UvF RIGHT_BOT_OUTER{1.0f, 0.75f};
+constexpr UvF RIGHT_BOT_INNER{0.5f, 1.0f};
 
 // The diamond + the two side faces, in the order pushQuad expects.
 struct FaceUv
@@ -49,16 +59,16 @@ struct FaceUv
 };
 
 // Full cube: the whole cube sprite (block.png layout).
-constexpr FaceUv kCubeUv{
-    {kDiamondTop, kDiamondRight, kDiamondBottom, kDiamondLeft},
-    {kLeftTopOuter, kLeftTopInner, kLeftBotInner, kLeftBotOuter},
-    {kRightTopInner, kRightTopOuter, kRightBotOuter, kRightBotInner}};
+constexpr FaceUv CUBE_UV{
+    {DIAMOND_TOP, DIAMOND_RIGHT, DIAMOND_BOTTOM, DIAMOND_LEFT},
+    {LEFT_TOP_OUTER, LEFT_TOP_INNER, LEFT_BOT_INNER, LEFT_BOT_OUTER},
+    {RIGHT_TOP_INNER, RIGHT_TOP_OUTER, RIGHT_BOT_OUTER, RIGHT_BOT_INNER}};
 
 // Slab (half block): same diamond, but each side is the TOP HALF of the cube's
 // two-level side (a one-level-tall side). A slab is the cube minus its lower
 // level, so it reuses the cube sprite -- no separate half-block art needed.
-constexpr FaceUv kSlabUv{
-    {kDiamondTop, kDiamondRight, kDiamondBottom, kDiamondLeft},
+constexpr FaceUv SLAB_UV{
+    {DIAMOND_TOP, DIAMOND_RIGHT, DIAMOND_BOTTOM, DIAMOND_LEFT},
     {{0.0f, 0.25f}, {0.5f, 0.5f}, {0.5f, 0.75f}, {0.0f, 0.5f}},
     {{0.5f, 0.5f}, {1.0f, 0.25f}, {1.0f, 0.5f}, {0.5f, 0.75f}}};
 
@@ -75,6 +85,7 @@ void pushQuad(std::vector<GeometryVertex>& out,
               const glm::vec3& normal)
 {
   GeometryVertex v[4];
+
   for (int i = 0; i < 4; i++)
   {
     v[i].position = {0.0f, 0.0f}; // filled by the render module at emit
@@ -82,8 +93,9 @@ void pushQuad(std::vector<GeometryVertex>& out,
     v[i].ground = ground[i];
     v[i].uv = uv[i];
     v[i].normal = normal;
-    v[i].z = world[i].x + world[i].y + ground[i] * kElevationSortWeight;
+    v[i].z = world[i].x + world[i].y + ground[i] * ELEVATION_SORT_WEIGHT;
   }
+
   out.push_back(v[0]);
   out.push_back(v[1]);
   out.push_back(v[2]);
@@ -118,11 +130,15 @@ std::vector<VoxelMeshSlice> meshChunk(glm::ivec3 chunkCoord,
   const auto coverTop = [&](int x, int y, int z) -> float
   {
     const BlockId n = view.blockAt(x, y, z);
+
     if (n == kAirBlock)
       return static_cast<float>(z * kLevelsPerBlock);
+
     const BlockType& nt = registry.type(n);
+
     if (!nt.opaque)
       return static_cast<float>(z * kLevelsPerBlock);
+
     return nt.shape == BlockShape::Slab
                ? static_cast<float>(z * kLevelsPerBlock + 1)
                : static_cast<float>((z + 1) * kLevelsPerBlock);
@@ -141,6 +157,7 @@ std::vector<VoxelMeshSlice> meshChunk(glm::ivec3 chunkCoord,
         const int wz = base.z + lz;
 
         const BlockId id = view.blockAt(wx, wy, wz);
+
         if (id == kAirBlock)
           continue;
 
@@ -163,6 +180,7 @@ std::vector<VoxelMeshSlice> meshChunk(glm::ivec3 chunkCoord,
             slice->textureId = bt.textureId;
             slice->effect = bt.effect;
           }
+
           return *slice;
         };
 
@@ -174,7 +192,7 @@ std::vector<VoxelMeshSlice> meshChunk(glm::ivec3 chunkCoord,
         const float topElev =
             slab ? botElev + 1.0f
                  : static_cast<float>((wz + 1) * kLevelsPerBlock);
-        const FaceUv& uvs = slab ? kSlabUv : kCubeUv;
+        const FaceUv& uvs = slab ? SLAB_UV : CUBE_UV;
 
         // +z (top diamond). A slab's top is always exposed -- the upper level
         // of its own cell is air -- so it doesn't test the cell above; a cube's
@@ -206,6 +224,7 @@ std::vector<VoxelMeshSlice> meshChunk(glm::ivec3 chunkCoord,
         {
           const float cover = coverTop(nx, ny, wz);
           const float faceBot = glm::max(botElev, cover);
+
           if (topElev - faceBot <= 1.0e-4f)
             return;
 
@@ -238,8 +257,10 @@ std::vector<VoxelMeshSlice> meshChunk(glm::ivec3 chunkCoord,
 
   std::vector<VoxelMeshSlice> out;
   out.reserve(buckets.size());
+
   for (auto& [key, slice] : buckets)
     out.push_back(std::move(slice));
+
   return out;
 }
 

@@ -6,9 +6,11 @@
 #include "engine/runtime/scripting/gameModule.h"
 #include "engine/runtime/scripting/scriptRegistry.h"
 
+#include <SDL_error.h>
 #include <SDL_loadso.h>
 #include <SDL_timer.h>
 
+#include <filesystem>
 #include <string>
 #include <system_error>
 
@@ -31,6 +33,7 @@ bool ModuleHost::load(const std::filesystem::path& module,
 
   std::error_code error;
   std::filesystem::path copy;
+
   if (mode == Load::FromCopy)
   {
     std::filesystem::create_directories(copyFolder(), error);
@@ -41,20 +44,25 @@ bool ModuleHost::load(const std::filesystem::path& module,
             module.extension().string());
     std::filesystem::copy_file(
         module, copy, std::filesystem::copy_options::overwrite_existing, error);
+
     if (error)
     {
       LOG_ERROR("Can't copy " + module.string() + ": " + error.message());
       return false;
     }
   }
+
   const std::filesystem::path& loadPath = copy.empty() ? module : copy;
 
   void* handle = SDL_LoadObject(loadPath.string().c_str());
+
   if (!handle)
   {
     LOG_ERROR(std::string("Can't load the game module: ") + SDL_GetError());
+
     if (!copy.empty())
       std::filesystem::remove(copy, error);
+
     return false;
   }
 
@@ -63,6 +71,7 @@ bool ModuleHost::load(const std::filesystem::path& module,
   const auto abi = reinterpret_cast<sfs::ModuleAbiEntryPoint>(
       SDL_LoadFunction(handle, sfs::kModuleAbiEntryPoint));
   const std::string moduleAbi = abi && abi() ? abi() : "";
+
   if (moduleAbi != sfs::kEngineAbi)
   {
     LOG_ERROR("The game module " + module.filename().string() +
@@ -71,20 +80,25 @@ bool ModuleHost::load(const std::filesystem::path& module,
               "; this is " + sfs::kEngineAbi +
               "): rebuild it against this engine");
     SDL_UnloadObject(handle);
+
     if (!copy.empty())
       std::filesystem::remove(copy, error);
+
     return false;
   }
 
   const auto entry = reinterpret_cast<sfs::ModuleEntryPoint>(
       SDL_LoadFunction(handle, sfs::kModuleEntryPoint));
+
   if (!entry)
   {
     LOG_ERROR("The game module has no entry point (" +
               std::string(sfs::kModuleEntryPoint) + ")");
     SDL_UnloadObject(handle);
+
     if (!copy.empty())
       std::filesystem::remove(copy, error);
+
     return false;
   }
 
@@ -93,8 +107,10 @@ bool ModuleHost::load(const std::filesystem::path& module,
   m_handle = handle;
   m_moduleName = moduleName;
   m_copy = copy;
+
   if (!m_quiet)
     LOG_INFO("Loaded game module " + moduleName);
+
   return true;
 }
 

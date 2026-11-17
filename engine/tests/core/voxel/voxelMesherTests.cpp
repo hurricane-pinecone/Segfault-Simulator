@@ -1,11 +1,17 @@
 #include "../../testHarness.h"
+#include "engine/core/components/surfaceEffect.h"
+#include "engine/core/voxel/blockType.h"
+#include "engine/core/voxel/voxelMesher.h"
+#include "engine/core/voxel/voxelView.h"
 
-#include <engine/core/voxel/voxelMesher.h>
+#include <glm/glm/common.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
 
-#include "glm/glm/common.hpp"
+#include <cstddef>
 #include <map>
 #include <string>
 #include <tuple>
+#include <vector>
 
 using namespace sfs;
 
@@ -52,12 +58,16 @@ struct TestRegistry : IBlockRegistry
                           true,
                           true,
                           SurfaceEffect::Type::None};
+
     if (id == 1)
       return a;
+
     if (id == 2)
       return b;
+
     if (id == 3)
       return slab;
+
     return air;
   }
 };
@@ -65,8 +75,10 @@ struct TestRegistry : IBlockRegistry
 std::size_t totalVerts(const std::vector<VoxelMeshSlice>& slices)
 {
   std::size_t n = 0;
+
   for (const auto& s : slices)
     n += s.vertices.size();
+
   return n;
 }
 
@@ -74,10 +86,12 @@ std::size_t totalVerts(const std::vector<VoxelMeshSlice>& slices)
 int faceCount(const std::vector<VoxelMeshSlice>& slices, glm::vec3 normal)
 {
   int verts = 0;
+
   for (const auto& s : slices)
     for (const auto& v : s.vertices)
       if (v.normal == normal)
         ++verts;
+
   return verts / 6;
 }
 } // namespace
@@ -147,11 +161,13 @@ int main()
     float topGround = -1.0f;
     float sideMin = 999.0f;
     float sideMax = -1.0f;
+
     for (const auto& s : slices)
       for (const auto& v : s.vertices)
       {
         if (v.normal == glm::vec3{0.0f, 0.0f, 1.0f})
           topGround = v.ground;
+
         if (v.normal == glm::vec3{1.0f, 0.0f, 0.0f})
         {
           sideMin = glm::min(sideMin, v.ground);
@@ -172,10 +188,12 @@ int main()
     const auto slices = meshChunk({0, 0, 0}, view, reg);
 
     int slabTops = 0;
+
     for (const auto& s : slices)
       for (const auto& v : s.vertices)
         if (v.normal == glm::vec3{0.0f, 0.0f, 1.0f} && v.ground == 1.0f)
           ++slabTops;
+
     CHECK(slabTops == 6); // the slab's top face still emits (one quad)
   }
 
@@ -190,10 +208,12 @@ int main()
     // partial-coverage culling the slab would hide the whole face and the
     // tallest east-face vertex would only reach the slab's 1 -> a hole.
     float maxEastGround = -1.0f;
+
     for (const auto& s : slices)
       for (const auto& v : s.vertices)
         if (v.normal == glm::vec3{1.0f, 0.0f, 0.0f})
           maxEastGround = glm::max(maxEastGround, v.ground);
+
     CHECK(maxEastGround == 2.0f);
   }
 
@@ -205,6 +225,7 @@ int main()
     const auto slices = meshChunk({0, 0, 0}, view, reg);
 
     CHECK(slices.size() == 2);
+
     for (const auto& s : slices)
       CHECK(s.textureId != nullptr);
   }

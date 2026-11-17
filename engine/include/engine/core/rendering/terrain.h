@@ -1,15 +1,14 @@
 #pragma once
 
-#include "glm/glm/ext/vector_float2.hpp"
-#include "glm/glm/ext/vector_float3.hpp"
-#include "glm/glm/ext/vector_float4.hpp"
-#include "glm/glm/ext/vector_int2.hpp"
-#include "nlohmann/json.hpp"
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
+#include <glm/glm/ext/vector_float4.hpp>
+#include <glm/glm/ext/vector_int2.hpp>
+#include <nlohmann/json.hpp>
 
 #include <array>
 #include <cstddef>
 #include <memory>
-#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -49,6 +48,8 @@ inline constexpr std::size_t kMaxTerrainLayers = 5;
  */
 struct TerrainLayer
 {
+  bool operator==(const TerrainLayer&) const = default;
+
   std::string name; // for people ("Grass", "Dirt")
   std::shared_ptr<const TextureData> baseTexture;
   std::shared_ptr<const TextureData> normalTexture;
@@ -61,8 +62,6 @@ struct TerrainLayer
   float meadow = 0.0f;
   bool triplanar = false;
   float puddles = 1.0f;
-
-  bool operator==(const TerrainLayer&) const = default;
 };
 
 /**
@@ -106,6 +105,8 @@ struct TerrainLayer
  */
 struct TerrainMaterial
 {
+  bool operator==(const TerrainMaterial&) const = default;
+
   // RGBA weights of layers 2-5 (read as data, sampled smoothly, clamped at
   // the edges); null: the first layer only.
   std::shared_ptr<const TextureData> splat;
@@ -136,8 +137,6 @@ struct TerrainMaterial
   float microRelief = 0.0f;     // metres deep
   float microReliefSize = 3.0f; // metres across
   bool deformable = false;
-
-  bool operator==(const TerrainMaterial&) const = default;
 };
 
 /**
@@ -186,6 +185,8 @@ std::shared_ptr<TextureData> blankSplat(int size);
 /** A terrain layer as a .mat file holds it: textures by name ("asset:<id>"). */
 struct TerrainLayerAsset
 {
+  bool operator==(const TerrainLayerAsset&) const = default;
+
   std::string name; // for people ("Grass", "Dirt")
   std::string baseTexture;
   std::string normalTexture;
@@ -198,8 +199,6 @@ struct TerrainLayerAsset
   float meadow = 0.0f;
   bool triplanar = false;
   float puddles = 1.0f;
-
-  bool operator==(const TerrainLayerAsset&) const = default;
 };
 
 /**
@@ -220,6 +219,13 @@ struct TerrainLayerAsset
  */
 struct TerrainAsset
 {
+  /** Missing keys keep their defaults (at most kMaxTerrainLayers layers). */
+  static TerrainAsset fromJson(const nlohmann::json& json);
+
+  bool operator==(const TerrainAsset&) const = default;
+
+  nlohmann::json toJson() const;
+
   std::string splatMap;
   std::vector<TerrainLayerAsset> layers;
   float blendSharpness = 0.5f;
@@ -231,12 +237,6 @@ struct TerrainAsset
   float microRelief = 0.0f;
   float microReliefSize = 3.0f;
   bool deformable = false;
-
-  nlohmann::json toJson() const;
-  /** Missing keys keep their defaults (at most kMaxTerrainLayers layers). */
-  static TerrainAsset fromJson(const nlohmann::json& json);
-
-  bool operator==(const TerrainAsset&) const = default;
 };
 
 } // namespace sfs

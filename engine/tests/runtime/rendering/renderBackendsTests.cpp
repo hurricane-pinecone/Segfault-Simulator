@@ -1,6 +1,14 @@
 #include "../../testHarness.h"
+#include "engine/runtime/rendering/backend/iRenderBackend.h"
+#include "engine/runtime/rendering/backend/renderBackends.h"
 
-#include <engine/runtime/rendering/backend/renderBackends.h>
+#include <SDL_video.h>
+
+#include <memory>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
 
 using namespace sfs;
 

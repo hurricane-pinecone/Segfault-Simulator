@@ -1,9 +1,14 @@
 #include "../../testHarness.h"
+#include "engine/core/components/surfaceEffect.h"
+#include "engine/core/voxel/blockType.h"
+#include "engine/core/voxel/voxelView.h"
+#include "engine/core/voxel/waterCell.h"
+#include "engine/core/voxel/waterChunk.h"
+#include "engine/core/voxel/waterSim.h"
 
-#include <engine/core/voxel/waterCell.h>
-#include <engine/core/voxel/waterSim.h>
+#include <glm/glm/common.hpp>
+#include <glm/glm/ext/vector_int3.hpp>
 
-#include "glm/glm/common.hpp"
 #include <map>
 #include <tuple>
 #include <vector>
@@ -33,6 +38,7 @@ struct TestGrid : IWaterGrid
   {
     if (capacity(c) <= 0)
       return static_cast<float>(c.z * kLevelsPerBlock);
+
     const int amount = glm::min(water(c), static_cast<int>(kWaterFull));
     const float unitsPerLevel =
         static_cast<float>(kWaterFull / kLevelsPerBlock);
@@ -46,8 +52,10 @@ struct TestGrid : IWaterGrid
   int total() const
   {
     int sum = 0;
+
     for (const auto& [k, v] : cells)
       sum += v;
+
     return sum;
   }
 };
@@ -62,10 +70,13 @@ struct Reg : IBlockRegistry
         BlockShape::Cube, nullptr, {}, true, true, SurfaceEffect::Type::None};
     static BlockType slab{
         BlockShape::Slab, nullptr, {}, true, true, SurfaceEffect::Type::None};
+
     if (id == 1)
       return cube;
+
     if (id == 2)
       return slab;
+
     return air;
   }
 };
@@ -128,17 +139,20 @@ int main()
 
     std::vector<glm::ivec3> active{{0, 0, 4}};
     bool settled = false;
+
     for (int i = 0; i < 300; ++i)
     {
       std::vector<glm::ivec3> next;
       stepWater(active, grid, next);
       active = next;
+
       if (active.empty())
       {
         settled = true;
         break;
       }
     }
+
     CHECK(settled);
     CHECK(grid.water({0, 0, 0}) == kWaterFull);
   }

@@ -16,7 +16,7 @@ enum class Kind
   System,     // runs over every entity with certain components
   Service,    // runs only when its events bring it something (sfs::Service)
   Component,  // plain data on an entity
-  ScriptableObject,  // shared data kept in .asset files (sfs::ScriptableObject)
+  ScriptableObject, // shared data kept in .asset files (sfs::ScriptableObject)
 };
 
 const char* label(Kind kind);
@@ -32,9 +32,10 @@ bool isValidName(const std::string& name);
  * of that name already exists anywhere in the scripts folder (class names must
  * be unique).
  */
-std::optional<std::filesystem::path> create(Kind kind,
-                                            const std::string& name,
-                                            const std::filesystem::path& scriptsFolder,
-                                            const std::filesystem::path& folder);
+std::optional<std::filesystem::path>
+create(Kind kind,
+       const std::string& name,
+       const std::filesystem::path& scriptsFolder,
+       const std::filesystem::path& folder);
 
 } // namespace scriptTemplates

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <chrono>
+#include <ratio>
 #include <string>
 #include <typeinfo>
 
@@ -35,6 +36,7 @@ public:
     if (m_name)
       m_start = std::chrono::steady_clock::now();
   }
+  Scope(const Scope&) = delete;
   ~Scope()
   {
     if (m_name)
@@ -43,7 +45,6 @@ public:
               std::chrono::steady_clock::now() - m_start)
               .count());
   }
-  Scope(const Scope&) = delete;
   Scope& operator=(const Scope&) = delete;
 
 private:

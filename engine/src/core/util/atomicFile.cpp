@@ -71,10 +71,13 @@ std::string lastError()
                  0,
                  nullptr);
   std::string message = text ? text : "error " + std::to_string(code);
+
   if (text)
     LocalFree(text);
+
   while (!message.empty() && (message.back() == '\n' || message.back() == '\r'))
     message.pop_back();
+
   return message;
 }
 
@@ -90,13 +93,16 @@ Written writeTemporary(const fs::path& temporary,
                                   CREATE_NEW,
                                   FILE_ATTRIBUTE_NORMAL,
                                   nullptr);
+
   if (file == INVALID_HANDLE_VALUE)
   {
     const bool taken = GetLastError() == ERROR_FILE_EXISTS;
     error = lastError();
     return taken ? Written::NameTaken : Written::Failed;
   }
+
   bool ok = true;
+
   while (ok && !contents.empty())
   {
     const DWORD chunk =
@@ -105,12 +111,17 @@ Written writeTemporary(const fs::path& temporary,
     ok = WriteFile(file, contents.data(), chunk, &written, nullptr) != 0;
     contents.remove_prefix(written);
   }
+
   ok = ok && FlushFileBuffers(file) != 0;
+
   if (!ok)
     error = lastError();
+
   CloseHandle(file);
+
   if (!ok)
     DeleteFileW(temporary.wstring().c_str());
+
   return ok ? Written::Ok : Written::Failed;
 }
 
@@ -126,12 +137,16 @@ bool replace(const fs::path& temporary,
                     target.wstring().c_str(),
                     MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
       return true;
+
     const DWORD code = GetLastError();
+
     if (code != ERROR_ACCESS_DENIED && code != ERROR_SHARING_VIOLATION &&
         code != ERROR_LOCK_VIOLATION)
       break;
+
     Sleep(25);
   }
+
   error = lastError();
   return false;
 }
@@ -145,43 +160,55 @@ Written writeTemporary(const fs::path& temporary,
 {
   const int file =
       ::open(temporary.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0666);
+
   if (file < 0)
   {
     const bool taken = errno == EEXIST;
     error = std::strerror(errno);
     return taken ? Written::NameTaken : Written::Failed;
   }
+
   // The file keeps its permissions (an executable script stays executable).
   struct stat existing
   {
   };
+
   if (::stat(target.c_str(), &existing) == 0)
     (void)::fchmod(file, existing.st_mode & 07777);
 
   bool ok = true;
+
   while (ok && !contents.empty())
   {
     const ssize_t written = ::write(file, contents.data(), contents.size());
+
     if (written < 0 && errno == EINTR)
       continue;
+
     ok = written > 0;
+
     if (ok)
       contents.remove_prefix(static_cast<std::size_t>(written));
   }
+
   if (!ok)
     error = std::strerror(errno ? errno : EIO);
+
   if (ok && ::fsync(file) != 0)
   {
     error = std::strerror(errno);
     ok = false;
   }
+
   if (::close(file) != 0 && ok)
   {
     error = std::strerror(errno);
     ok = false;
   }
+
   if (!ok)
     ::unlink(temporary.c_str());
+
   return ok ? Written::Ok : Written::Failed;
 }
 
@@ -194,16 +221,19 @@ bool replace(const fs::path& temporary,
     error = std::strerror(errno);
     return false;
   }
+
   // The rename itself reaches the disk once the folder is flushed. (Best
   // effort: not every filesystem lets a folder be opened for it.)
   const fs::path folder =
       target.parent_path().empty() ? fs::path(".") : target.parent_path();
   const int directory = ::open(folder.c_str(), O_RDONLY | O_CLOEXEC);
+
   if (directory >= 0)
   {
     (void)::fsync(directory);
     ::close(directory);
   }
+
   return true;
 }
 
@@ -215,9 +245,11 @@ bool writeFileAtomically(const fs::path& path, std::string_view contents)
   // A link is followed, so it stays a link to the rewritten file.
   std::error_code ignored;
   fs::path target = path;
+
   if (fs::is_symlink(path, ignored))
   {
     const fs::path resolved = fs::canonical(path, ignored);
+
     if (!ignored)
       target = resolved;
   }
@@ -225,22 +257,26 @@ bool writeFileAtomically(const fs::path& path, std::string_view contents)
   std::string error;
   fs::path temporary;
   Written written = Written::NameTaken;
+
   for (int attempt = 0; attempt < 5 && written == Written::NameTaken; ++attempt)
   {
     temporary = temporaryPathFor(target);
     written = writeTemporary(temporary, target, contents, error);
   }
+
   if (written != Written::Ok)
   {
     fail(path, error);
     return false;
   }
+
   if (!replace(temporary, target, error))
   {
     fs::remove(temporary, ignored);
     fail(path, error);
     return false;
   }
+
   return true;
 }
 

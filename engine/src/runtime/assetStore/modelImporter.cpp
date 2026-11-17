@@ -1,17 +1,32 @@
 #include "engine/runtime/assetStore/modelImporter.h"
 
+#include "engine/core/animation/animation.h"
+#include "engine/core/assets/assetDatabase.h"
 #include "engine/core/logger/logger.h"
+#include "engine/core/rendering/aabb.h"
+#include "engine/core/rendering/mesh.h"
 #include "engine/core/util/hash.h"
 #include "engine/core/util/string.h"
+#include "engine/runtime/assetStore/modelData.h"
 #include "engine/runtime/assetStore/textureImporter.h"
 #include "engine/runtime/serialization/prefabComponents.h"
-#include "glm/glm/ext/matrix_float3x3.hpp"
-#include "glm/glm/ext/matrix_float4x4.hpp"
-#include "glm/glm/ext/matrix_transform.hpp"
-#include "glm/glm/geometric.hpp"
-#include "glm/glm/gtc/type_ptr.hpp"
-#include "glm/glm/matrix.hpp"
-#include "nlohmann/json.hpp"
+
+#include <glm/glm/ext/matrix_float3x3.hpp>
+#include <glm/glm/ext/matrix_float4x4.hpp>
+#include <glm/glm/ext/matrix_transform.hpp>
+#include <glm/glm/geometric.hpp>
+#include <glm/glm/gtc/type_ptr.hpp>
+#include <glm/glm/matrix.hpp>
+#include <nlohmann/json.hpp>
+
+#include <cstdint>
+#include <filesystem>
+#include <ios>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
 
 #ifdef SFS_HAS_MODEL_IMPORT
   #include <cgltf.h>
@@ -35,39 +50,46 @@ namespace sfs
 
 namespace
 {
-constexpr std::string_view kPrefix = "asset:";
+constexpr std::string_view PREFIX = "asset:";
 } // namespace
 
 std::string assetMeshName(const AssetId& model, std::string_view part)
 {
-  std::string name = std::string(kPrefix) + model.toString();
+  std::string name = std::string(PREFIX) + model.toString();
+
   if (!part.empty())
     name += ":" + std::string(part);
+
   return name;
 }
 
 std::optional<AssetMeshName> parseAssetMeshName(std::string_view name)
 {
-  if (!name.starts_with(kPrefix))
+  if (!name.starts_with(PREFIX))
     return std::nullopt;
-  name.remove_prefix(kPrefix.size());
+
+  name.remove_prefix(PREFIX.size());
   const std::optional<AssetId> id = AssetId::parse(name.substr(0, 32));
+
   if (!id)
     return std::nullopt;
+
   name.remove_prefix(std::min<std::size_t>(32, name.size()));
+
   if (!name.empty() && name.front() != ':')
     return std::nullopt;
+
   return AssetMeshName{*id, std::string(name.empty() ? name : name.substr(1))};
 }
 
 bool isColliderNodeName(std::string_view name)
 {
   name = baseNodeName(name); // Blender's ".001" on a copy
-  constexpr std::string_view kSuffix = "-collider";
-  return name.size() > kSuffix.size() &&
-         std::equal(kSuffix.begin(),
-                    kSuffix.end(),
-                    name.end() - kSuffix.size(),
+  constexpr std::string_view SUFFIX = "-collider";
+  return name.size() > SUFFIX.size() &&
+         std::equal(SUFFIX.begin(),
+                    SUFFIX.end(),
+                    name.end() - SUFFIX.size(),
                     [](char a, char b) {
                       return a == std::tolower(static_cast<unsigned char>(b));
                     });
@@ -92,9 +114,11 @@ ModelImportSettings
 ModelImportSettings::fromJson(const nlohmann::json& settings)
 {
   ModelImportSettings result;
+
   if (settings.is_object() && settings.contains("scale") &&
       settings["scale"].is_number())
     result.scale = settings["scale"].get<float>();
+
   return result;
 }
 
@@ -151,29 +175,38 @@ readImage(const cgltf_image& image, const std::filesystem::path& folder)
   const std::string name = image.name && *image.name ? image.name
                            : image.uri               ? image.uri
                                                      : "(unnamed)";
+
   if (image.buffer_view)
     return decodeTexture(cgltf_buffer_view_data(image.buffer_view),
                          image.buffer_view->size,
                          name);
+
   if (!image.uri)
     return nullptr;
 
   const std::string_view uri = image.uri;
+
   if (uri.starts_with("data:"))
   {
     const std::size_t comma = uri.find(',');
+
     if (comma == std::string_view::npos ||
         uri.substr(0, comma).find(";base64") == std::string_view::npos)
       return nullptr;
+
     const std::string_view base64 = uri.substr(comma + 1);
     std::size_t size = base64.size() / 4 * 3;
+
     for (std::size_t i = base64.size(); i > 0 && base64[i - 1] == '='; --i)
       --size;
+
     cgltf_options options{};
     void* bytes = nullptr;
+
     if (cgltf_load_buffer_base64(&options, size, base64.data(), &bytes) !=
         cgltf_result_success)
       return nullptr;
+
     std::shared_ptr<const TextureData> texture =
         decodeTexture(bytes, size, "(embedded)");
     std::free(bytes);
@@ -186,11 +219,13 @@ readImage(const cgltf_image& image, const std::filesystem::path& folder)
   std::ifstream in(file, std::ios::binary);
   const std::vector<char> bytes{
       std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+
   if (bytes.empty())
   {
     LOG_ERROR("Model import: can't read the image " + file.string());
     return nullptr;
   }
+
   return decodeTexture(bytes.data(), bytes.size(), file.string());
 }
 
@@ -200,7 +235,9 @@ loadTexture(const cgltf_texture* texture, bool linear, Textures& textures)
 {
   if (!texture || !texture->image)
     return nullptr;
+
   const auto key = std::make_pair(texture, linear);
+
   if (const auto it = textures.loaded.find(key); it != textures.loaded.end())
     return it->second;
 
@@ -208,6 +245,7 @@ loadTexture(const cgltf_texture* texture, bool linear, Textures& textures)
       readImage(*texture->image, textures.folder);
   const bool nearest = texture->sampler && texture->sampler->mag_filter ==
                                                cgltf_filter_type_nearest;
+
   if (loaded && (nearest || linear))
   {
     auto adjusted = std::make_shared<TextureData>(*loaded);
@@ -215,6 +253,7 @@ loadTexture(const cgltf_texture* texture, bool linear, Textures& textures)
     adjusted->linear = linear;
     loaded = std::move(adjusted);
   }
+
   textures.loaded.emplace(key, loaded); // a failure too, so it's tried once
   return loaded;
 }
@@ -227,22 +266,32 @@ loadTexture(const cgltf_texture* texture, bool linear, Textures& textures)
 void readExtras(const cgltf_extras& extras, MeshMaterial& material)
 {
   FoliageSettings& foliage = material.foliage;
+
   if (!extras.data)
     return;
+
   const nlohmann::json json =
       nlohmann::json::parse(extras.data, nullptr, false);
+
   if (!json.is_object() || !json.contains("sfs") || !json["sfs"].is_object())
     return;
+
   const nlohmann::json& sfs = json["sfs"];
+
   if (const auto fade = sfs.find("fadeNearCamera");
       fade != sfs.end() && fade->is_number())
     material.fadeNearCamera = fade->get<float>();
+
   const auto it = sfs.find("foliage");
+
   if (it == sfs.end() || !it->is_object())
     return;
+
   foliage.enabled = true;
+
   if (!sfs.contains("fadeNearCamera"))
     material.fadeNearCamera = 0.4f;
+
   const auto number = [&](const char* key, float& out)
   {
     if (const auto value = it->find(key);
@@ -260,14 +309,17 @@ MeshMaterial
 readMaterial(const cgltf_material* source, bool hasUvs, Textures& textures)
 {
   MeshMaterial material;
+
   if (!source)
     return material;
+
   if (source->has_pbr_metallic_roughness)
   {
     const cgltf_pbr_metallic_roughness& pbr = source->pbr_metallic_roughness;
     material.baseColor = glm::make_vec4(pbr.base_color_factor);
     material.metallic = pbr.metallic_factor;
     material.roughness = pbr.roughness_factor;
+
     // KHR_texture_transform's scale and offset (not its rotation) on the base
     // texture: some exporters tile textures that way rather than in the UVs.
     if (pbr.base_color_texture.has_transform)
@@ -277,6 +329,7 @@ readMaterial(const cgltf_material* source, bool hasUvs, Textures& textures)
       material.tiling = {transform.scale[0], transform.scale[1]};
       material.offset = {transform.offset[0], transform.offset[1]};
     }
+
     if (hasUvs)
     {
       material.baseTexture =
@@ -285,16 +338,19 @@ readMaterial(const cgltf_material* source, bool hasUvs, Textures& textures)
           loadTexture(pbr.metallic_roughness_texture.texture, true, textures);
     }
   }
+
   if (hasUvs && source->normal_texture.texture)
   {
     material.normalTexture =
         loadTexture(source->normal_texture.texture, true, textures);
     material.normalScale = source->normal_texture.scale;
   }
+
   if (source->alpha_mode == cgltf_alpha_mode_mask)
     material.alphaMode = AlphaMode::Mask;
   else if (source->alpha_mode == cgltf_alpha_mode_blend)
     material.alphaMode = AlphaMode::Blend;
+
   material.alphaCutoff = source->alpha_cutoff;
   material.doubleSided = source->double_sided;
   readExtras(source->extras, material);
@@ -306,6 +362,7 @@ readVec(const cgltf_accessor* accessor, cgltf_size index, glm::vec4 fallback)
 {
   if (!accessor)
     return fallback;
+
   float values[4] = {fallback.x, fallback.y, fallback.z, fallback.w};
   const cgltf_size components = cgltf_num_components(accessor->type);
   cgltf_accessor_read_float(accessor, index, values, components);
@@ -322,25 +379,31 @@ SkinWeights readSkinWeights(const cgltf_accessor* joints,
                             cgltf_size index)
 {
   SkinWeights out;
+
   if (!joints || !weights || index >= joints->count || index >= weights->count)
     return out;
+
   cgltf_uint ids[4] = {0, 0, 0, 0};
   cgltf_accessor_read_uint(joints, index, ids, 4);
   float w[4] = {0.0f, 0.0f, 0.0f, 0.0f};
   cgltf_accessor_read_float(weights, index, w, 4);
   float total = 0.0f;
+
   for (int i = 0; i < 4; ++i)
   {
     w[i] = std::max(w[i], 0.0f);
     total += w[i];
   }
+
   if (total <= 1e-6f)
     return out;
+
   for (int i = 0; i < 4; ++i)
   {
     out.joints[i] = static_cast<uint16_t>(std::min<cgltf_uint>(ids[i], 65535));
     out.weights[i] = w[i] / total;
   }
+
   return out;
 }
 
@@ -371,6 +434,7 @@ void appendPrimitive(const cgltf_primitive& primitive,
   for (cgltf_size i = 0; i < primitive.attributes_count; ++i)
   {
     const cgltf_attribute& attribute = primitive.attributes[i];
+
     if (attribute.type == cgltf_attribute_type_position)
       positions = attribute.data;
     else if (attribute.type == cgltf_attribute_type_normal)
@@ -389,24 +453,29 @@ void appendPrimitive(const cgltf_primitive& primitive,
              attribute.index == 0)
       weights = attribute.data;
   }
+
   if (!positions)
     return;
 
   const glm::mat3 normalMatrix =
       glm::transpose(glm::inverse(glm::mat3(transform)));
   const auto first = static_cast<uint32_t>(out.vertices.size());
+
   for (cgltf_size i = 0; i < positions->count; ++i)
   {
     MeshVertex vertex;
     vertex.position = glm::vec3(
         transform *
         glm::vec4(glm::vec3(readVec(positions, i, glm::vec4(0.0f))), 1.0f));
+
     if (normals)
       vertex.normal = glm::normalize(
           normalMatrix * glm::vec3(readVec(normals, i, glm::vec4(0, 0, 1, 0))));
+
     vertex.color = glm::vec3(readVec(colors, i, glm::vec4(1.0f)));
     vertex.uv = glm::vec2(readVec(uvs, i, glm::vec4(0.0f)));
     out.vertices.push_back(vertex);
+
     if (skinned)
       out.skinWeights.push_back(readSkinWeights(joints, weights, i));
   }
@@ -417,13 +486,16 @@ void appendPrimitive(const cgltf_primitive& primitive,
       primitive.indices ? primitive.indices->count : positions->count;
   const auto firstIndex = static_cast<uint32_t>(out.indices.size());
   bool outOfRange = false;
+
   for (cgltf_size i = 0; i + 2 < count; i += 3)
   {
     cgltf_size corner[3];
+
     for (int c = 0; c < 3; ++c)
       corner[c] = primitive.indices
                       ? cgltf_accessor_read_index(primitive.indices, i + c)
                       : i + c;
+
     // A corner past the vertices (a broken or hostile file) would read
     // outside them: the triangle is left out.
     if (corner[0] >= positions->count || corner[1] >= positions->count ||
@@ -432,11 +504,14 @@ void appendPrimitive(const cgltf_primitive& primitive,
       outOfRange = true;
       continue;
     }
+
     if (mirrored)
       std::swap(corner[1], corner[2]);
+
     for (const cgltf_size index : corner)
       out.indices.push_back(first + static_cast<uint32_t>(index));
   }
+
   if (outOfRange)
     LOG_ERROR("Model import: a mesh's triangles name vertices it doesn't "
               "have; those triangles are left out");
@@ -446,6 +521,7 @@ void appendPrimitive(const cgltf_primitive& primitive,
       readMaterial(primitive.material, uvs != nullptr, textures);
   const auto indexCount =
       static_cast<uint32_t>(out.indices.size()) - firstIndex;
+
   if (indexCount > 0)
   {
     if (!out.sections.empty() && out.sections.back().material == material &&
@@ -467,7 +543,9 @@ void appendPrimitive(const cgltf_primitive& primitive,
     // None in the file: average each vertex's face normals.
     for (uint32_t v = first; v < out.vertices.size(); ++v)
       out.vertices[v].normal = glm::vec3(0.0f);
+
     const std::size_t from = firstIndex;
+
     for (std::size_t i = from; i + 2 < out.indices.size(); i += 3)
     {
       MeshVertex& a = out.vertices[out.indices[i]];
@@ -479,6 +557,7 @@ void appendPrimitive(const cgltf_primitive& primitive,
       b.normal += face;
       c.normal += face;
     }
+
     for (uint32_t v = first; v < out.vertices.size(); ++v)
     {
       const float length = glm::length(out.vertices[v].normal);
@@ -509,6 +588,7 @@ void appendNode(const cgltf_node& node,
     cgltf_node_transform_world(&node, world);
     appendMesh(*node.mesh, placement * glm::make_mat4(world), textures, out);
   }
+
   for (cgltf_size i = 0; i < node.children_count; ++i)
     appendNode(*node.children[i], placement, textures, out);
 }
@@ -523,14 +603,17 @@ bool hasTriangles(const cgltf_mesh& mesh)
   for (cgltf_size i = 0; i < mesh.primitives_count; ++i)
   {
     const cgltf_primitive& primitive = mesh.primitives[i];
+
     if (primitive.type != cgltf_primitive_type_triangles)
       continue;
+
     for (cgltf_size a = 0; a < primitive.attributes_count; ++a)
       if (primitive.attributes[a].type == cgltf_attribute_type_position &&
           primitive.attributes[a].data &&
           primitive.attributes[a].data->count >= 3)
         return true;
   }
+
   return false;
 }
 
@@ -545,6 +628,7 @@ bool hasColliderNodes(const cgltf_data& data)
   for (cgltf_size i = 0; i < data.nodes_count; ++i)
     if (data.nodes[i].mesh && isColliderNode(data.nodes[i]))
       return true;
+
   return false;
 }
 
@@ -555,28 +639,37 @@ std::unordered_map<const cgltf_mesh*, std::string>
 partNames(const cgltf_data& data)
 {
   std::unordered_map<const cgltf_mesh*, std::string> partOf;
+
   // With a skin, even one mesh is a part: its joints are nodes to place. With
   // a collider, its node is an entity, so the rest are too.
   if (data.meshes_count <= 1 && data.skins_count == 0 &&
       !hasColliderNodes(data))
     return partOf;
+
   std::set<const cgltf_mesh*> drawn;
+
   for (cgltf_size i = 0; i < data.nodes_count; ++i)
     if (data.nodes[i].mesh && !isColliderNode(data.nodes[i]))
       drawn.insert(data.nodes[i].mesh);
+
   std::set<std::string> taken;
+
   for (cgltf_size i = 0; i < data.meshes_count; ++i)
   {
     const std::string base = data.meshes[i].name && *data.meshes[i].name
                                  ? data.meshes[i].name
                                  : "Mesh " + std::to_string(i + 1);
     std::string name = base;
+
     for (int n = 2; taken.contains(name); ++n)
       name = base + " " + std::to_string(n);
+
     taken.insert(name);
+
     if (hasTriangles(data.meshes[i]) && drawn.contains(&data.meshes[i]))
       partOf[&data.meshes[i]] = name;
   }
+
   return partOf;
 }
 
@@ -595,17 +688,22 @@ bool hasFloatBounds(const cgltf_accessor& positions)
 Aabb meshBounds(const cgltf_mesh& mesh, const glm::mat4& placement)
 {
   Aabb bounds;
+
   for (cgltf_size p = 0; p < mesh.primitives_count; ++p)
   {
     const cgltf_primitive& primitive = mesh.primitives[p];
+
     if (primitive.type != cgltf_primitive_type_triangles)
       continue;
+
     for (cgltf_size a = 0; a < primitive.attributes_count; ++a)
     {
       const cgltf_accessor* positions = primitive.attributes[a].data;
+
       if (primitive.attributes[a].type != cgltf_attribute_type_position ||
           !positions)
         continue;
+
       if (hasFloatBounds(*positions))
       {
         bounds.expand(glm::make_vec3(positions->min));
@@ -620,6 +718,7 @@ Aabb meshBounds(const cgltf_mesh& mesh, const glm::mat4& placement)
         }
     }
   }
+
   return bounds.empty() ? bounds : bounds.transformed(placement);
 }
 
@@ -630,18 +729,22 @@ bool collidersNeedData(const cgltf_data& data)
   for (cgltf_size i = 0; i < data.nodes_count; ++i)
   {
     const cgltf_node& node = data.nodes[i];
+
     if (!node.mesh || !isColliderNode(node))
       continue;
+
     for (cgltf_size p = 0; p < node.mesh->primitives_count; ++p)
       for (cgltf_size a = 0; a < node.mesh->primitives[p].attributes_count; ++a)
       {
         const cgltf_attribute& attribute =
             node.mesh->primitives[p].attributes[a];
+
         if (attribute.type == cgltf_attribute_type_position && attribute.data &&
             !hasFloatBounds(*attribute.data))
           return true;
       }
   }
+
   return false;
 }
 
@@ -652,6 +755,7 @@ template <typename Out>
 void writeSegment(std::string_view name, uint32_t repeat, const Out& out)
 {
   std::size_t from = 0;
+
   for (std::size_t i = 0; i < name.size(); ++i)
     if (name[i] == '/' || name[i] == '#' || name[i] == '\\')
     {
@@ -659,7 +763,9 @@ void writeSegment(std::string_view name, uint32_t repeat, const Out& out)
       out("\\");
       from = i;
     }
+
   out(name.substr(from));
+
   if (repeat > 0)
   {
     char digits[16];
@@ -700,8 +806,10 @@ void assignNodeIds(std::vector<ModelNode>& nodes,
     std::size_t node;
   };
   std::vector<Sibling> siblings(count);
+
   for (std::size_t i = 0; i < count; ++i)
     siblings[i] = {nodes[i].parent, names[i], i};
+
   std::sort(siblings.begin(),
             siblings.end(),
             [](const Sibling& a, const Sibling& b)
@@ -711,6 +819,7 @@ void assignNodeIds(std::vector<ModelNode>& nodes,
             });
   std::vector<uint32_t> repeat(count, 0);
   std::vector<std::string_view> repeated;
+
   for (std::size_t i = 1; i < count; ++i)
     if (siblings[i].parent == siblings[i - 1].parent &&
         siblings[i].name == siblings[i - 1].name)
@@ -722,17 +831,22 @@ void assignNodeIds(std::vector<ModelNode>& nodes,
   const auto pathOf = [&](std::size_t node)
   {
     std::vector<std::size_t> chain;
+
     for (int at = static_cast<int>(node); at >= 0; at = nodes[at].parent)
       chain.push_back(static_cast<std::size_t>(at));
+
     std::string path;
+
     for (auto it = chain.rbegin(); it != chain.rend(); ++it)
     {
       if (it != chain.rbegin())
         path += '/';
+
       writeSegment(names[*it],
                    repeat[*it],
                    [&](std::string_view bytes) { path += bytes; });
     }
+
     return path;
   };
 
@@ -740,6 +854,7 @@ void assignNodeIds(std::vector<ModelNode>& nodes,
   std::vector<uint64_t> pathHash(count);
   std::unordered_map<uint32_t, std::size_t> taken;
   taken.reserve(count);
+
   for (std::size_t i = 0; i < count; ++i)
   {
     const int parent = nodes[i].parent;
@@ -751,14 +866,17 @@ void assignNodeIds(std::vector<ModelNode>& nodes,
                  [&](std::string_view bytes) { hash = fnv1a64(bytes, hash); });
     pathHash[i] = hash;
     uint32_t id = nodeIdOf(hash);
+
     if (const auto clash = taken.find(id); clash != taken.end())
     {
       LOG_WARN("Model import: " + source + ": the nodes '" +
                pathOf(clash->second) + "' and '" + pathOf(i) +
                "' hash to the same id; the second takes the next free one");
+
       while (taken.contains(id))
         id = kModelNodeIdBit | ((id + 1) & ~kModelNodeIdBit);
     }
+
     taken.emplace(id, i);
     nodes[i].id = id;
   }
@@ -769,19 +887,23 @@ void assignNodeIds(std::vector<ModelNode>& nodes,
     repeated.erase(
         std::unique(repeated.begin(), repeated.end()), repeated.end());
     std::string list;
+
     for (const std::string_view name : repeated)
       list += (list.empty() ? "'" : ", '") +
               (name.empty() ? std::string("(unnamed)") : std::string(name)) +
               "'";
+
     LOG_WARN("Model import: " + source + ": sibling nodes share the names " +
              list +
              "; their ids follow their order, so give them unique names in "
              "the source file");
   }
+
   if (namePaths)
   {
     namePaths->clear();
     namePaths->reserve(count);
+
     for (std::size_t i = 0; i < count; ++i)
       namePaths->push_back(pathOf(i));
   }
@@ -813,21 +935,26 @@ readNodes(const cgltf_data& data,
                    : "Node " + std::to_string(nodes.size() + 1);
     out.parent = parent;
     out.local = placement * glm::make_mat4(local) * toFile;
+
     if (node.mesh)
     {
       out.collider = isColliderNode(node);
       out.bounds = meshBounds(*node.mesh, placement);
+
       if (const auto it = partOf.find(node.mesh);
           it != partOf.end() && !out.collider)
         out.part = it->second;
     }
+
     const int index = static_cast<int>(nodes.size());
     nodes.push_back(std::move(out));
+
     for (cgltf_size i = 0; i < node.children_count; ++i)
       addNode(*node.children[i], index);
   };
   const cgltf_scene* scene =
       data.scene ? data.scene : (data.scenes_count ? &data.scenes[0] : nullptr);
+
   if (scene)
     for (cgltf_size i = 0; i < scene->nodes_count; ++i)
       addNode(*scene->nodes[i], -1);
@@ -835,6 +962,7 @@ readNodes(const cgltf_data& data,
     for (cgltf_size i = 0; i < data.nodes_count; ++i)
       if (!data.nodes[i].parent)
         addNode(data.nodes[i], -1);
+
   // glTF names are JSON strings, which cgltf leaves as spelled: decoded, so
   // an id doesn't depend on how the exporter wrote a name ("\\u00e9" or "é").
   std::vector<std::string> decoded;
@@ -844,6 +972,7 @@ readNodes(const cgltf_data& data,
                     [](const char* name) { return std::strchr(name, '\\'); })));
   std::vector<std::string_view> names;
   names.reserve(rawNames.size());
+
   for (const char* name : rawNames)
   {
     if (!std::strchr(name, '\\'))
@@ -851,10 +980,12 @@ readNodes(const cgltf_data& data,
       names.emplace_back(name);
       continue;
     }
+
     std::string& text = decoded.emplace_back(name);
     text.resize(cgltf_decode_string(text.data()));
     names.emplace_back(text);
   }
+
   assignNodeIds(nodes, names, source, namePaths);
   return nodes;
 }
@@ -873,11 +1004,13 @@ nodeNames(const cgltf_data& data)
                        ? node.name
                        : "Node " + std::to_string(placed + 1);
     ++placed;
+
     for (cgltf_size i = 0; i < node.children_count; ++i)
       addNode(*node.children[i]);
   };
   const cgltf_scene* scene =
       data.scene ? data.scene : (data.scenes_count ? &data.scenes[0] : nullptr);
+
   if (scene)
     for (cgltf_size i = 0; i < scene->nodes_count; ++i)
       addNode(*scene->nodes[i]);
@@ -885,10 +1018,12 @@ nodeNames(const cgltf_data& data)
     for (cgltf_size i = 0; i < data.nodes_count; ++i)
       if (!data.nodes[i].parent)
         addNode(data.nodes[i]);
+
   // Nodes outside the scene keep their own names.
   for (cgltf_size i = 0; i < data.nodes_count; ++i)
     if (!names.contains(&data.nodes[i]))
       names[&data.nodes[i]] = data.nodes[i].name ? data.nodes[i].name : "";
+
   return names;
 }
 
@@ -898,6 +1033,7 @@ const cgltf_skin* skinOf(const cgltf_data& data, const cgltf_mesh& mesh)
   for (cgltf_size i = 0; i < data.nodes_count; ++i)
     if (data.nodes[i].mesh == &mesh && data.nodes[i].skin)
       return data.nodes[i].skin;
+
   return nullptr;
 }
 
@@ -911,15 +1047,19 @@ readSkin(const cgltf_skin& skin,
 {
   auto out = std::make_shared<MeshSkin>();
   const glm::mat4 toFile = glm::inverse(placement);
+
   for (cgltf_size j = 0; j < skin.joints_count; ++j)
   {
     const auto name = names.find(skin.joints[j]);
     out->joints.push_back(name != names.end() ? name->second : "");
     float bind[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+
     if (skin.inverse_bind_matrices)
       cgltf_accessor_read_float(skin.inverse_bind_matrices, j, bind, 16);
+
     out->inverseBind.push_back(placement * glm::make_mat4(bind) * toFile);
   }
+
   return out;
 }
 
@@ -933,7 +1073,9 @@ readAnimations(const cgltf_data& data,
 {
   if (data.animations_count == 0)
     return nullptr;
+
   auto set = std::make_shared<AnimationSet>();
+
   for (cgltf_size a = 0; a < data.animations_count; ++a)
   {
     const cgltf_animation& animation = data.animations[a];
@@ -941,13 +1083,17 @@ readAnimations(const cgltf_data& data,
     clip.name = animation.name && *animation.name
                     ? animation.name
                     : "Animation " + std::to_string(a + 1);
+
     for (cgltf_size c = 0; c < animation.channels_count; ++c)
     {
       const cgltf_animation_channel& source = animation.channels[c];
+
       if (!source.target_node || !source.sampler || !source.sampler->input ||
           !source.sampler->output)
         continue;
+
       AnimationChannel channel;
+
       switch (source.target_path)
       {
       case cgltf_animation_path_type_translation:
@@ -962,6 +1108,7 @@ readAnimations(const cgltf_data& data,
       default:
         continue; // morph target weights: not supported
       }
+
       switch (source.sampler->interpolation)
       {
       case cgltf_interpolation_type_step:
@@ -974,24 +1121,31 @@ readAnimations(const cgltf_data& data,
         channel.interpolation = AnimationInterpolation::Linear;
         break;
       }
+
       const auto name = names.find(source.target_node);
       channel.node = name != names.end() ? name->second : "";
       const cgltf_accessor& input = *source.sampler->input;
       const cgltf_accessor& output = *source.sampler->output;
       channel.times.resize(input.count);
+
       for (cgltf_size k = 0; k < input.count; ++k)
         cgltf_accessor_read_float(&input, k, &channel.times[k], 1);
+
       const std::size_t stride =
           channel.interpolation == AnimationInterpolation::CubicSpline ? 3 : 1;
+
       if (output.count < input.count * stride)
         continue; // not enough values for its keys
+
       channel.values.resize(input.count * stride);
       const cgltf_size components = cgltf_num_components(output.type);
+
       for (std::size_t k = 0; k < channel.values.size(); ++k)
       {
         float v[4] = {0.0f, 0.0f, 0.0f, 0.0f};
         cgltf_accessor_read_float(
             &output, k, v, std::min<cgltf_size>(components, 4));
+
         switch (channel.path)
         {
         case AnimationPath::Translation:
@@ -1005,12 +1159,16 @@ readAnimations(const cgltf_data& data,
           break;
         }
       }
+
       if (!channel.times.empty())
         clip.duration = std::max(clip.duration, channel.times.back());
+
       clip.channels.push_back(std::move(channel));
     }
+
     set->clips.push_back(std::move(clip));
   }
+
   return set;
 }
 
@@ -1020,8 +1178,10 @@ readAnimations(const cgltf_data& data,
 bool valid(cgltf_data& data, const std::string& path)
 {
   const cgltf_result result = cgltf_validate(&data);
+
   if (result == cgltf_result_success)
     return true;
+
   LOG_ERROR("Model import: " + path + " is damaged or not valid glTF (" +
             std::to_string(static_cast<int>(result)) + ")");
   return false;
@@ -1036,15 +1196,19 @@ importModelNodes(const std::filesystem::path& file,
   const std::string path = file.string();
   cgltf_options options{};
   cgltf_data* raw = nullptr;
+
   if (cgltf_parse_file(&options, path.c_str(), &raw) != cgltf_result_success)
   {
     LOG_ERROR("Model import: can't read " + path +
               " (only glTF: .glb and .gltf)");
     return std::nullopt;
   }
+
   DataPtr data(raw, cgltf_free);
+
   if (!valid(*data, path))
     return std::nullopt;
+
   // Only a file whose colliders' bounds aren't written down needs its data.
   if (collidersNeedData(*data) &&
       cgltf_load_buffers(&options, data.get(), path.c_str()) !=
@@ -1053,6 +1217,7 @@ importModelNodes(const std::filesystem::path& file,
     LOG_ERROR("Model import: can't load the data " + path + " refers to");
     return std::nullopt;
   }
+
   const glm::mat4 placement =
       glm::scale(glm::mat4(1.0f), glm::vec3(settings.scale)) * kYUpToZUp;
   const auto partOf = partNames(*data);
@@ -1068,19 +1233,23 @@ std::optional<ModelData> importModel(const std::filesystem::path& file,
   const std::string path = file.string();
   cgltf_options options{};
   cgltf_data* raw = nullptr;
+
   if (cgltf_parse_file(&options, path.c_str(), &raw) != cgltf_result_success)
   {
     LOG_ERROR("Model import: can't read " + path +
               " (only glTF: .glb and .gltf)");
     return std::nullopt;
   }
+
   DataPtr data(raw, cgltf_free);
+
   if (cgltf_load_buffers(&options, data.get(), path.c_str()) !=
       cgltf_result_success)
   {
     LOG_ERROR("Model import: can't load the data " + path + " refers to");
     return std::nullopt;
   }
+
   if (!valid(*data, path))
     return std::nullopt;
 
@@ -1094,6 +1263,7 @@ std::optional<ModelData> importModel(const std::filesystem::path& file,
   const cgltf_scene* scene =
       data->scene ? data->scene
                   : (data->scenes_count ? &data->scenes[0] : nullptr);
+
   if (scene)
     for (cgltf_size i = 0; i < scene->nodes_count; ++i)
       appendNode(*scene->nodes[i], placement, textures, model.whole);
@@ -1106,6 +1276,7 @@ std::optional<ModelData> importModel(const std::filesystem::path& file,
   const std::unordered_map<const cgltf_mesh*, std::string> partOf =
       partNames(*data);
   const auto names = nodeNames(*data);
+
   for (cgltf_size i = 0; i < data->meshes_count; ++i)
     if (const auto name = partOf.find(&data->meshes[i]); name != partOf.end())
     {
@@ -1114,9 +1285,11 @@ std::optional<ModelData> importModel(const std::filesystem::path& file,
       const cgltf_skin* skin = skinOf(*data, data->meshes[i]);
       appendMesh(
           data->meshes[i], placement, textures, part.mesh, skin != nullptr);
+
       if (skin && skin->joints_count > 0)
       {
         std::shared_ptr<MeshSkin> meshSkin = readSkin(*skin, placement, names);
+
         // Joints the vertices name that the skin doesn't have move nothing.
         for (SkinWeights& weights : part.mesh.skinWeights)
           for (int j = 0; j < 4; ++j)
@@ -1125,14 +1298,17 @@ std::optional<ModelData> importModel(const std::filesystem::path& file,
               weights.joints[j] = 0;
               weights.weights[j] = 0.0f;
             }
+
         computeJointBounds(
             *meshSkin, part.mesh.vertices, part.mesh.skinWeights);
         part.mesh.skin = std::move(meshSkin);
       }
       else
         part.mesh.skinWeights.clear();
+
       model.parts.push_back(std::move(part));
     }
+
   model.animations = readAnimations(*data, settings.scale, names);
 
   // The node tree, for placing the parts (and colliders) as entities.
@@ -1144,6 +1320,7 @@ std::optional<ModelData> importModel(const std::filesystem::path& file,
     LOG_ERROR("Model import: " + path + " has no triangles");
     return std::nullopt;
   }
+
   return model;
 }
 

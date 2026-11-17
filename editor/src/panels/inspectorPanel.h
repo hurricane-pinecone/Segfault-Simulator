@@ -1,16 +1,15 @@
 #pragma once
 
-#include "panels/panel.h"
-#include "scene/unusedOverrides.h"
-
 #include "engine/core/assets/assetDatabase.h"
 #include "engine/core/ecs/entity.h"
 #include "engine/core/rendering/material.h"
 #include "engine/core/rendering/terrain.h"
 #include "engine/core/rendering/visualStyle.h"
 #include "engine/runtime/assetStore/modelData.h"
+#include "panels/panel.h"
+#include "scene/unusedOverrides.h"
 
-#include "nlohmann/json.hpp"
+#include <nlohmann/json.hpp>
 
 #include <cstdint>
 #include <filesystem>
@@ -87,23 +86,6 @@ protected:
   void drawContents(EditorContext& context) override;
 
 private:
-  // A selected material asset's editor.
-  void drawMaterial(EditorContext& context, const sfs::AssetRecord& record);
-  // A terrain material's layers and splat map (in drawMaterial()): true if
-  // they changed.
-  bool drawTerrain(EditorContext& context, const sfs::AssetRecord& record, sfs::TerrainAsset& terrain);
-  void drawScriptableObject(EditorContext& context, const sfs::AssetRecord& record);
-  // A selected visual style's editor (every edit saved and shown live).
-  void drawVisualStyle(EditorContext& context, const sfs::AssetRecord& record);
-  // For an entity in a prefab instance: which prefab, and Apply / Revert.
-  void drawPrefabHeader(EditorContext& context, const sfs::Entity& entity);
-  // For a model's node: its stable id and name path, dimmed, and a warning
-  // when siblings share its name (its id then follows their order).
-  void drawModelNode(EditorContext& context, const sfs::Entity& entity);
-  // For an instance root: the saved changes naming entities its prefab no
-  // longer has, each to reattach to an entity it has now, or to remove.
-  void drawUnusedOverrides(EditorContext& context, const sfs::Entity& root);
-
   // A model's nodes and their name paths, as its file had them when it was
   // last written (`written`), last looked at `checked` (ImGui's clock).
   struct ModelNodes
@@ -114,17 +96,6 @@ private:
     std::vector<sfs::ModelNode> nodes;
     std::vector<std::string> paths;
   };
-  // The model a node of an instance came from, and its nodes (read from its
-  // file once, again when it changes); null if `entity` isn't a model's node
-  // or the file can't be read.
-  const ModelNodes* modelNodesOf(EditorContext& context,
-                                 const sfs::Entity& entity);
-
-  std::string m_componentFilter; // the Add Component search box
-  std::string m_tagFilter;       // the Add Tag search box
-  EntityPickerSearch m_pickSearch;        // an entity reference picker's search
-  std::string m_renamedFrom;              // Reattach to...: the node's old name
-  std::optional<ModelNodes> m_modelNodes; // the last model's, as read
   // The selected instance's unused overrides, as last read (at `revision` of
   // the history), with each one's line of text, and whether the instance has
   // model nodes (so a reattach can name a node's old name).
@@ -136,20 +107,56 @@ private:
     std::vector<std::string> labels;
     bool modelNodes = false;
   };
+  // Prefab actions asked for while drawing, done once the panel is drawn.
+  enum class InstanceAction
+  {
+    Apply,
+    Revert
+  };
+
+  // A selected material asset's editor.
+  void drawMaterial(EditorContext& context, const sfs::AssetRecord& record);
+  // For a model's node: its stable id and name path, dimmed, and a warning
+  // when siblings share its name (its id then follows their order).
+  void drawModelNode(EditorContext& context, const sfs::Entity& entity);
+  // For an entity in a prefab instance: which prefab, and Apply / Revert.
+  void drawPrefabHeader(EditorContext& context, const sfs::Entity& entity);
+  void drawScriptableObject(EditorContext& context,
+                            const sfs::AssetRecord& record);
+  // A terrain material's layers and splat map (in drawMaterial()): true if
+  // they changed.
+  bool drawTerrain(EditorContext& context,
+                   const sfs::AssetRecord& record,
+                   sfs::TerrainAsset& terrain);
+  // For an instance root: the saved changes naming entities its prefab no
+  // longer has, each to reattach to an entity it has now, or to remove.
+  void drawUnusedOverrides(EditorContext& context, const sfs::Entity& root);
+  // A selected visual style's editor (every edit saved and shown live).
+  void drawVisualStyle(EditorContext& context, const sfs::AssetRecord& record);
+  // The model a node of an instance came from, and its nodes (read from its
+  // file once, again when it changes); null if `entity` isn't a model's node
+  // or the file can't be read.
+  const ModelNodes* modelNodesOf(EditorContext& context,
+                                 const sfs::Entity& entity);
+
+  std::string m_componentFilter;          // the Add Component search box
+  std::string m_tagFilter;                // the Add Tag search box
+  EntityPickerSearch m_pickSearch;        // an entity reference picker's search
+  std::string m_renamedFrom;              // Reattach to...: the node's old name
+  std::optional<ModelNodes> m_modelNodes; // the last model's, as read
   UnusedList m_unused;
-  sfs::AssetId m_materialId;     // the material being edited, as last read
+  sfs::AssetId m_materialId; // the material being edited, as last read
   std::optional<sfs::MaterialAsset> m_material;
-  sfs::AssetId m_scriptableId;                   // the scriptable object being edited, as last read
-  std::optional<nlohmann::json> m_data;    // its file's contents
-  sfs::AssetId m_styleId;                  // the visual style being edited, as last read
+  sfs::AssetId
+      m_scriptableId; // the scriptable object being edited, as last read
+  std::optional<nlohmann::json> m_data; // its file's contents
+  sfs::AssetId m_styleId; // the visual style being edited, as last read
   std::optional<sfs::VisualStyle> m_style;
   std::string m_newOverrideName; // the style's Material Overrides' Add row
-  std::string m_newVariantTag;             // the material Variants' Add row
-
-  // Prefab actions asked for while drawing, done once the panel is drawn.
-  enum class InstanceAction { Apply, Revert };
+  std::string m_newVariantTag;   // the material Variants' Add row
   std::optional<InstanceAction> m_pendingInstanceAction;
-  std::optional<std::pair<std::string, std::string>> m_pendingRevert; // component, field
+  std::optional<std::pair<std::string, std::string>>
+      m_pendingRevert; // component, field
   std::map<std::string, std::string>
       m_pendingReattach; // unused paths: old -> new
   std::optional<unusedOverrides::Unused> m_pendingRemoveUnused;

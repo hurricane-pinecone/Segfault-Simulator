@@ -2,7 +2,7 @@
 
 #include "history/editorHistory.h"
 
-#include "imgui.h"
+#include <imgui.h>
 
 #include <string>
 
@@ -120,8 +120,10 @@ bool undoable(EditorHistory* history, T& value, Widget&& widget)
 
   if (history && (ImGui::IsItemActivated() || changed))
     history->beginChange();
+
   if (changed)
     value = copy;
+
   if (history &&
       (ImGui::IsItemDeactivated() || (changed && !ImGui::IsItemActive())))
     history->endChange();

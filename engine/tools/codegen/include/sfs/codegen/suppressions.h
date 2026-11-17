@@ -2,6 +2,7 @@
 
 #include "sfs/codegen/model.h"
 
+#include <cstdint>
 #include <filesystem>
 #include <string_view>
 #include <vector>

@@ -1,7 +1,7 @@
 #pragma once
 
-#include "glm/glm/ext/vector_float4.hpp"
-#include "glm/glm/ext/vector_int2.hpp"
+#include <glm/glm/ext/vector_float4.hpp>
+#include <glm/glm/ext/vector_int2.hpp>
 
 #include <cstdint>
 #include <memory>
@@ -72,9 +72,6 @@ struct UiQuad
  */
 struct UiDrawList
 {
-  std::vector<UiQuad> quads;
-  std::vector<std::shared_ptr<const std::vector<UiQuad>>> parts;
-
   /** Each quad, in the order they're drawn. */
   template <typename Visit>
   void forEach(Visit&& visit) const
@@ -82,9 +79,13 @@ struct UiDrawList
     for (const auto& part : parts)
       for (const UiQuad& quad : *part)
         visit(quad);
+
     for (const UiQuad& quad : quads)
       visit(quad);
   }
+
+  std::vector<UiQuad> quads;
+  std::vector<std::shared_ptr<const std::vector<UiQuad>>> parts;
 };
 
 } // namespace sfs

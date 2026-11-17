@@ -6,13 +6,25 @@
 #include "engine/core/components/pointLightComponent.h"
 #include "engine/core/components/spriteComponent.h"
 #include "engine/core/components/transformComponent.h"
+#include "engine/core/ecs/entity.h"
+#include "engine/core/ecs/hierarchyLinks.h"
+#include "engine/core/rendering/camera.h"
 #include "engine/core/sceneData/ambientLighting.h"
 #include "engine/core/sceneData/directionalLighting.h"
 #include "engine/core/sceneData/wind.h"
 #include "engine/runtime/animation/animationSystem.h"
 #include "engine/runtime/rendering/renderSystem.h"
+#include "engine/runtime/rendering/space2D.h"
+#include "engine/runtime/rendering/standardScene.h"
+#include "engine/runtime/sceneManager/scene.h"
+
+#include <glm/glm/ext/vector_float2.hpp>
 
 #include <algorithm>
+#include <cstddef>
+#include <optional>
+#include <string>
+#include <vector>
 
 void EditorScene::onInit()
 {
@@ -29,11 +41,61 @@ void EditorScene::onInit()
   resetToDefault();
 }
 
+sfs::Entity EditorScene::atSaveOrder(std::size_t index)
+{
+  const std::vector<sfs::HierarchyLinks::Placed>& order = preorder();
+  return index < order.size() ? getEntity(order[index].id) : sfs::Entity();
+}
+
+void EditorScene::clear(bool keepSceneData)
+{
+  for (const sfs::Entity& entity : entities())
+    destroyEntity(entity);
+
+  flushEntities();
+
+  if (!keepSceneData)
+    clearSceneData();
+}
+
+sfs::Entity EditorScene::createCamera(const std::string& name,
+                                      const sfs::Camera& view,
+                                      const sfs::Space2D* space)
+{
+  sfs::Entity entity = createEmpty(name);
+
+  if (space)
+  {
+    entity.getComponent<sfs::TransformComponent>()->setPosition2D(
+        space->unplace(glm::vec2(view.target), 0.0f));
+    sfs::CameraComponent camera;
+    camera.orthographic = true;
+    camera.orthoHeight = view.orthoHeight;
+    camera.farPlane = 100000.0f;
+    entity.addComponent<sfs::CameraComponent>(camera);
+    return entity;
+  }
+
+  *entity.getComponent<sfs::TransformComponent>() =
+      sfs::TransformComponent(view.position(), view.orientation());
+  sfs::CameraComponent camera;
+  camera.focusDistance = view.distance;
+  entity.addComponent<sfs::CameraComponent>(camera);
+  return entity;
+}
+
 sfs::Entity EditorScene::createEmpty(const std::string& name)
 {
   sfs::Entity entity = createEntity();
   entity.addComponent<sfs::NameComponent>(name);
   entity.addComponent<sfs::TransformComponent>();
+  return entity;
+}
+
+sfs::Entity EditorScene::createPointLight(const std::string& name)
+{
+  sfs::Entity entity = createEmpty(name);
+  entity.addComponent<sfs::PointLightComponent>();
   return entity;
 }
 
@@ -46,13 +108,6 @@ sfs::Entity EditorScene::createPrimitive(Primitive primitive,
   return entity;
 }
 
-sfs::Entity EditorScene::createPointLight(const std::string& name)
-{
-  sfs::Entity entity = createEmpty(name);
-  entity.addComponent<sfs::PointLightComponent>();
-  return entity;
-}
-
 sfs::Entity EditorScene::createSprite(const std::string& name)
 {
   sfs::Entity entity = createEmpty(name);
@@ -60,61 +115,10 @@ sfs::Entity EditorScene::createSprite(const std::string& name)
   return entity;
 }
 
-sfs::Entity EditorScene::createCamera(const std::string& name,
-                                      const sfs::Camera& view,
-                                      const sfs::Space2D* space)
-{
-  sfs::Entity entity = createEmpty(name);
-  if (space)
-  {
-    entity.getComponent<sfs::TransformComponent>()->setPosition2D(
-        space->unplace(glm::vec2(view.target), 0.0f));
-    sfs::CameraComponent camera;
-    camera.orthographic = true;
-    camera.orthoHeight = view.orthoHeight;
-    camera.farPlane = 100000.0f;
-    entity.addComponent<sfs::CameraComponent>(camera);
-    return entity;
-  }
-  *entity.getComponent<sfs::TransformComponent>() =
-      sfs::TransformComponent(view.position(), view.orientation());
-  sfs::CameraComponent camera;
-  camera.focusDistance = view.distance;
-  entity.addComponent<sfs::CameraComponent>(camera);
-  return entity;
-}
-
 void EditorScene::destroyBranch(const sfs::Entity& entity)
 {
   sfs::Scene::destroyBranch(entity);
   flushEntities();
-}
-
-std::optional<std::size_t> EditorScene::saveOrderOf(const sfs::Entity& entity)
-{
-  if (!entity.isValid())
-    return std::nullopt;
-  const std::vector<sfs::HierarchyLinks::Placed>& order = preorder();
-  const sfs::Entity::EntityId id = entity.getId();
-  const auto it = std::find_if(order.begin(), order.end(), [id](const auto& placed) { return placed.id == id; });
-  if (it == order.end())
-    return std::nullopt;
-  return static_cast<std::size_t>(it - order.begin());
-}
-
-sfs::Entity EditorScene::atSaveOrder(std::size_t index)
-{
-  const std::vector<sfs::HierarchyLinks::Placed>& order = preorder();
-  return index < order.size() ? getEntity(order[index].id) : sfs::Entity();
-}
-
-void EditorScene::clear(bool keepSceneData)
-{
-  for (const sfs::Entity& entity : entities())
-    destroyEntity(entity);
-  flushEntities();
-  if (!keepSceneData)
-    clearSceneData();
 }
 
 void EditorScene::resetToDefault(Style style)
@@ -125,16 +129,20 @@ void EditorScene::resetToDefault(Style style)
   // new scene always was.
   addSceneData<sfs::DirectionalLighting>();
   addSceneData<sfs::AmbientLighting>();
+
   if (style == Style::ThreeD)
     addSceneData<sfs::Wind>();
 
   sfs::RenderSystem& render = renderSystem();
+
   if (style != Style::ThreeD)
   {
     // A 2D game: its plane, a camera over it, and a sprite to give an image.
     sfs::Space2D space;
+
     if (style == Style::Isometric)
       space.projection = sfs::Space2D::Projection::Isometric;
+
     render.setSpace2D(space);
     sfs::Camera view;
     view.orthoHeight = 360.0f;
@@ -143,6 +151,7 @@ void EditorScene::resetToDefault(Style style)
     flushEntities();
     return;
   }
+
   render.clearSpace2D();
 
   sfs::Entity ground = createPrimitive(Primitive::Plane, "Ground");
@@ -155,4 +164,22 @@ void EditorScene::resetToDefault(Style style)
   sfs::Entity light = createPointLight("Point Light");
   light.getComponent<sfs::TransformComponent>()->position = {2.0f, -2.0f, 2.0f};
   flushEntities();
+}
+
+std::optional<std::size_t> EditorScene::saveOrderOf(const sfs::Entity& entity)
+{
+  if (!entity.isValid())
+    return std::nullopt;
+
+  const std::vector<sfs::HierarchyLinks::Placed>& order = preorder();
+  const sfs::Entity::EntityId id = entity.getId();
+  const auto it =
+      std::find_if(order.begin(),
+                   order.end(),
+                   [id](const auto& placed) { return placed.id == id; });
+
+  if (it == order.end())
+    return std::nullopt;
+
+  return static_cast<std::size_t>(it - order.begin());
 }

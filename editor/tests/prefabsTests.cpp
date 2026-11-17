@@ -1,54 +1,35 @@
 #include "../../engine/tests/runtime/rendering/mockRenderer.h"
 #include "../../engine/tests/testHarness.h"
-#include "partsTestSupport.h"
-
 #include "editorContext.h"
-#include "history/editorHistory.h"
-#include "scene/editorScene.h"
-#include "scene/prefabs.h"
-#include "scene/sceneDocument.h"
-#include "scene/unusedOverrides.h"
-
 #include "engine/core/assets/assetDatabase.h"
 #include "engine/core/sceneData/ambientLighting.h"
 #include "engine/core/sceneData/directionalLighting.h"
 #include "engine/core/sceneData/wind.h"
 #include "engine/runtime/assetStore/assetStore.h"
-#include "engine/runtime/rendering/renderSystem.h"
+#include "engine/runtime/sceneManager/scene.h"
 #include "engine/runtime/sceneManager/sceneManager.h"
 #include "engine/runtime/serialization/prefabComponents.h"
+#include "history/editorHistory.h"
+#include "partsTestSupport.h"
+#include "scene/editorScene.h"
+#include "scene/entityLabel.h"
+#include "scene/prefabs.h"
+#include "scene/sceneDocument.h"
+#include "scene/unusedOverrides.h"
 
+#include <filesystem>
 #include <memory>
+#include <string>
+#include <vector>
 
 using namespace partsTests;
 
 namespace
 {
-constexpr const char* kRigId = "a123456789abcdef0123456789abcdef";
-constexpr const char* kYardId = "b123456789abcdef0123456789abcdef";
-const std::string kRig = std::string("asset:") + kRigId;
-const std::string kYard = std::string("asset:") + kYardId;
-
-// A project with a rig prefab (its arm and blades its parts) and a yard
-// holding a rig as its entity 5, with a post (3) whose arm is the rig's.
-fs::path writeProject()
-{
-  const fs::path project = fs::temp_directory_path() / "sfs-prefabs-test";
-  fs::remove_all(project);
-  writeFile(project / "prefabs" / "Rig.prefab",
-            rigPrefab({{"arm", "1"}, {"blades", {"2", "3"}}}));
-  writeMeta(project / "prefabs" / "Rig.prefab", kRigId);
-  json yard = named("Yard");
-  yard["children"] = json::array(
-      {{{"$id", 5}, {"$prefab", kRig}},
-       named("Post",
-             {{"$id", 3},
-              {"PartsComponent", {{"arm", "5/1"}, {"blades", {}}}}})});
-  writeFile(project / "prefabs" / "Yard.prefab",
-            {{"formatVersion", 2}, {"root", yard}});
-  writeMeta(project / "prefabs" / "Yard.prefab", kYardId);
-  return project;
-}
+constexpr const char* RIG_ID = "a123456789abcdef0123456789abcdef";
+constexpr const char* YARD_ID = "b123456789abcdef0123456789abcdef";
+const std::string kRig = std::string("asset:") + RIG_ID;
+const std::string kYard = std::string("asset:") + YARD_ID;
 
 // The editor's side of one scene: its document, history and context.
 struct Editor
@@ -99,9 +80,31 @@ struct Editor
     for (const Entity& entity : scene->entities())
       if (entityLabel(entity) == name)
         return entity;
+
     return {};
   }
 };
+
+// A project with a rig prefab (its arm and blades its parts) and a yard
+// holding a rig as its entity 5, with a post (3) whose arm is the rig's.
+fs::path writeProject()
+{
+  const fs::path project = fs::temp_directory_path() / "sfs-prefabs-test";
+  fs::remove_all(project);
+  writeFile(project / "prefabs" / "Rig.prefab",
+            rigPrefab({{"arm", "1"}, {"blades", {"2", "3"}}}));
+  writeMeta(project / "prefabs" / "Rig.prefab", RIG_ID);
+  json yard = named("Yard");
+  yard["children"] = json::array(
+      {{{"$id", 5}, {"$prefab", kRig}},
+       named("Post",
+             {{"$id", 3},
+              {"PartsComponent", {{"arm", "5/1"}, {"blades", {}}}}})});
+  writeFile(project / "prefabs" / "Yard.prefab",
+            {{"formatVersion", 2}, {"root", yard}});
+  writeMeta(project / "prefabs" / "Yard.prefab", YARD_ID);
+  return project;
+}
 } // namespace
 
 int main()
@@ -193,6 +196,7 @@ int main()
 
     if (!left.empty())
       prefabs::removeUnused(editor.context, rig, left[0]);
+
     rig = editor.context.selection;
     CHECK(unusedOverrides::of(rig).empty());
     CHECK(!editor.scene->serializer().instanceEntry(rig).contains("$removed"));

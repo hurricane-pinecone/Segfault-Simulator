@@ -1,8 +1,8 @@
 #pragma once
 
-#include <cstdint>
-
 #include "engine/core/rendering/mesh.h"
+
+#include <cstdint>
 
 namespace sfs
 {

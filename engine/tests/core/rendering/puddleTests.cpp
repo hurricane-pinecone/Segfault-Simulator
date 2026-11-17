@@ -1,12 +1,18 @@
 #include "../../testHarness.h"
+#include "engine/core/rendering/deformation.h"
+#include "engine/core/rendering/puddles.h"
+#include "engine/core/rendering/terrain.h"
 
-#include <engine/core/rendering/deformation.h>
-#include <engine/core/rendering/puddles.h>
-#include <engine/core/rendering/terrain.h>
-
-#include "glm/glm/geometric.hpp"
+#include <glm/glm/ext/matrix_float4x4.hpp>
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
+#include <glm/glm/ext/vector_float4.hpp>
+#include <glm/glm/geometric.hpp>
 
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <memory>
 #include <vector>
 
 using namespace sfs;
@@ -109,8 +115,10 @@ int main()
     const std::vector<glm::vec4> meadow =
         puddleGround(ground, terrain, puddleWindowOrigin({0.0f, 0.0f}));
     bool dry = true;
+
     for (const glm::vec4& texel : meadow)
       dry = dry && near(texel.w, 0.0f);
+
     CHECK(dry);
   }
 

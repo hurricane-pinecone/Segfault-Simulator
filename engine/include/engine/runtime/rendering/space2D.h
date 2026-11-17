@@ -1,9 +1,10 @@
 #pragma once
 
-#include "glm/glm/ext/vector_float2.hpp"
-#include "glm/glm/ext/vector_float3.hpp"
-#include "glm/glm/geometric.hpp"
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
+#include <glm/glm/geometric.hpp>
 
+#include <algorithm>
 #include <cmath>
 
 namespace sfs
@@ -33,16 +34,21 @@ struct Space2D
     Isometric,
   };
 
-  Projection projection = Projection::Flat;
-  // Sprite pixels per world unit (a flat game's units are world units).
-  float pixelsPerUnit = 1.0f;
-  // Isometric: a tile's diamond, and one unit of height, in sprite pixels.
-  glm::vec2 tilePixels{32.0f, 16.0f};
-  float heightPixels = 8.0f;
-  // Flat: the game's y runs down the screen (as screen pixels do), not up.
-  bool yDown = false;
-  // Flat: things lower on the plane draw in front (a top-down game).
-  bool ySort = false;
+  /** A direction on (or off) the game's plane, as the world has it. */
+  glm::vec3 direction(glm::vec3 game) const
+  {
+    if (projection == Projection::Flat)
+      return {game.x, yDown ? -game.y : game.y, game.z};
+
+    const Iso iso = isometric();
+    return {glm::dot(iso.right, game),
+            glm::dot(iso.up, game),
+            glm::dot(iso.toViewer, game)};
+  }
+
+  /** Whether the game's plane is the world's mirrored (meshes built through it
+   * turn their triangles the other way). */
+  bool mirrored() const { return projection == Projection::Isometric || yDown; }
 
   /** Where a point of the game's plane, `height` up and `layer` forward, is. */
   glm::vec3 place(glm::vec2 position, float height = 0.0f, int layer = 0) const
@@ -54,6 +60,7 @@ struct Space2D
               up,
               static_cast<float>(layer) - (ySort ? up * 1.0e-4f : 0.0f)};
     }
+
     const Iso iso = isometric();
     const glm::vec3 point(position, height * iso.heightTiles);
     // Layers only nudge things forward here: depth already orders them.
@@ -62,6 +69,28 @@ struct Space2D
                      glm::dot(iso.toViewer, point)) *
                iso.edgePixels / pixelsPerUnit +
            glm::vec3(0.0f, 0.0f, static_cast<float>(layer) * 1.0e-3f);
+  }
+
+  /** A length of the game's plane (a particle's size, say) in the world. */
+  float scale() const
+  {
+    return projection == Projection::Flat
+               ? 1.0f
+               : isometric().edgePixels / pixelsPerUnit;
+  }
+
+  /**
+   * How much nearer the viewer a thing standing up from the plane gets, a
+   * world unit up the screen: a standing sprite leans this much, so its top
+   * is in front of what's behind it, as a real one's would be.
+   */
+  float standingLean() const
+  {
+    if (projection == Projection::Flat)
+      return 0.0f;
+
+    const Iso iso = isometric();
+    return iso.sin / iso.cos;
   }
 
   /**
@@ -75,49 +104,14 @@ struct Space2D
       const float up = world.y - height;
       return {world.x, yDown ? -up : up};
     }
-    constexpr float kRoot2 = 1.41421356f;
+
+    constexpr float ROOT2 = 1.41421356f;
     const Iso iso = isometric();
     const glm::vec2 edges = world * pixelsPerUnit / iso.edgePixels;
-    const float difference = edges.x * kRoot2; // x - y
+    const float difference = edges.x * ROOT2; // x - y
     const float sum =
-        (height * iso.heightTiles * iso.cos - edges.y) * kRoot2 / iso.sin;
+        (height * iso.heightTiles * iso.cos - edges.y) * ROOT2 / iso.sin;
     return {(sum + difference) * 0.5f, (sum - difference) * 0.5f};
-  }
-
-  /** A direction on (or off) the game's plane, as the world has it. */
-  glm::vec3 direction(glm::vec3 game) const
-  {
-    if (projection == Projection::Flat)
-      return {game.x, yDown ? -game.y : game.y, game.z};
-    const Iso iso = isometric();
-    return {glm::dot(iso.right, game),
-            glm::dot(iso.up, game),
-            glm::dot(iso.toViewer, game)};
-  }
-
-  /** Whether the game's plane is the world's mirrored (meshes built through it
-   * turn their triangles the other way). */
-  bool mirrored() const { return projection == Projection::Isometric || yDown; }
-
-  /**
-   * How much nearer the viewer a thing standing up from the plane gets, a
-   * world unit up the screen: a standing sprite leans this much, so its top
-   * is in front of what's behind it, as a real one's would be.
-   */
-  float standingLean() const
-  {
-    if (projection == Projection::Flat)
-      return 0.0f;
-    const Iso iso = isometric();
-    return iso.sin / iso.cos;
-  }
-
-  /** A length of the game's plane (a particle's size, say) in the world. */
-  float scale() const
-  {
-    return projection == Projection::Flat
-               ? 1.0f
-               : isometric().edgePixels / pixelsPerUnit;
   }
 
   /** Which way the game's +y runs in the world (its x always runs right). */
@@ -125,6 +119,17 @@ struct Space2D
   {
     return projection == Projection::Flat && yDown ? -1.0f : 1.0f;
   }
+
+  Projection projection = Projection::Flat;
+  // Sprite pixels per world unit (a flat game's units are world units).
+  float pixelsPerUnit = 1.0f;
+  // Isometric: a tile's diamond, and one unit of height, in sprite pixels.
+  glm::vec2 tilePixels{32.0f, 16.0f};
+  float heightPixels = 8.0f;
+  // Flat: the game's y runs down the screen (as screen pixels do), not up.
+  bool yDown = false;
+  // Flat: things lower on the plane draw in front (a top-down game).
+  bool ySort = false;
 
 private:
   // The isometric camera's frame on the grid: the screen's right and up, and
@@ -140,17 +145,18 @@ private:
     glm::vec3 up;
     glm::vec3 toViewer;
   };
+
   Iso isometric() const
   {
-    constexpr float kHalfRoot2 = 0.70710678f;
+    constexpr float HALF_ROOT2 = 0.70710678f;
     Iso iso;
     iso.sin = tilePixels.x > 0.0f ? tilePixels.y / tilePixels.x : 0.5f;
     iso.cos = std::sqrt(std::max(1.0f - iso.sin * iso.sin, 1.0e-6f));
-    iso.edgePixels = tilePixels.x * kHalfRoot2;
+    iso.edgePixels = tilePixels.x * HALF_ROOT2;
     iso.heightTiles = heightPixels / (iso.cos * iso.edgePixels);
-    iso.right = {kHalfRoot2, -kHalfRoot2, 0.0f};
-    iso.up = {-iso.sin * kHalfRoot2, -iso.sin * kHalfRoot2, iso.cos};
-    iso.toViewer = {iso.cos * kHalfRoot2, iso.cos * kHalfRoot2, iso.sin};
+    iso.right = {HALF_ROOT2, -HALF_ROOT2, 0.0f};
+    iso.up = {-iso.sin * HALF_ROOT2, -iso.sin * HALF_ROOT2, iso.cos};
+    iso.toViewer = {iso.cos * HALF_ROOT2, iso.cos * HALF_ROOT2, iso.sin};
     return iso;
   }
 };

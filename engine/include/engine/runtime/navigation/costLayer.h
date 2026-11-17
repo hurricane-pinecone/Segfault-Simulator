@@ -1,10 +1,11 @@
 #pragma once
 
-#include <memory>
-#include <vector>
-
 #include "engine/runtime/navigation/geometry.h"
 
+#include <glm/glm/ext/vector_float2.hpp>
+
+#include <memory>
+#include <utility>
 #include <vector>
 
 namespace sfs::nav
@@ -23,6 +24,8 @@ public:
   virtual float factor(Pose2 pose, int mode) const = 0;
   /** The lowest factor anywhere (the heuristic stays admissible). */
   virtual float floor() const { return 1.0f; }
+  /** Where nothing may stop and wait (gateways, a working corridor). */
+  virtual bool noWait(glm::vec2) const { return false; }
   /**
    * Lower bounds of the factor over a raster's cells (the 2D heuristic);
    * the default is floor() everywhere.
@@ -33,8 +36,6 @@ public:
                       int height,
                       int mode,
                       std::vector<float>& out) const;
-  /** Where nothing may stop and wait (gateways, a working corridor). */
-  virtual bool noWait(glm::vec2) const { return false; }
 };
 
 /** Ordinary ground everywhere. */
@@ -58,13 +59,13 @@ public:
   }
   float factor(Pose2 pose, int mode) const override;
   float floor() const override;
+  bool noWait(glm::vec2 p) const override;
   void raster(glm::vec2 origin,
               float cell,
               int width,
               int height,
               int mode,
               std::vector<float>& out) const override;
-  bool noWait(glm::vec2 p) const override;
 
 private:
   std::vector<std::shared_ptr<const CostLayer>> m_layers;

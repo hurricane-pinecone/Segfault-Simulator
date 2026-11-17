@@ -1,13 +1,18 @@
 #pragma once
 
 #include "document.h"
-
-#include <sfs/codegen/attributes.h>
-#include <sfs/codegen/rules.h>
+#include "sfs/codegen/attributes.h"
+#include "sfs/codegen/model.h"
+#include "sfs/codegen/rules.h"
+#include "sfs/lsp/protocol.h"
 
 #include <nlohmann/json.hpp>
 
+#include <cstdint>
+#include <filesystem>
 #include <functional>
+#include <string>
+#include <vector>
 
 // What sfs-lsp answers about a document: completion, hover and code actions.
 namespace sfs::lsp

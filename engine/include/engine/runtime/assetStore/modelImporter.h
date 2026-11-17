@@ -1,7 +1,8 @@
 #pragma once
 
 #include "engine/runtime/assetStore/modelData.h"
-#include "nlohmann/json.hpp"
+
+#include <nlohmann/json.hpp>
 
 #include <cstdint>
 #include <filesystem>
@@ -16,9 +17,9 @@ namespace sfs
 /** How a model file is brought in; kept in its asset's .meta "settings". */
 struct ModelImportSettings
 {
-  float scale = 1.0f; // multiplies every position (e.g. 0.01 for centimetres)
-
   static ModelImportSettings fromJson(const nlohmann::json& settings);
+
+  float scale = 1.0f; // multiplies every position (e.g. 0.01 for centimetres)
 };
 
 /**

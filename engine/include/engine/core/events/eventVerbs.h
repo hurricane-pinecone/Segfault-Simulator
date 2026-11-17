@@ -1,12 +1,13 @@
 #pragma once
 
-#include "engine/core/ecs/entity.h"
+#include "engine/core/ecs/entityDeclaration.h"
 #include "engine/core/events/eventBroadcast.h"
 #include "engine/core/events/eventConsumer.h"
 #include "engine/core/events/eventOwner.h"
-#include "engine/core/events/eventRules.h"
+#include "engine/core/events/eventQueue.h"
 #include "engine/core/events/events.h"
 
+#include <string_view>
 #include <typeinfo>
 #include <utility>
 
@@ -40,6 +41,13 @@ struct EventHost
    */
   static inline void declaring(EventVerbs& user, bool on);
   /**
+   * A system's or service's handle owner part, which its host runs (begin(),
+   * dispatch(), end()).
+   * @param user the system or service
+   * @return it
+   */
+  static inline EventOwner& owner(EventVerbs& user);
+  /**
    * The owner of handles made with Events::consumer() and requester() while
    * an object sets up (onCreate); null after.
    * @param events the events
@@ -48,13 +56,6 @@ struct EventHost
    */
   static inline void
   settingUp(Events& events, EventOwner* owner, const std::type_info* who);
-  /**
-   * A system's or service's handle owner part, which its host runs (begin(),
-   * dispatch(), end()).
-   * @param user the system or service
-   * @return it
-   */
-  static inline EventOwner& owner(EventVerbs& user);
 };
 
 } // namespace detail
@@ -71,17 +72,9 @@ struct EventHost
 class EventVerbs
 {
 public:
-  virtual ~EventVerbs() = default;
   EventVerbs(const EventVerbs&) = delete;
+  virtual ~EventVerbs() = default;
   EventVerbs& operator=(const EventVerbs&) = delete;
-
-  /**
-   * Whether any of its handles has events it hasn't read: what a host can
-   * check before running an owner that only receives events.
-   * @return whether it has unconsumed events
-   */
-  bool hasUnconsumedEvents() const;
-
   /**
    * Whether it runs: a disabled system or service is skipped by its host
    * (and by render providers), its handles keeping their places so it
@@ -90,18 +83,105 @@ public:
    */
   bool enabled() const { return m_enabled; }
   /**
+   * Whether any of its handles has events it hasn't read: what a host can
+   * check before running an owner that only receives events.
+   * @return whether it has unconsumed events
+   */
+  bool hasUnconsumedEvents() const;
+  /**
    * Enables or disables it (see enabled()).
    * @param enabled whether it runs
    */
   inline void setEnabled(bool enabled)
   {
     m_enabled = enabled;
+
     if (!enabled)
       m_eventOwner.wasDisabled = true;
   }
 
 protected:
   EventVerbs() = default;
+
+  /**
+   * A broadcast of TEvent for a worker job's news (Events::broadcast()).
+   * @return the broadcast; one to nowhere without events
+   */
+  template <typename TEvent>
+  EventBroadcast<TEvent> broadcast()
+  {
+    Events* events = eventsOrLog();
+    return events ? events->template broadcast<TEvent>()
+                  : EventBroadcast<TEvent>{};
+  }
+
+  /**
+   * Cancels the key's current entity news of TEvent, so readLatest() no
+   * longer gives it (Events::cancel()).
+   * @param key the entity it's about
+   */
+  template <typename TEvent>
+  void cancel(const Entity& key)
+  {
+    if (Events* events = eventsOrLog()) [[likely]]
+      events->template cancel<TEvent>(key);
+  }
+
+  /**
+   * A consumer of TEvent owned by this system or service, made in create()
+   * and kept as a member: registered at once, so nothing sent from then on
+   * is lost, and its handlers run before update() (a service's whenever it
+   * runs). Made elsewhere it is logged and a consumer of nothing is
+   * returned.
+   * @return the consumer
+   */
+  template <typename TEvent>
+  EventConsumer<TEvent> consumer()
+  {
+    Events* events = eventsOrLog();
+
+    if (!events) [[unlikely]]
+      return {};
+
+    detail::EventQueue<TEvent>& queue = events->template queue<TEvent>();
+
+    if (!m_declaring) [[unlikely]]
+    {
+      madeOutsideCreate(queue.name(), "consumer");
+      return {};
+    }
+
+    return EventConsumer<TEvent>(queue, &m_eventOwner, &typeid(*this));
+  }
+
+  /**
+   * A requester of TRequest owned by this system or service, made in
+   * create() and kept as a member: its builder, which handles the request's
+   * responses by role (onResponse(), onProgress(), onFailure() and their
+   * batch forms, or ignoreFailure()) and is assigned to an
+   * EventRequester<R>. Its response handlers run before update() (a
+   * service's whenever it runs). Made elsewhere it is logged and a
+   * requester of nothing is built.
+   * @return the requester's builder
+   */
+  template <typename TRequest>
+  EventRequesterBuilder<TRequest> requester()
+  {
+    using Builder = EventRequesterBuilder<TRequest>;
+    Events* events = eventsOrLog();
+
+    if (!events) [[unlikely]]
+      return Builder(EventRequester<TRequest>{});
+
+    if (!m_declaring) [[unlikely]]
+    {
+      madeOutsideCreate(events->template queue<TRequest>().name(), "requester");
+      return Builder(EventRequester<TRequest>{});
+    }
+
+    return Builder(
+        EventRequester<TRequest>(*events, &m_eventOwner, &typeid(*this)));
+  }
 
   /**
    * Sends an unkeyed event (Events::send()).
@@ -127,79 +207,6 @@ protected:
       events->send(key, std::forward<TEvent>(event));
   }
 
-  /**
-   * Cancels the key's current entity news of TEvent, so readLatest() no
-   * longer gives it (Events::cancel()).
-   * @param key the entity it's about
-   */
-  template <typename TEvent>
-  void cancel(const Entity& key)
-  {
-    if (Events* events = eventsOrLog()) [[likely]]
-      events->template cancel<TEvent>(key);
-  }
-
-  /**
-   * A broadcast of TEvent for a worker job's news (Events::broadcast()).
-   * @return the broadcast; one to nowhere without events
-   */
-  template <typename TEvent>
-  EventBroadcast<TEvent> broadcast()
-  {
-    Events* events = eventsOrLog();
-    return events ? events->template broadcast<TEvent>()
-                  : EventBroadcast<TEvent>{};
-  }
-
-  /**
-   * A consumer of TEvent owned by this system or service, made in create()
-   * and kept as a member: registered at once, so nothing sent from then on
-   * is lost, and its handlers run before update() (a service's whenever it
-   * runs). Made elsewhere it is logged and a consumer of nothing is
-   * returned.
-   * @return the consumer
-   */
-  template <typename TEvent>
-  EventConsumer<TEvent> consumer()
-  {
-    Events* events = eventsOrLog();
-    if (!events) [[unlikely]]
-      return {};
-    detail::EventQueue<TEvent>& queue = events->template queue<TEvent>();
-    if (!m_declaring) [[unlikely]]
-    {
-      madeOutsideCreate(queue.name(), "consumer");
-      return {};
-    }
-    return EventConsumer<TEvent>(queue, &m_eventOwner, &typeid(*this));
-  }
-
-  /**
-   * A requester of TRequest owned by this system or service, made in
-   * create() and kept as a member: its builder, which handles the request's
-   * responses by role (onResponse(), onProgress(), onFailure() and their
-   * batch forms, or ignoreFailure()) and is assigned to an
-   * EventRequester<R>. Its response handlers run before update() (a
-   * service's whenever it runs). Made elsewhere it is logged and a
-   * requester of nothing is built.
-   * @return the requester's builder
-   */
-  template <typename TRequest>
-  EventRequesterBuilder<TRequest> requester()
-  {
-    using Builder = EventRequesterBuilder<TRequest>;
-    Events* events = eventsOrLog();
-    if (!events) [[unlikely]]
-      return Builder(EventRequester<TRequest>{});
-    if (!m_declaring) [[unlikely]]
-    {
-      madeOutsideCreate(events->template queue<TRequest>().name(), "requester");
-      return Builder(EventRequester<TRequest>{});
-    }
-    return Builder(
-        EventRequester<TRequest>(*events, &m_eventOwner, &typeid(*this)));
-  }
-
 private:
   friend struct detail::EventHost;
 
@@ -209,6 +216,7 @@ private:
   {
     if (m_events) [[likely]]
       return m_events;
+
     noEvents();
     return nullptr;
   }

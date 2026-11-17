@@ -1,14 +1,16 @@
 #pragma once
 
 #include "engine/core/assets/assetDatabase.h"
+#include "engine/core/rendering/mesh.h"
 #include "engine/runtime/assetStore/modelData.h"
 
-#include "glm/glm/ext/vector_float2.hpp"
-#include "glm/glm/ext/vector_float4.hpp"
-
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_float4.hpp>
+#include <nlohmann/json.hpp>
 #include <SDL_surface.h>
 #include <SDL_ttf.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <mutex>

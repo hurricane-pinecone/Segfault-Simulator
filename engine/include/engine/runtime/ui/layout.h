@@ -2,7 +2,10 @@
 
 #include "engine/runtime/rendering/uiDraw.h"
 #include "engine/runtime/ui/ui.h"
-#include "glm/glm/ext/vector_float2.hpp"
+
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_float4.hpp>
+#include <glm/glm/ext/vector_int2.hpp>
 
 #include <cstdint>
 #include <functional>
@@ -21,24 +24,24 @@ namespace sfs::ui
 /** A rectangle in pixels from the screen's top left. */
 struct Rect
 {
-  float x = 0.0f;
-  float y = 0.0f;
-  float width = 0.0f;
-  float height = 0.0f;
-
   bool contains(glm::vec2 point) const
   {
     return point.x >= x && point.y >= y && point.x < x + width &&
            point.y < y + height;
   }
+  /** The part of it inside `other` (no size if none). */
+  Rect intersect(const Rect& other) const;
   /** Whether any of it is inside `other`. */
   bool overlaps(const Rect& other) const
   {
     return x < other.x + other.width && other.x < x + width &&
            y < other.y + other.height && other.y < y + height;
   }
-  /** The part of it inside `other` (no size if none). */
-  Rect intersect(const Rect& other) const;
+
+  float x = 0.0f;
+  float y = 0.0f;
+  float width = 0.0f;
+  float height = 0.0f;
 };
 
 /**
@@ -49,11 +52,6 @@ class TextShaper
 {
 public:
   virtual ~TextShaper() = default;
-  /** How far apart lines are. */
-  virtual float lineHeight(const std::string& font, float pixels) = 0;
-  /** How wide a line is. */
-  virtual float
-  width(const std::string& font, float pixels, std::string_view line) = 0;
   /** A line's glyphs as quads, its top left at `at`, in `color` (sRGB). */
   virtual void draw(const std::string& font,
                     float pixels,
@@ -69,6 +67,11 @@ public:
   virtual uint64_t generation() const { return 0; }
   /** Quads drawn from `texture` are still shown (kept from a past frame). */
   virtual void keep(const UiTexture* texture) { (void)texture; }
+  /** How far apart lines are. */
+  virtual float lineHeight(const std::string& font, float pixels) = 0;
+  /** How wide a line is. */
+  virtual float
+  width(const std::string& font, float pixels, std::string_view line) = 0;
 };
 
 /**
@@ -79,21 +82,21 @@ public:
  */
 struct SourceImage
 {
-  static constexpr int kMostLevels = 8;
   struct Level
   {
     glm::vec4 uv{0.0f, 0.0f, 1.0f, 1.0f}; // u, v, width, height (0 to 1)
     glm::ivec2 size{0, 0};                // pixels
   };
 
+  /** The level to draw it from `pixels` wide: the smallest at least that. */
+  const Level& levelFor(float pixels) const;
+  /** Its own size, in pixels. */
+  glm::ivec2 size() const { return level[0].size; }
+
+  static constexpr int kMostLevels = 8;
   const UiTexture* texture = nullptr;
   int levels = 1;
   Level level[kMostLevels];
-
-  /** Its own size, in pixels. */
-  glm::ivec2 size() const { return level[0].size; }
-  /** The level to draw it from `pixels` wide: the smallest at least that. */
-  const Level& levelFor(float pixels) const;
 };
 
 /**
@@ -292,18 +295,6 @@ void layout(const View& root,
 class Cache
 {
 public:
-  Cache();
-  ~Cache();
-  Cache(const Cache&) = delete;
-  Cache& operator=(const Cache&) = delete;
-
-  /** The last layout's quads, back to front (kept: shared, not copied). */
-  const std::shared_ptr<const std::vector<UiQuad>>& quads() const;
-  /** The last layout's hits, front last. */
-  const std::vector<Hit>& hits() const;
-  /** Forgets everything: the next layout lays it all out. */
-  void clear();
-
   /** What the last layout() did (for tests and timing). */
   struct Stats
   {
@@ -311,10 +302,20 @@ public:
     int placed = 0;    // views placed (laid out and drawn) again
     int reused = 0;    // views whose drawing was used again
   };
-  const Stats& stats() const;
-
   struct Data;
+
+  Cache();
+  Cache(const Cache&) = delete;
+  ~Cache();
+  Cache& operator=(const Cache&) = delete;
+  /** Forgets everything: the next layout lays it all out. */
+  void clear();
   Data& data() { return *m_data; }
+  /** The last layout's hits, front last. */
+  const std::vector<Hit>& hits() const;
+  /** The last layout's quads, back to front (kept: shared, not copied). */
+  const std::shared_ptr<const std::vector<UiQuad>>& quads() const;
+  const Stats& stats() const;
 
 private:
   std::unique_ptr<Data> m_data;

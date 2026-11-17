@@ -1,14 +1,14 @@
 #pragma once
 
 #include "engine/core/rendering/mesh.h"
+#include "engine/runtime/input/input.h"
 #include "engine/runtime/rendering/meshLibrary.h"
 #include "engine/runtime/sceneManager/scene.h"
+#include "engine/runtime/scripting/sceneScripts.h"
 #include "engine/runtime/serialization/sceneSerializer.h"
 
+#include <cstdint>
 #include <filesystem>
-#include <string>
-#include <string_view>
-#include <vector>
 
 namespace sfs
 {
@@ -46,13 +46,8 @@ public:
 
   using Scene::Scene;
 
-  RenderSystem& renderSystem() { return *m_render; }
-
-  /**
-   * A serializer for this scene: meshes by the scene's library, prefabs
-   * ("asset:<id>") from its asset store.
-   */
-  SceneSerializer serializer();
+  /** A built-in primitive mesh (registered when the scene initialises). */
+  MeshHandle builtinMesh(BuiltinMesh mesh) const;
 
   /**
    * The scene's physics, or null when it has none. Physics is optional: a
@@ -60,16 +55,6 @@ public:
    * exists only while the scene plays.
    */
   PhysicsSystem3D* physicsSystem();
-
-  /** A built-in primitive mesh (registered when the scene initialises). */
-  MeshHandle builtinMesh(BuiltinMesh mesh) const;
-
-  /**
-   * The game systems and services (System and Service scripts, by name) this
-   * scene runs when it plays. Saved with the scene.
-   * @return them, to read or change
-   */
-  SceneScripts& sceneScripts() { return m_scripts; }
 
   /**
    * Replace the scene's contents with a scene file and start its scripts,
@@ -80,12 +65,28 @@ public:
    */
   bool play(const std::filesystem::path& file);
 
+  RenderSystem& renderSystem() { return *m_render; }
+
+  /**
+   * The game systems and services (System and Service scripts, by name) this
+   * scene runs when it plays. Saved with the scene.
+   * @return them, to read or change
+   */
+  SceneScripts& sceneScripts() { return m_scripts; }
+
+  /**
+   * A serializer for this scene: meshes by the scene's library, prefabs
+   * ("asset:<id>") from its asset store.
+   */
+  SceneSerializer serializer();
+
 protected:
+  // Its UI (UiModule) takes clicks on it first.
+  void filterInput(Input& input) override;
+
   /** Sets up rendering and the built-in meshes; overrides must call it first.
    */
   void onInit() override;
-  // Its UI (UiModule) takes clicks on it first.
-  void filterInput(Input& input) override;
 
   /** Swaps in models loaded in the background; overrides must call it. */
   void onUpdate(double deltaTime) override;

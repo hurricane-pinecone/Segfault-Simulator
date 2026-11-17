@@ -1,6 +1,7 @@
 #include "../../testHarness.h"
+#include "engine/runtime/input/keyboardInput.h"
 
-#include <engine/runtime/input/keyboardInput.h>
+#include <SDL_scancode.h>
 
 using namespace sfs;
 

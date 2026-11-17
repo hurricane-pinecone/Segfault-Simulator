@@ -4,17 +4,29 @@
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/components/windZoneComponent.h"
 #include "engine/core/hierarchy/hierarchy.h"
+#include "engine/core/particles/decal.h"
 #include "engine/core/particles/decalSplatter.h"
+#include "engine/core/particles/iParticleCollisionSource.h"
+#include "engine/core/particles/particle.h"
+#include "engine/core/particles/particleEffect.h"
 #include "engine/core/sceneData/wind.h"
 // Pulled in for the query rows (queryView.h) and entity.inl's templates.
 #include "engine/core/ecs/registry.h" // IWYU pragma: keep
 #include "engine/core/util/profiling.h"
-#include "glm/glm/common.hpp"
-#include "glm/glm/exponential.hpp"
-#include "glm/glm/geometric.hpp"
-#include "glm/glm/trigonometric.hpp"
+
+#include <glm/glm/common.hpp>
+#include <glm/glm/exponential.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
+#include <glm/glm/ext/vector_float4.hpp>
+#include <glm/glm/geometric.hpp>
+#include <glm/glm/trigonometric.hpp>
 
 #include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <string>
+#include <utility>
+#include <vector>
 
 namespace sfs
 {
@@ -22,7 +34,7 @@ namespace sfs
 namespace
 {
 
-constexpr float kTwoPi = 6.28318530718f;
+constexpr float TWO_PI = 6.28318530718f;
 
 inline uint32_t nextRand(uint32_t& state)
 {
@@ -45,60 +57,6 @@ inline float sampleRange(uint32_t& state, const FloatRange& r)
 
 } // namespace
 
-void ParticleEngine::registerEffect(const std::string& name,
-                                    const ParticleEffectDesc& desc)
-{
-  // Resolve each built-in shape to its engine texture, unless the effect set an
-  // explicit one -- so an effect names a shape, not "white_dot"/"white_pixel".
-  ParticleEffectDesc resolved = desc;
-  if (resolved.texture.empty())
-    resolved.texture = builtinShapeTexture(resolved.look);
-  if (resolved.decal.texture.empty())
-    resolved.decal.texture = builtinShapeTexture(resolved.decal.look);
-
-  auto it = m_effectIds.find(name);
-
-  if (it != m_effectIds.end())
-  {
-    m_effects[it->second] = resolved;
-    return;
-  }
-
-  const EffectId id = static_cast<EffectId>(m_effects.size());
-  m_effects.push_back(resolved);
-  m_effectIds.emplace(name, id);
-}
-
-bool ParticleEngine::hasEffect(const std::string& name) const
-{
-  return m_effectIds.find(name) != m_effectIds.end();
-}
-
-const ParticleEffectDesc* ParticleEngine::effect(const std::string& name) const
-{
-  auto it = m_effectIds.find(name);
-  if (it == m_effectIds.end())
-    return nullptr;
-  return &m_effects[it->second];
-}
-
-std::vector<std::string> ParticleEngine::effectNames() const
-{
-  std::vector<std::string> names;
-  names.reserve(m_effectIds.size());
-  for (const auto& [name, id] : m_effectIds)
-    names.push_back(name);
-  std::sort(names.begin(), names.end());
-  return names;
-}
-
-ParticleEngine::EffectId
-ParticleEngine::effectIdOf(const std::string& name) const
-{
-  auto it = m_effectIds.find(name);
-  return it != m_effectIds.end() ? it->second : -1;
-}
-
 void ParticleEngine::applySpawnParams(EmitterInstance& inst,
                                       const ParticleSpawnParams& spawn)
 {
@@ -114,39 +72,204 @@ void ParticleEngine::applySpawnParams(EmitterInstance& inst,
                       : 0.0f;
 }
 
-bool ParticleEngine::spawnBurst(const std::string& effect,
-                                glm::vec2 worldPos,
-                                float elevation,
-                                const ParticleSpawnParams& spawn)
+const ParticleEffectDesc* ParticleEngine::effect(const std::string& name) const
 {
-  const EffectId fx = effectIdOf(effect);
+  auto it = m_effectIds.find(name);
 
-  if (fx < 0)
-    return false;
+  if (it == m_effectIds.end())
+    return nullptr;
 
-  const ParticleEffectDesc& desc = m_effects[fx];
-
-  EmitterInstance inst;
-  inst.effect = fx;
-  inst.origin = worldPos;
-  inst.groundLevel = elevation;
-  inst.emitting = false; // one-shot: emit the pending burst, then drain
-  inst.pendingBurst = desc.burstCount > 0 ? desc.burstCount : 1;
-  inst.rng = (m_burstSeed += 0x9e3779b9u) | 1u;
-  applySpawnParams(inst, spawn);
-
-  m_bursts.push_back(std::move(inst));
-  return true;
+  return &m_effects[it->second];
 }
 
-int ParticleEngine::liveParticleCount() const
+ParticleEngine::EffectId
+ParticleEngine::effectIdOf(const std::string& name) const
 {
-  int total = 0;
-  for (const auto& [id, inst] : m_entityEmitters)
-    total += static_cast<int>(inst.particles.size());
-  for (const auto& inst : m_bursts)
-    total += static_cast<int>(inst.particles.size());
-  return total;
+  auto it = m_effectIds.find(name);
+  return it != m_effectIds.end() ? it->second : -1;
+}
+
+std::vector<std::string> ParticleEngine::effectNames() const
+{
+  std::vector<std::string> names;
+  names.reserve(m_effectIds.size());
+
+  for (const auto& [name, id] : m_effectIds)
+    names.push_back(name);
+
+  std::sort(names.begin(), names.end());
+  return names;
+}
+
+void ParticleEngine::emitDecal(EmitterInstance& inst,
+                               const ParticleEffectDesc& desc,
+                               const Particle& p,
+                               const ParticleHit& hit)
+{
+  if (!m_decalSink || !desc.leavesDecal)
+    return;
+
+  const float n =
+      p.lifetime > 0.0f ? glm::clamp(p.age / p.lifetime, 0.0f, 1.0f) : 0.0f;
+  const glm::vec3 rgb = desc.decal.useParticleColor
+                            ? desc.colorOverLife.sample(n)
+                            : desc.decal.color;
+  const glm::vec4 color{rgb, desc.decal.pool.alpha};
+  const float baseSize = sampleRange(inst.rng, desc.decal.pool.size);
+
+  // Topology comes from the effect's shaper (default = soft pool + crisp fan).
+  SplatParams splat;
+  splat.refSpeed = desc.decal.impactRef;
+  splat.streakMaxCount = desc.decal.streaks.maxCount;
+  splat.streakWidth = desc.decal.streaks.width;
+  splat.streakLengthScale = desc.decal.streaks.lengthScale;
+  splat.poolSoft = desc.decal.pool.soft;
+  splat.streakCrisp = desc.decal.streaks.crisp;
+  const ISplatterShaper& shaper =
+      desc.decal.shaper ? *desc.decal.shaper : defaultSplatterShaper();
+
+  if (hit.surface == DecalSurface::Wall)
+  {
+    // Anchor the splatter to the actual wall-face edge of `hit.tile` so it
+    // stays within the wall's width. East (2) face is the plane x = tile.x+1
+    // running along Y; south (3) is y = tile.y+1 running along X.
+    const bool east = hit.wallSide == 2;
+    const float faceX = static_cast<float>(hit.tile.x) + 1.0f;
+    const float faceY = static_cast<float>(hit.tile.y) + 1.0f;
+    const float lo =
+        east ? static_cast<float>(hit.tile.y) : static_cast<float>(hit.tile.x);
+    const float hi = lo + 1.0f;
+    const float hitAlong = glm::clamp(east ? hit.pos.y : hit.pos.x, lo, hi);
+    const glm::vec2 facePos =
+        east ? glm::vec2{faceX, hitAlong} : glm::vec2{hitAlong, faceY};
+
+    // Splash: a single hit point makes a whole burst paint a flat horizontal
+    // line, since the droplets strike at nearly the same height. Scatter each
+    // mark across the face instead -- spread growing with the in-plane impact
+    // speed and stretched along the direction the blood was travelling, so a
+    // fast hit throws an elongated splash and a slow drip stays tight.
+    const float alongVel = east ? p.vel.y : p.vel.x;
+    const float speed = glm::length(glm::vec2{alongVel, p.velZ});
+    const float splash =
+        glm::clamp(speed / glm::max(desc.decal.impactRef, 0.001f), 0.0f, 1.0f);
+    const float spread = baseSize * (0.3f + 3.0f * splash);
+    const glm::vec2 travel = speed > 0.001f
+                                 ? glm::vec2{alongVel, p.velZ} / speed
+                                 : glm::vec2{0.0f, 1.0f};
+    const glm::vec2 across{-travel.y, travel.x};
+
+    const auto stampWall = [&](glm::vec2 size,
+                               float rotation,
+                               bool crisp,
+                               float dripSpeed,
+                               glm::vec2 offset)
+    {
+      DecalSpawn spawn;
+      glm::vec2 pos = facePos;
+      const float along = glm::clamp((east ? pos.y : pos.x) + offset.x, lo, hi);
+
+      if (east)
+        pos.y = along;
+      else
+        pos.x = along;
+
+      spawn.worldPos = pos;
+      // AT the hit elevation (+ splash) -- a low hit marks low on the wall
+      // instead of every streak packing the top and running the full height.
+      spawn.elevation =
+          glm::clamp(hit.elevation + offset.y, hit.wallBottom, hit.wallTop);
+      spawn.surface = DecalSurface::Wall;
+      spawn.wallSide = hit.wallSide;
+      spawn.wallBottom = hit.wallBottom;
+      spawn.wallTop = hit.wallTop;
+      spawn.size = size;
+      spawn.rotation = rotation;
+      spawn.color = color;
+      spawn.textureId = &desc.decal.texture;
+      spawn.crisp = crisp;
+      spawn.dripSpeed = dripSpeed;
+      m_decalSink->addDecal(spawn);
+    };
+
+    // Per-mark scatter in the face plane: wide along the travel axis, tighter
+    // across it.
+    const auto splashOffset = [&]
+    {
+      const float a = (randf(inst.rng) * 2.0f - 1.0f) * spread;
+      const float b = (randf(inst.rng) * 2.0f - 1.0f) * spread * 0.5f;
+      return travel * a + across * b;
+    };
+
+    // Directional splatter ON the face: the face shows only the in-plane
+    // velocity (along-edge + a damped vertical, so it leans the way the blood
+    // travelled rather than straight down). Soft pool + crisp fan, at the hit.
+    splat.fan = true;
+    SplatImpact impact;
+    impact.velocity = glm::vec2{alongVel, p.velZ * 0.5f};
+    impact.baseSize = baseSize;
+    const SplatPattern pattern = shaper.shape(impact, splat, inst.rng);
+
+    for (int s = 0; s < pattern.count; ++s)
+      stampWall(pattern.shapes[s].size,
+                pattern.shapes[s].rotation,
+                pattern.shapes[s].crisp,
+                0.0f,
+                splashOffset());
+
+    // One drip running down FROM the hit (short for a low hit, longer high up).
+    stampWall(glm::vec2{baseSize * 0.45f, baseSize * 0.45f},
+              0.0f,
+              desc.decal.streaks.crisp,
+              2.0f + randf(inst.rng) * 3.0f,
+              glm::vec2{0.0f, 0.0f});
+    return;
+  }
+
+  // Ground / water (and any flat surface). A flat SIDE hit (mostly-horizontal
+  // entry normal) runs down instead of fanning; an iso ground hit reads top
+  // (normal 0 -> not a side). Water marks stay single.
+  const bool side = glm::abs(hit.normal.x) > glm::abs(hit.normal.y);
+  splat.fan = hit.surface != DecalSurface::Water && !side;
+
+  SplatImpact impact;
+  impact.velocity = p.vel;
+  impact.velZ = p.velZ;
+  impact.baseSize = baseSize;
+  const SplatPattern pattern = shaper.shape(impact, splat, inst.rng);
+
+  for (int s = 0; s < pattern.count; ++s)
+  {
+    DecalSpawn spawn;
+    spawn.worldPos = hit.pos;
+    spawn.elevation = hit.elevation;
+    spawn.surface = hit.surface;
+    spawn.size = pattern.shapes[s].size;
+    spawn.rotation = pattern.shapes[s].rotation;
+    spawn.color = color;
+    spawn.textureId = &desc.decal.texture;
+    spawn.fadeRate = hit.fadeRate;
+    spawn.crisp = pattern.shapes[s].crisp;
+    spawn.clipMin = hit.boundsMin; // flat clips to the collider; iso ignores
+    spawn.clipMax = hit.boundsMax;
+    m_decalSink->addDecal(spawn);
+  }
+
+  // Flat side hit: a streak that runs DOWN the face over time (the flat sink
+  // maps dripSpeed -> a downward grow). size = (width, height); height grows.
+  if (side)
+  {
+    DecalSpawn drip;
+    drip.worldPos = hit.pos;
+    drip.surface = DecalSurface::Ground;
+    drip.size = glm::vec2{desc.decal.streaks.width, baseSize * 0.5f};
+    drip.color = color;
+    drip.textureId = &desc.decal.texture;
+    drip.crisp = desc.decal.streaks.crisp;
+    drip.dripSpeed = baseSize * 6.0f; // grow units/sec; flat-sink interpreted
+    drip.clipMin = hit.boundsMin;
+    drip.clipMax = hit.boundsMax;
+    m_decalSink->addDecal(drip);
+  }
 }
 
 void ParticleEngine::emitParticles(EmitterInstance& inst,
@@ -182,14 +305,14 @@ void ParticleEngine::emitParticles(EmitterInstance& inst,
       break;
     case EmissionShape::Circle:
     {
-      const float ang = randf(inst.rng) * kTwoPi;
+      const float ang = randf(inst.rng) * TWO_PI;
       const float rad = glm::sqrt(randf(inst.rng)) * desc.shapeRadius;
       offset = {glm::cos(ang) * rad, glm::sin(ang) * rad};
       break;
     }
     case EmissionShape::Ring:
     {
-      const float ang = randf(inst.rng) * kTwoPi;
+      const float ang = randf(inst.rng) * TWO_PI;
       offset = {
           glm::cos(ang) * desc.shapeRadius, glm::sin(ang) * desc.shapeRadius};
       break;
@@ -219,9 +342,10 @@ void ParticleEngine::emitParticles(EmitterInstance& inst,
     // it), centred on the spawn's aim direction (0 = +X for undirected
     // effects).
     float dirAngle = inst.aimAngle;
+
     if (desc.shape == EmissionShape::Cone)
     {
-      const float half = desc.coneAngleDegrees * (kTwoPi / 360.0f);
+      const float half = desc.coneAngleDegrees * (TWO_PI / 360.0f);
       dirAngle += (randf(inst.rng) * 2.0f - 1.0f) * half;
     }
     else
@@ -247,6 +371,200 @@ void ParticleEngine::emitParticles(EmitterInstance& inst,
   }
 }
 
+void ParticleEngine::gatherWind()
+{
+  m_wind = glm::vec2(0.0f);
+  m_windZones.clear();
+
+  if (!registry)
+    return;
+
+  if (const Wind* wind = registry->sceneData<const Wind>())
+    m_wind = windVelocity(*wind);
+
+  for (const auto& [entity, zone, transform] :
+       registry->query<WindZoneComponent, TransformComponent>())
+  {
+    if (zone.enabled && zone.radius > 0.0f)
+      m_windZones.push_back({hierarchy::worldTransform(entity).position2D(),
+                             zone.radius,
+                             zone.wind});
+  }
+}
+
+bool ParticleEngine::hasEffect(const std::string& name) const
+{
+  return m_effectIds.find(name) != m_effectIds.end();
+}
+
+int ParticleEngine::liveParticleCount() const
+{
+  int total = 0;
+
+  for (const auto& [id, inst] : m_entityEmitters)
+    total += static_cast<int>(inst.particles.size());
+
+  for (const auto& inst : m_bursts)
+    total += static_cast<int>(inst.particles.size());
+
+  return total;
+}
+
+void ParticleEngine::registerEffect(const std::string& name,
+                                    const ParticleEffectDesc& desc)
+{
+  // Resolve each built-in shape to its engine texture, unless the effect set an
+  // explicit one -- so an effect names a shape, not "white_dot"/"white_pixel".
+  ParticleEffectDesc resolved = desc;
+
+  if (resolved.texture.empty())
+    resolved.texture = builtinShapeTexture(resolved.look);
+
+  if (resolved.decal.texture.empty())
+    resolved.decal.texture = builtinShapeTexture(resolved.decal.look);
+
+  auto it = m_effectIds.find(name);
+
+  if (it != m_effectIds.end())
+  {
+    m_effects[it->second] = resolved;
+    return;
+  }
+
+  const EffectId id = static_cast<EffectId>(m_effects.size());
+  m_effects.push_back(resolved);
+  m_effectIds.emplace(name, id);
+}
+
+void ParticleEngine::simulate(double deltaTime)
+{
+  ZoneScopedN("ParticleEngine::simulate");
+
+  // Paused (a time scale of 0): everything stays where it is.
+  const float dt = static_cast<float>(deltaTime) * m_timeScale;
+
+  if (dt <= 0.0f)
+    return;
+
+  syncComponentEmitters(dt);
+  gatherWind();
+
+  for (auto it = m_entityEmitters.begin(); it != m_entityEmitters.end();)
+  {
+    EmitterInstance& inst = it->second;
+    stepInstance(inst, m_effects[inst.effect], dt);
+
+    if (!inst.emitting && inst.particles.empty())
+      it = m_entityEmitters.erase(it);
+    else
+      ++it;
+  }
+
+  for (std::size_t i = 0; i < m_bursts.size();)
+  {
+    EmitterInstance& inst = m_bursts[i];
+    stepInstance(inst, m_effects[inst.effect], dt);
+
+    if (inst.pendingBurst == 0 && inst.particles.empty())
+    {
+      m_bursts[i] = std::move(m_bursts.back());
+      m_bursts.pop_back();
+    }
+    else
+    {
+      ++i;
+    }
+  }
+}
+
+bool ParticleEngine::spawnBurst(const std::string& effect,
+                                glm::vec2 worldPos,
+                                float elevation,
+                                const ParticleSpawnParams& spawn)
+{
+  const EffectId fx = effectIdOf(effect);
+
+  if (fx < 0)
+    return false;
+
+  const ParticleEffectDesc& desc = m_effects[fx];
+
+  EmitterInstance inst;
+  inst.effect = fx;
+  inst.origin = worldPos;
+  inst.groundLevel = elevation;
+  inst.emitting = false; // one-shot: emit the pending burst, then drain
+  inst.pendingBurst = desc.burstCount > 0 ? desc.burstCount : 1;
+  inst.rng = (m_burstSeed += 0x9e3779b9u) | 1u;
+  applySpawnParams(inst, spawn);
+
+  m_bursts.push_back(std::move(inst));
+  return true;
+}
+
+void ParticleEngine::sprites(std::vector<ParticleSpriteBatch>& out) const
+{
+  const auto append = [&](const EmitterInstance& inst)
+  {
+    if (inst.particles.empty())
+      return;
+
+    const ParticleEffectDesc& desc = m_effects[inst.effect];
+    ParticleSpriteBatch batch;
+    batch.textureId = &desc.texture;
+    batch.blend = desc.blend;
+    batch.lit = desc.lit;
+    const int cols = glm::max(1, desc.frameCols);
+    const int rows = glm::max(1, desc.frameRows);
+    const int frames = cols * rows;
+    batch.sprites.reserve(inst.particles.size());
+
+    for (const Particle& p : inst.particles)
+    {
+      const float n =
+          p.lifetime > 0.0f ? glm::clamp(p.age / p.lifetime, 0.0f, 1.0f) : 0.0f;
+      ParticleSprite sprite;
+      sprite.color = glm::vec4(desc.colorOverLife.sample(n),
+                               desc.alphaOverLife.sample(n)) *
+                     inst.tint;
+      sprite.size = p.baseSize * desc.sizeOverLife.sample(n);
+
+      if (sprite.color.a <= 0.0f || sprite.size <= 0.0f)
+        continue;
+
+      sprite.position = p.pos;
+      sprite.height = inst.groundLevel + p.height;
+      sprite.rotation = p.rotation;
+
+      if (frames > 1)
+      {
+        int frame = 0;
+
+        if (desc.frameOverLife)
+          frame = glm::min(frames - 1, static_cast<int>(n * frames));
+        else if (desc.frameFps > 0.0f)
+          frame = static_cast<int>(p.age * desc.frameFps) % frames;
+
+        sprite.uvRect = glm::vec4(static_cast<float>(frame % cols) / cols,
+                                  static_cast<float>(frame / cols) / rows,
+                                  1.0f / cols,
+                                  1.0f / rows);
+      }
+
+      batch.sprites.push_back(sprite);
+    }
+
+    if (!batch.sprites.empty())
+      out.push_back(std::move(batch));
+  };
+
+  for (const auto& [id, inst] : m_entityEmitters)
+    append(inst);
+
+  for (const auto& inst : m_bursts)
+    append(inst);
+}
+
 void ParticleEngine::stepInstance(EmitterInstance& inst,
                                   const ParticleEffectDesc& desc,
                                   float dt)
@@ -257,6 +575,7 @@ void ParticleEngine::stepInstance(EmitterInstance& inst,
     {
       inst.emitAccumulator += desc.emitRate * inst.rate * dt;
       const int n = static_cast<int>(inst.emitAccumulator);
+
       if (n > 0)
       {
         inst.emitAccumulator -= static_cast<float>(n);
@@ -267,6 +586,7 @@ void ParticleEngine::stepInstance(EmitterInstance& inst,
     if (desc.burstInterval > 0.0f && desc.burstCount > 0)
     {
       inst.burstTimer += dt;
+
       while (inst.burstTimer >= desc.burstInterval)
       {
         inst.burstTimer -= desc.burstInterval;
@@ -340,6 +660,7 @@ void ParticleEngine::stepInstance(EmitterInstance& inst,
                                     p.pos,
                                     inst.groundLevel + prevHeight,
                                     inst.groundLevel + p.height});
+
       if (hit.hit)
       {
         emitDecal(inst, desc, p, hit);
@@ -361,6 +682,7 @@ void ParticleEngine::stepInstance(EmitterInstance& inst,
         p.lifetime =
             glm::min(p.lifetime, p.age + glm::max(0.0f, desc.stickDuration));
       }
+
       ++i;
       continue;
     }
@@ -388,173 +710,6 @@ void ParticleEngine::stepInstance(EmitterInstance& inst,
   }
 }
 
-void ParticleEngine::emitDecal(EmitterInstance& inst,
-                               const ParticleEffectDesc& desc,
-                               const Particle& p,
-                               const ParticleHit& hit)
-{
-  if (!m_decalSink || !desc.leavesDecal)
-    return;
-
-  const float n =
-      p.lifetime > 0.0f ? glm::clamp(p.age / p.lifetime, 0.0f, 1.0f) : 0.0f;
-  const glm::vec3 rgb = desc.decal.useParticleColor
-                            ? desc.colorOverLife.sample(n)
-                            : desc.decal.color;
-  const glm::vec4 color{rgb, desc.decal.pool.alpha};
-  const float baseSize = sampleRange(inst.rng, desc.decal.pool.size);
-
-  // Topology comes from the effect's shaper (default = soft pool + crisp fan).
-  SplatParams splat;
-  splat.refSpeed = desc.decal.impactRef;
-  splat.streakMaxCount = desc.decal.streaks.maxCount;
-  splat.streakWidth = desc.decal.streaks.width;
-  splat.streakLengthScale = desc.decal.streaks.lengthScale;
-  splat.poolSoft = desc.decal.pool.soft;
-  splat.streakCrisp = desc.decal.streaks.crisp;
-  const ISplatterShaper& shaper =
-      desc.decal.shaper ? *desc.decal.shaper : defaultSplatterShaper();
-
-  if (hit.surface == DecalSurface::Wall)
-  {
-    // Anchor the splatter to the actual wall-face edge of `hit.tile` so it
-    // stays within the wall's width. East (2) face is the plane x = tile.x+1
-    // running along Y; south (3) is y = tile.y+1 running along X.
-    const bool east = hit.wallSide == 2;
-    const float faceX = static_cast<float>(hit.tile.x) + 1.0f;
-    const float faceY = static_cast<float>(hit.tile.y) + 1.0f;
-    const float lo =
-        east ? static_cast<float>(hit.tile.y) : static_cast<float>(hit.tile.x);
-    const float hi = lo + 1.0f;
-    const float hitAlong = glm::clamp(east ? hit.pos.y : hit.pos.x, lo, hi);
-    const glm::vec2 facePos =
-        east ? glm::vec2{faceX, hitAlong} : glm::vec2{hitAlong, faceY};
-
-    // Splash: a single hit point makes a whole burst paint a flat horizontal
-    // line, since the droplets strike at nearly the same height. Scatter each
-    // mark across the face instead -- spread growing with the in-plane impact
-    // speed and stretched along the direction the blood was travelling, so a
-    // fast hit throws an elongated splash and a slow drip stays tight.
-    const float alongVel = east ? p.vel.y : p.vel.x;
-    const float speed = glm::length(glm::vec2{alongVel, p.velZ});
-    const float splash =
-        glm::clamp(speed / glm::max(desc.decal.impactRef, 0.001f), 0.0f, 1.0f);
-    const float spread = baseSize * (0.3f + 3.0f * splash);
-    const glm::vec2 travel = speed > 0.001f
-                                 ? glm::vec2{alongVel, p.velZ} / speed
-                                 : glm::vec2{0.0f, 1.0f};
-    const glm::vec2 across{-travel.y, travel.x};
-
-    const auto stampWall = [&](glm::vec2 size,
-                               float rotation,
-                               bool crisp,
-                               float dripSpeed,
-                               glm::vec2 offset)
-    {
-      DecalSpawn spawn;
-      glm::vec2 pos = facePos;
-      const float along = glm::clamp((east ? pos.y : pos.x) + offset.x, lo, hi);
-      if (east)
-        pos.y = along;
-      else
-        pos.x = along;
-      spawn.worldPos = pos;
-      // AT the hit elevation (+ splash) -- a low hit marks low on the wall
-      // instead of every streak packing the top and running the full height.
-      spawn.elevation =
-          glm::clamp(hit.elevation + offset.y, hit.wallBottom, hit.wallTop);
-      spawn.surface = DecalSurface::Wall;
-      spawn.wallSide = hit.wallSide;
-      spawn.wallBottom = hit.wallBottom;
-      spawn.wallTop = hit.wallTop;
-      spawn.size = size;
-      spawn.rotation = rotation;
-      spawn.color = color;
-      spawn.textureId = &desc.decal.texture;
-      spawn.crisp = crisp;
-      spawn.dripSpeed = dripSpeed;
-      m_decalSink->addDecal(spawn);
-    };
-
-    // Per-mark scatter in the face plane: wide along the travel axis, tighter
-    // across it.
-    const auto splashOffset = [&]
-    {
-      const float a = (randf(inst.rng) * 2.0f - 1.0f) * spread;
-      const float b = (randf(inst.rng) * 2.0f - 1.0f) * spread * 0.5f;
-      return travel * a + across * b;
-    };
-
-    // Directional splatter ON the face: the face shows only the in-plane
-    // velocity (along-edge + a damped vertical, so it leans the way the blood
-    // travelled rather than straight down). Soft pool + crisp fan, at the hit.
-    splat.fan = true;
-    SplatImpact impact;
-    impact.velocity = glm::vec2{alongVel, p.velZ * 0.5f};
-    impact.baseSize = baseSize;
-    const SplatPattern pattern = shaper.shape(impact, splat, inst.rng);
-    for (int s = 0; s < pattern.count; ++s)
-      stampWall(pattern.shapes[s].size,
-                pattern.shapes[s].rotation,
-                pattern.shapes[s].crisp,
-                0.0f,
-                splashOffset());
-
-    // One drip running down FROM the hit (short for a low hit, longer high up).
-    stampWall(glm::vec2{baseSize * 0.45f, baseSize * 0.45f},
-              0.0f,
-              desc.decal.streaks.crisp,
-              2.0f + randf(inst.rng) * 3.0f,
-              glm::vec2{0.0f, 0.0f});
-    return;
-  }
-
-  // Ground / water (and any flat surface). A flat SIDE hit (mostly-horizontal
-  // entry normal) runs down instead of fanning; an iso ground hit reads top
-  // (normal 0 -> not a side). Water marks stay single.
-  const bool side = glm::abs(hit.normal.x) > glm::abs(hit.normal.y);
-  splat.fan = hit.surface != DecalSurface::Water && !side;
-
-  SplatImpact impact;
-  impact.velocity = p.vel;
-  impact.velZ = p.velZ;
-  impact.baseSize = baseSize;
-  const SplatPattern pattern = shaper.shape(impact, splat, inst.rng);
-  for (int s = 0; s < pattern.count; ++s)
-  {
-    DecalSpawn spawn;
-    spawn.worldPos = hit.pos;
-    spawn.elevation = hit.elevation;
-    spawn.surface = hit.surface;
-    spawn.size = pattern.shapes[s].size;
-    spawn.rotation = pattern.shapes[s].rotation;
-    spawn.color = color;
-    spawn.textureId = &desc.decal.texture;
-    spawn.fadeRate = hit.fadeRate;
-    spawn.crisp = pattern.shapes[s].crisp;
-    spawn.clipMin = hit.boundsMin; // flat clips to the collider; iso ignores
-    spawn.clipMax = hit.boundsMax;
-    m_decalSink->addDecal(spawn);
-  }
-
-  // Flat side hit: a streak that runs DOWN the face over time (the flat sink
-  // maps dripSpeed -> a downward grow). size = (width, height); height grows.
-  if (side)
-  {
-    DecalSpawn drip;
-    drip.worldPos = hit.pos;
-    drip.surface = DecalSurface::Ground;
-    drip.size = glm::vec2{desc.decal.streaks.width, baseSize * 0.5f};
-    drip.color = color;
-    drip.textureId = &desc.decal.texture;
-    drip.crisp = desc.decal.streaks.crisp;
-    drip.dripSpeed = baseSize * 6.0f; // grow units/sec; flat-sink interpreted
-    drip.clipMin = hit.boundsMin;
-    drip.clipMax = hit.boundsMax;
-    m_decalSink->addDecal(drip);
-  }
-}
-
 void ParticleEngine::syncComponentEmitters(float dt)
 {
   // No registry means no entity-component emitters to sync (e.g. a headless
@@ -572,6 +727,7 @@ void ParticleEngine::syncComponentEmitters(float dt)
        registry->query<TransformComponent, ParticleEmitterComponent>())
   {
     const EffectId fx = effectIdOf(emitter.effect);
+
     if (fx < 0)
       continue; // unknown effect name -- skip
 
@@ -598,15 +754,19 @@ void ParticleEngine::syncComponentEmitters(float dt)
     // heading (where its +x points on the plane).
     glm::vec2 offset(emitter.offset);
     inst.yaw = 0.0f;
+
     if (emitter.turnWithEntity)
     {
       const glm::vec3 forward =
           transform.rotation * glm::vec3(1.0f, 0.0f, 0.0f);
+
       if (forward.x * forward.x + forward.y * forward.y > 1e-8f)
         inst.yaw = glm::atan(forward.y, forward.x);
+
       const float c = glm::cos(inst.yaw), s = glm::sin(inst.yaw);
       offset = {c * offset.x - s * offset.y, s * offset.x + c * offset.y};
     }
+
     inst.aimAngle = inst.yaw;
 
     inst.origin = transform.position2D() + offset;
@@ -625,150 +785,46 @@ void ParticleEngine::syncComponentEmitters(float dt)
     const float height = ground + emitter.offset.z;
     inst.baseVelocity = {0.0f, 0.0f};
     inst.baseVelocityZ = 0.0f;
-    constexpr float kJump = 100.0f; // m/s: faster is a teleport
+    constexpr float JUMP = 100.0f; // m/s: faster is a teleport
     // The way it came this frame, to spread its particles along (not a
     // teleport, nor standing still).
     const glm::vec2 moved = inst.origin - inst.lastOrigin;
     inst.trails = inst.hasLast && moved != glm::vec2(0.0f) &&
-                  glm::dot(moved, moved) < kJump * kJump * dt * dt;
+                  glm::dot(moved, moved) < JUMP * JUMP * dt * dt;
     inst.trailFrom = inst.lastOrigin;
+
     if (inst.hasLast && inst.inherit != 0.0f)
     {
       const glm::vec2 velocity = (inst.origin - inst.lastOrigin) / dt;
       const float velocityZ = (height - inst.lastHeight) / dt;
-      if (glm::dot(velocity, velocity) < kJump * kJump &&
-          glm::abs(velocityZ) < kJump)
+
+      if (glm::dot(velocity, velocity) < JUMP * JUMP &&
+          glm::abs(velocityZ) < JUMP)
       {
         inst.baseVelocity = velocity * inst.inherit;
         inst.baseVelocityZ = velocityZ * inst.inherit;
       }
     }
+
     inst.lastOrigin = inst.origin;
     inst.lastHeight = height;
     inst.hasLast = true;
   }
 }
 
-void ParticleEngine::gatherWind()
-{
-  m_wind = glm::vec2(0.0f);
-  m_windZones.clear();
-  if (!registry)
-    return;
-  if (const Wind* wind = registry->sceneData<const Wind>())
-    m_wind = windVelocity(*wind);
-  for (const auto& [entity, zone, transform] :
-       registry->query<WindZoneComponent, TransformComponent>())
-  {
-    if (zone.enabled && zone.radius > 0.0f)
-      m_windZones.push_back({hierarchy::worldTransform(entity).position2D(),
-                             zone.radius,
-                             zone.wind});
-  }
-}
-
 glm::vec2 ParticleEngine::windAt(const glm::vec2& point) const
 {
   glm::vec2 wind = m_wind;
+
   for (const WindZoneArea& zone : m_windZones)
   {
     const float away = glm::distance(point, zone.center);
+
     if (away < zone.radius)
       wind += zone.wind * (1.0f - away / zone.radius);
   }
+
   return wind;
-}
-
-void ParticleEngine::simulate(double deltaTime)
-{
-  ZoneScopedN("ParticleEngine::simulate");
-
-  // Paused (a time scale of 0): everything stays where it is.
-  const float dt = static_cast<float>(deltaTime) * m_timeScale;
-  if (dt <= 0.0f)
-    return;
-
-  syncComponentEmitters(dt);
-  gatherWind();
-
-  for (auto it = m_entityEmitters.begin(); it != m_entityEmitters.end();)
-  {
-    EmitterInstance& inst = it->second;
-    stepInstance(inst, m_effects[inst.effect], dt);
-
-    if (!inst.emitting && inst.particles.empty())
-      it = m_entityEmitters.erase(it);
-    else
-      ++it;
-  }
-
-  for (std::size_t i = 0; i < m_bursts.size();)
-  {
-    EmitterInstance& inst = m_bursts[i];
-    stepInstance(inst, m_effects[inst.effect], dt);
-
-    if (inst.pendingBurst == 0 && inst.particles.empty())
-    {
-      m_bursts[i] = std::move(m_bursts.back());
-      m_bursts.pop_back();
-    }
-    else
-    {
-      ++i;
-    }
-  }
-}
-
-void ParticleEngine::sprites(std::vector<ParticleSpriteBatch>& out) const
-{
-  const auto append = [&](const EmitterInstance& inst)
-  {
-    if (inst.particles.empty())
-      return;
-    const ParticleEffectDesc& desc = m_effects[inst.effect];
-    ParticleSpriteBatch batch;
-    batch.textureId = &desc.texture;
-    batch.blend = desc.blend;
-    batch.lit = desc.lit;
-    const int cols = glm::max(1, desc.frameCols);
-    const int rows = glm::max(1, desc.frameRows);
-    const int frames = cols * rows;
-    batch.sprites.reserve(inst.particles.size());
-    for (const Particle& p : inst.particles)
-    {
-      const float n =
-          p.lifetime > 0.0f ? glm::clamp(p.age / p.lifetime, 0.0f, 1.0f) : 0.0f;
-      ParticleSprite sprite;
-      sprite.color = glm::vec4(desc.colorOverLife.sample(n),
-                               desc.alphaOverLife.sample(n)) *
-                     inst.tint;
-      sprite.size = p.baseSize * desc.sizeOverLife.sample(n);
-      if (sprite.color.a <= 0.0f || sprite.size <= 0.0f)
-        continue;
-      sprite.position = p.pos;
-      sprite.height = inst.groundLevel + p.height;
-      sprite.rotation = p.rotation;
-      if (frames > 1)
-      {
-        int frame = 0;
-        if (desc.frameOverLife)
-          frame = glm::min(frames - 1, static_cast<int>(n * frames));
-        else if (desc.frameFps > 0.0f)
-          frame = static_cast<int>(p.age * desc.frameFps) % frames;
-        sprite.uvRect = glm::vec4(static_cast<float>(frame % cols) / cols,
-                                  static_cast<float>(frame / cols) / rows,
-                                  1.0f / cols,
-                                  1.0f / rows);
-      }
-      batch.sprites.push_back(sprite);
-    }
-    if (!batch.sprites.empty())
-      out.push_back(std::move(batch));
-  };
-  for (const auto& [id, inst] : m_entityEmitters)
-    append(inst);
-  for (const auto& inst : m_bursts)
-    append(inst);
 }
 
 } // namespace sfs

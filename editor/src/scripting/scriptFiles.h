@@ -22,8 +22,10 @@ enum class Prefer
  * The file declaring or defining class `name` under `scriptsFolder`; nothing
  * if there's none. Searched when asked (the folder may be on a slow share).
  */
-std::optional<std::filesystem::path> find(const std::filesystem::path& scriptsFolder, std::string_view name,
-                                          Prefer prefer);
+std::optional<std::filesystem::path>
+find(const std::filesystem::path& scriptsFolder,
+     std::string_view name,
+     Prefer prefer);
 
 /**
  * Move or rename files and folders inside the scripts folder (`moves`: from ->
@@ -34,8 +36,10 @@ std::optional<std::filesystem::path> find(const std::filesystem::path& scriptsFo
  * @return false (logged) if one can't be moved: a target is taken, or the
  * file system refuses (moves before it are kept)
  */
-bool move(const std::filesystem::path& scriptsFolder,
-          const std::vector<std::pair<std::filesystem::path, std::filesystem::path>>& moves);
+bool move(
+    const std::filesystem::path& scriptsFolder,
+    const std::vector<std::pair<std::filesystem::path, std::filesystem::path>>&
+        moves);
 
 /**
  * Copy a script or a folder of them into `folder` (a script with its .h/.cpp
@@ -46,9 +50,10 @@ bool move(const std::filesystem::path& scriptsFolder,
  *
  * @return what was made (the files, or the folder); empty (logged) if it failed
  */
-std::vector<std::filesystem::path> copy(const std::filesystem::path& scriptsFolder,
-                                        const std::filesystem::path& item,
-                                        const std::filesystem::path& folder);
+std::vector<std::filesystem::path>
+copy(const std::filesystem::path& scriptsFolder,
+     const std::filesystem::path& item,
+     const std::filesystem::path& folder);
 
 /**
  * Rename identifier `from` to `to` in every script's code (comments and string
@@ -56,6 +61,8 @@ std::vector<std::filesystem::path> copy(const std::filesystem::path& scriptsFold
  *
  * @return how many files changed
  */
-int renameIdentifier(const std::filesystem::path& scriptsFolder, const std::string& from, const std::string& to);
+int renameIdentifier(const std::filesystem::path& scriptsFolder,
+                     const std::string& from,
+                     const std::string& to);
 
 } // namespace scriptFiles

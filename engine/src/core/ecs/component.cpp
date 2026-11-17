@@ -1,12 +1,14 @@
 #include "engine/core/ecs/component.h"
 
+#include "../util/typeIds.h"
+#include "engine/core/ecs/entity.h"
 #include "engine/core/logger/logger.h"
 #include "engine/core/util/debugFeatures.h"
 #include "engine/core/util/fatalError.h"
-
-#include "../util/typeIds.h"
+#include "engine/core/util/typeKey.h"
 
 #include <string>
+#include <string_view>
 
 namespace sfs::detail
 {
@@ -18,9 +20,10 @@ int componentTypeId(std::string_view typeKey)
   const int id = ids.idOf(typeKey, &added);
 
   // Development builds warn while there's still room to raise the limit.
-  constexpr int kHeadroom = 8;
+  constexpr int HEADROOM = 8;
   const int limit = static_cast<int>(MAX_COMPONENTS);
-  if (added && debugFeatures::compiled() && id >= limit - kHeadroom &&
+
+  if (added && debugFeatures::compiled() && id >= limit - HEADROOM &&
       id < limit)
     LOG_WARN("Component type " + readableTypeName(typeKey) + " is number " +
              std::to_string(id + 1) + " of MAX_COMPONENTS (" +

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "glm/glm/ext/vector_float2.hpp"
+#include <glm/glm/ext/vector_float2.hpp>
 
 namespace sfs
 {
@@ -23,10 +23,6 @@ namespace sfs
  */
 struct BoxCollider2D
 {
-  glm::vec2 half{8.0f, 8.0f};
-  glm::vec2 offset{0.0f, 0.0f};
-  bool trigger = false;
-
   BoxCollider2D() = default;
   explicit BoxCollider2D(glm::vec2 half,
                          glm::vec2 offset = {0.0f, 0.0f},
@@ -34,6 +30,10 @@ struct BoxCollider2D
       : half(half), offset(offset), trigger(trigger)
   {
   }
+
+  glm::vec2 half{8.0f, 8.0f};
+  glm::vec2 offset{0.0f, 0.0f};
+  bool trigger = false;
 };
 
 } // namespace sfs

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "engine/core/components/nameComponent.h"
-#include "engine/core/ecs/ecs.h" // IWYU pragma: keep (Entity templates)
+#include "engine/core/ecs/ecs.h"
 
 #include <string>
 
@@ -18,5 +18,6 @@ inline std::string entityLabel(const sfs::Entity& entity)
           entity.getComponent<sfs::NameComponent>();
       named && !named->name.empty())
     return named->name;
+
   return "Entity " + std::to_string(entity.getId());
 }

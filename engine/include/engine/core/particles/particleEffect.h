@@ -2,8 +2,10 @@
 
 #include "engine/core/particles/particleCurves.h"
 #include "engine/core/types/blendMode.h"
-#include "glm/glm/ext/vector_float2.hpp"
-#include "glm/glm/ext/vector_float3.hpp"
+
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
+
 #include <cstdint>
 #include <string>
 
@@ -51,11 +53,11 @@ enum class GroundBehavior : uint8_t
 // particle.
 struct FloatRange
 {
-  float min = 0.0f;
-  float max = 0.0f;
-
   static FloatRange of(float v) { return {v, v}; }
   static FloatRange of(float a, float b) { return {a, b}; }
+
+  float min = 0.0f;
+  float max = 0.0f;
 };
 
 // The persistent mark a particle leaves where it lands (see

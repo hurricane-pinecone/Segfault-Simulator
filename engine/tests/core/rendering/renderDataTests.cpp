@@ -1,16 +1,16 @@
 #include "../../testHarness.h"
+#include "engine/core/rendering/lighting.h"
+#include "engine/core/sceneData/ambientLighting.h"
+#include "engine/core/sceneData/celestialBodies.h"
+#include "engine/core/sceneData/clouds.h"
+#include "engine/core/sceneData/directionalLighting.h"
+#include "engine/core/sceneData/shaderGlobals.h"
+#include "engine/core/sceneData/wind.h"
 
-#include <engine/core/rendering/lighting.h>
-#include <engine/core/sceneData/ambientLighting.h>
-#include <engine/core/sceneData/celestialBodies.h>
-#include <engine/core/sceneData/clouds.h>
-#include <engine/core/sceneData/directionalLighting.h>
-#include <engine/core/sceneData/shaderGlobals.h>
-#include <engine/core/sceneData/wind.h>
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/geometric.hpp>
 
-#include "glm/glm/geometric.hpp"
-
-#include <cmath>
+#include <cstddef>
 #include <limits>
 #include <string>
 
@@ -141,12 +141,16 @@ int main()
        "shader reads (one half typed) is left out")
   {
     ShaderGlobals globals;
+
     for (const char* typing : {"g", "gl", "glo", "glow"})
       setShaderGlobal(globals, typing, 1.0f);
+
     ShaderGlobalValues values;
     gatherShaderGlobals(&globals, values);
+
     for (const char* typing : {"g", "gl", "glo", "glow"})
       CHECK(findShaderGlobalSlot(typing) == -1);
+
     // Once a shader reads it, it's gathered.
     const int glow = shaderGlobalSlot("glow");
     CHECK(findShaderGlobalSlot("glow") == glow);
@@ -157,8 +161,10 @@ int main()
   TEST("once every slot is taken, another parameter should have none")
   {
     int last = 0;
+
     for (std::size_t i = 0; i < kMaxShaderGlobals; ++i)
       last = shaderGlobalSlot("filler" + std::to_string(i));
+
     CHECK(last == -1);
     CHECK(shaderGlobalSlot("wetness") == 0); // the engine's keep theirs
   }

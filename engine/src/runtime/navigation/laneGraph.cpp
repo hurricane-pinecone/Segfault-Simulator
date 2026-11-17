@@ -1,9 +1,21 @@
 #include "engine/runtime/navigation/laneGraph.h"
 
+#include "engine/runtime/navigation/geometry.h"
+
+#include <glm/glm/common.hpp>
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/geometric.hpp>
+
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <functional>
 #include <limits>
+#include <optional>
 #include <queue>
+#include <utility>
+#include <vector>
 
 namespace sfs::nav
 {
@@ -12,27 +24,24 @@ namespace
 {
 // Lanes this much further than the nearest still taken as a trip's ends (the
 // other way along the same road, a road beside it): the search picks.
-constexpr float kEndSlack = 6.0f;
-constexpr float kInf = std::numeric_limits<float>::infinity();
+constexpr float END_SLACK = 6.0f;
+constexpr float INF = std::numeric_limits<float>::infinity();
 } // namespace
-
-int LaneGraph::addNode(glm::vec2 at)
-{
-  m_nodes.push_back(at);
-  m_out.emplace_back();
-  return static_cast<int>(m_nodes.size()) - 1;
-}
 
 int LaneGraph::addLane(Lane lane)
 {
   const int nodes = static_cast<int>(m_nodes.size());
+
   if (lane.line.size() < 2 || lane.from < 0 || lane.to < 0 ||
       lane.from >= nodes || lane.to >= nodes)
     return -1;
+
   std::vector<float> along{0.0f};
+
   for (std::size_t k = 1; k < lane.line.size(); ++k)
     along.push_back(along.back() +
                     glm::distance(lane.line[k - 1], lane.line[k]));
+
   lane.cost = std::max(lane.cost, 1.0e-3f);
   lane.speed = std::max(lane.speed, 0.1f);
   m_out[static_cast<std::size_t>(lane.from)].push_back(
@@ -42,15 +51,24 @@ int LaneGraph::addLane(Lane lane)
   return static_cast<int>(m_lanes.size()) - 1;
 }
 
+int LaneGraph::addNode(glm::vec2 at)
+{
+  m_nodes.push_back(at);
+  m_out.emplace_back();
+  return static_cast<int>(m_nodes.size()) - 1;
+}
+
 std::vector<LaneGraph::Spot>
 LaneGraph::near(glm::vec2 p, float reach, float slack) const
 {
   std::vector<Spot> out;
-  float best = kInf;
+  float best = INF;
+
   for (std::size_t l = 0; l < m_lanes.size(); ++l)
   {
     const std::vector<glm::vec2>& line = m_lanes[l].line;
-    Spot s{static_cast<int>(l), 0.0f, kInf};
+    Spot s{static_cast<int>(l), 0.0f, INF};
+
     for (std::size_t i = 0; i + 1 < line.size(); ++i)
     {
       const glm::vec2 a = line[i], d = line[i + 1] - a;
@@ -59,18 +77,21 @@ LaneGraph::near(glm::vec2 p, float reach, float slack) const
                           ? std::clamp(glm::dot(p - a, d) / len2, 0.0f, 1.0f)
                           : 0.0f;
       const float dist = glm::distance(p, a + d * t);
+
       if (dist < s.distance)
       {
         s.distance = dist;
         s.along = m_along[l][i] + t * std::sqrt(len2);
       }
     }
+
     if (s.distance <= reach)
     {
       out.push_back(s);
       best = std::min(best, s.distance);
     }
   }
+
   std::erase_if(out, [&](const Spot& s) { return s.distance > best + slack; });
   std::sort(out.begin(),
             out.end(),
@@ -108,8 +129,10 @@ LaneGraph::route(glm::vec2 from, glm::vec2 to, const Options& o) const
 {
   if (m_lanes.empty())
     return std::nullopt;
-  const std::vector<Spot> ons = near(from, o.reach, kEndSlack);
-  const std::vector<Spot> offs = near(to, o.reach, kEndSlack);
+
+  const std::vector<Spot> ons = near(from, o.reach, END_SLACK);
+  const std::vector<Spot> offs = near(to, o.reach, END_SLACK);
+
   if (ons.empty() || offs.empty() ||
       ons.front().distance + offs.front().distance >=
           o.worthIt * glm::distance(from, to))
@@ -124,10 +147,12 @@ LaneGraph::route(glm::vec2 from, glm::vec2 to, const Options& o) const
     float a0, a1;
   };
   float cheapest = 1.0f;
+
   for (const Lane& l : m_lanes)
     cheapest = std::min(cheapest, l.cost);
+
   const int goal = static_cast<int>(m_nodes.size());
-  std::vector<float> g(m_nodes.size() + 1, kInf);
+  std::vector<float> g(m_nodes.size() + 1, INF);
   // How each was reached: the node before (-1: from the start) and the piece.
   std::vector<int> prev(m_nodes.size() + 1, -2);
   std::vector<Piece> came(m_nodes.size() + 1, Piece{-1, 0.0f, 0.0f});
@@ -137,16 +162,18 @@ LaneGraph::route(glm::vec2 from, glm::vec2 to, const Options& o) const
   {
     if (n == goal)
       return 0.0f;
+
     // (Lanes run a little off their nodes: a few metres' slack.)
     return cheapest *
            std::max(glm::distance(m_nodes[static_cast<std::size_t>(n)], to) -
-                        kEndSlack,
+                        END_SLACK,
                     0.0f);
   };
   const auto reach = [&](int n, float cost, int before, Piece piece)
   {
     if (cost >= g[static_cast<std::size_t>(n)])
       return;
+
     g[static_cast<std::size_t>(n)] = cost;
     prev[static_cast<std::size_t>(n)] = before;
     came[static_cast<std::size_t>(n)] = piece;
@@ -166,6 +193,7 @@ LaneGraph::route(glm::vec2 from, glm::vec2 to, const Options& o) const
         reach(goal, c, before, Piece{lane, a0, off.along});
       }
   };
+
   for (const Spot& on : ons)
   {
     const Lane& lane = m_lanes[static_cast<std::size_t>(on.lane)];
@@ -176,16 +204,22 @@ LaneGraph::route(glm::vec2 from, glm::vec2 to, const Options& o) const
           -1,
           Piece{on.lane, on.along, length});
   }
+
   std::vector<uint8_t> closed(m_nodes.size() + 1, 0);
+
   while (!open.empty())
   {
     const auto [f, n] = open.top();
     open.pop();
+
     if (closed[static_cast<std::size_t>(n)])
       continue;
+
     closed[static_cast<std::size_t>(n)] = 1;
+
     if (n == goal)
       break;
+
     for (const int l : m_out[static_cast<std::size_t>(n)])
     {
       const Lane& lane = m_lanes[static_cast<std::size_t>(l)];
@@ -195,18 +229,24 @@ LaneGraph::route(glm::vec2 from, glm::vec2 to, const Options& o) const
       reach(lane.to, c + length * lane.cost, n, Piece{l, 0.0f, length});
     }
   }
+
   if (!closed[static_cast<std::size_t>(goal)])
     return std::nullopt;
+
   std::vector<Piece> path;
+
   for (int n = goal; n != -1;)
   {
     path.push_back(came[static_cast<std::size_t>(n)]);
     n = prev[static_cast<std::size_t>(n)];
+
     if (n == -2)
       return std::nullopt; // (not reached: can't happen)
   }
+
   std::reverse(path.begin(), path.end());
   std::erase_if(path, [](const Piece& p) { return p.a1 - p.a0 < 1.0e-3f; });
+
   if (path.empty())
     return std::nullopt;
 
@@ -219,17 +259,21 @@ LaneGraph::route(glm::vec2 from, glm::vec2 to, const Options& o) const
     const Lane* lane;
   };
   std::vector<Line> lines;
+
   for (const Piece& p : path)
   {
     const float span = p.a1 - p.a0;
     const int steps = std::max(1, static_cast<int>(std::ceil(span / step)));
     Line line{{}, &m_lanes[static_cast<std::size_t>(p.lane)]};
+
     for (int k = 0; k <= steps; ++k)
       line.points.push_back(pointAt(
           p.lane,
           p.a0 + span * static_cast<float>(k) / static_cast<float>(steps)));
+
     lines.push_back(std::move(line));
   }
+
   const auto headingOf = [](const std::vector<glm::vec2>& line, bool atEnd)
   {
     const glm::vec2 d =
@@ -243,21 +287,27 @@ LaneGraph::route(glm::vec2 from, glm::vec2 to, const Options& o) const
   {
     float total = 0.0f;
     std::vector<float> along{0.0f};
+
     for (std::size_t k = 1; k < points.size(); ++k)
       along.push_back(total += glm::distance(points[k - 1], points[k]));
+
     std::vector<glm::vec2> kept;
+
     for (std::size_t k = 0; k < points.size(); ++k)
       if (along[k] >= cutStart && along[k] <= total - cutEnd)
         kept.push_back(points[k]);
+
     if (kept.size() >= 2 && total - cutStart - cutEnd >= o.least)
     {
       Stretch s = current;
+
       for (std::size_t k = 0; k < kept.size(); ++k)
       {
         const glm::vec2 d =
             kept[std::min(k + 1, kept.size() - 1)] - kept[k == 0 ? 0 : k - 1];
         s.poses.push_back({kept[k], std::atan2(d.y, d.x)});
       }
+
       for (std::size_t k = 0; k < kept.size(); ++k)
       {
         const std::size_t a = k == 0 ? 0 : k - 1,
@@ -267,25 +317,33 @@ LaneGraph::route(glm::vec2 from, glm::vec2 to, const Options& o) const
         s.curvature.push_back(
             wrapAngle(s.poses[b].heading - s.poses[a].heading) / travelled);
       }
+
       out.push_back(std::move(s));
     }
+
     points.clear();
   };
   float cutStart = o.lead;
+
   for (std::size_t i = 0; i < lines.size(); ++i)
   {
     const Line& line = lines[i];
+
     if (points.empty())
     {
       current = Stretch{};
       current.speed = line.lane->speed;
     }
+
     current.speed = std::min(current.speed, line.lane->speed);
+
     if (current.tags.empty() || current.tags.back() != line.lane->tag)
       current.tags.push_back(line.lane->tag);
+
     points.insert(points.end(),
                   line.points.begin() + (points.empty() ? 0 : 1),
                   line.points.end());
+
     if (i + 1 == lines.size())
       finish(cutStart, o.lead);
     else
@@ -293,6 +351,7 @@ LaneGraph::route(glm::vec2 from, glm::vec2 to, const Options& o) const
       const float turn =
           std::abs(wrapAngle(headingOf(lines[i + 1].points, false) -
                              headingOf(line.points, true)));
+
       if (turn > o.corner)
       {
         // (Room for a turn of `radius` through that angle, and a little more.)
@@ -303,8 +362,10 @@ LaneGraph::route(glm::vec2 from, glm::vec2 to, const Options& o) const
       }
     }
   }
+
   if (out.empty())
     return std::nullopt;
+
   return out;
 }
 

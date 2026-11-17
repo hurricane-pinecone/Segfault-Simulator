@@ -1,9 +1,8 @@
 #pragma once
 
-#include "glm/glm/ext/vector_float2.hpp"
-#include "glm/glm/ext/vector_float3.hpp"
-#include "glm/glm/ext/vector_float4.hpp"
-#include "glm/glm/ext/vector_int2.hpp"
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
+#include <glm/glm/ext/vector_float4.hpp>
 
 #include <cstdint>
 #include <memory>
@@ -111,6 +110,11 @@ std::vector<glm::vec4> puddleGround(const GroundSurface& surface,
  */
 struct TerrainPuddles
 {
+  bool empty() const { return size <= 0 || !ground; }
+  glm::vec2 extent() const { return glm::vec2(texel * size); }
+
+  bool operator==(const TerrainPuddles&) const = default;
+
   // The window: its corner (world XY), a texel, texels across.
   glm::vec2 origin{0.0f};
   float texel = kPuddleTexel;
@@ -124,11 +128,6 @@ struct TerrainPuddles
   float radius = kPuddleRadius;
   std::shared_ptr<const TextureData> fillRate; // null: 1 everywhere
   uint32_t version = 0;
-
-  bool empty() const { return size <= 0 || !ground; }
-  glm::vec2 extent() const { return glm::vec2(texel * size); }
-
-  bool operator==(const TerrainPuddles&) const = default;
 };
 
 } // namespace sfs

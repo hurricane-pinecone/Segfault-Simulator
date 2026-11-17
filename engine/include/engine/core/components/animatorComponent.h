@@ -1,10 +1,10 @@
 #pragma once
 
 #include "engine/core/animation/animation.h"
-
 #include "engine/core/ecs/entity.h"
 #include "engine/core/rendering/mesh.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>

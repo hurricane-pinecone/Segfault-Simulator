@@ -74,36 +74,40 @@ public:
 // Exact shapes: no rounded corners (a planner's centimetres are real ones).
 JPH::RefConst<JPH::Shape> build(const CollisionShape3D& shape)
 {
-  constexpr float kMin = 0.005f;
+  constexpr float MIN = 0.005f;
   JPH::ShapeSettings::ShapeResult result;
   JPH::Quat turn(
       shape.rotation.x, shape.rotation.y, shape.rotation.z, shape.rotation.w);
+
   switch (shape.kind)
   {
   case CollisionShape3D::Kind::Box:
   {
-    const glm::vec3 half = glm::max(shape.size * 0.5f, glm::vec3(kMin));
+    const glm::vec3 half = glm::max(shape.size * 0.5f, glm::vec3(MIN));
     result =
         JPH::BoxShapeSettings(JPH::Vec3(half.x, half.y, half.z), 0.0f).Create();
     break;
   }
   case CollisionShape3D::Kind::Sphere:
-    result = JPH::SphereShapeSettings(std::max(shape.size.x, kMin)).Create();
+    result = JPH::SphereShapeSettings(std::max(shape.size.x, MIN)).Create();
     break;
   case CollisionShape3D::Kind::Capsule:
   {
-    const float radius = std::max(shape.size.x, kMin);
-    const float halfCylinder = std::max(shape.size.y * 0.5f - radius, kMin);
+    const float radius = std::max(shape.size.x, MIN);
+    const float halfCylinder = std::max(shape.size.y * 0.5f - radius, MIN);
     result = JPH::CapsuleShapeSettings(halfCylinder, radius).Create();
     // (Jolt's stand along Y; ours along Z.)
     turn = turn * JPH::Quat::sRotation(JPH::Vec3::sAxisX(), 0.5f * JPH::JPH_PI);
     break;
   }
   }
+
   if (result.HasError())
     return nullptr;
+
   if (shape.offset == glm::vec3(0.0f) && turn == JPH::Quat::sIdentity())
     return result.Get();
+
   JPH::ShapeSettings::ShapeResult placed =
       JPH::RotatedTranslatedShapeSettings(
           JPH::Vec3(shape.offset.x, shape.offset.y, shape.offset.z),
@@ -117,12 +121,16 @@ JPH::RefConst<JPH::Shape> build(std::span<const CollisionShape3D> shapes)
 {
   if (shapes.empty())
     return nullptr;
+
   if (shapes.size() == 1)
     return build(shapes.front());
+
   JPH::StaticCompoundShapeSettings compound;
+
   for (const CollisionShape3D& shape : shapes)
     if (JPH::RefConst<JPH::Shape> part = build(shape))
       compound.AddShape(JPH::Vec3::sZero(), JPH::Quat::sIdentity(), part);
+
   JPH::ShapeSettings::ShapeResult result = compound.Create();
   return result.HasError() ? nullptr : result.Get();
 }
@@ -133,8 +141,10 @@ CollisionWorld3D::Probe::Probe(std::span<const CollisionShape3D> shapes)
 {
   collisionWorld::ready();
   JPH::RefConst<JPH::Shape> shape = collisionWorld::build(shapes);
+
   if (!shape)
     return;
+
   // (Held by a shared_ptr that keeps the Jolt reference.)
   auto* held = new JPH::RefConst<JPH::Shape>(shape);
   m_shape = std::shared_ptr<const void>(
@@ -164,8 +174,10 @@ struct CollisionWorld3D::Impl
     bool ShouldCollideLocked(const JPH::Body& body) const override
     {
       const Body& b = m_bodies[static_cast<std::size_t>(body.GetUserData())];
+
       if ((m_mask & (1u << (b.layer & 31u))) == 0)
         return false;
+
       return std::find(m_ignore.begin(), m_ignore.end(), b.id) ==
              m_ignore.end();
     }
@@ -215,12 +227,15 @@ CollisionWorld3D::CollisionWorld3D(std::span<const Body> bodies)
   JPH::BodyInterface& add = m->physics.GetBodyInterfaceNoLock();
   std::vector<JPH::BodyID> ids;
   ids.reserve(count);
+
   for (std::size_t i = 0; i < m->bodies.size(); ++i)
   {
     const Body& body = m->bodies[i];
     JPH::RefConst<JPH::Shape> shape = collisionWorld::build(body.shapes);
+
     if (!shape)
       continue;
+
     JPH::BodyCreationSettings settings(
         shape,
         JPH::RVec3(body.position.x, body.position.y, body.position.z),
@@ -230,9 +245,11 @@ CollisionWorld3D::CollisionWorld3D(std::span<const Body> bodies)
         JPH::EMotionType::Static,
         0);
     settings.mUserData = i;
+
     if (const JPH::Body* created = add.CreateBody(settings))
       ids.push_back(created->GetID());
   }
+
   if (!ids.empty())
   {
     JPH::BodyInterface::AddState state =
@@ -242,6 +259,7 @@ CollisionWorld3D::CollisionWorld3D(std::span<const Body> bodies)
                           state,
                           JPH::EActivation::DontActivate);
   }
+
   m->physics.OptimizeBroadPhase();
 }
 
@@ -254,8 +272,10 @@ bool CollisionWorld3D::overlaps(const Probe& probe,
                                 std::span<const uint64_t> ignore) const
 {
   const JPH::Shape* shape = Impl::shapeOf(probe);
+
   if (!shape || m->bodies.empty())
     return false;
+
   JPH::CollideShapeSettings settings;
   JPH::AnyHitCollisionCollector<JPH::CollideShapeCollector> hit;
   const Impl::Filter filter(m->bodies, layers, ignore);
@@ -280,8 +300,10 @@ CollisionWorld3D::overlap(const Probe& probe,
                           std::span<const uint64_t> ignore) const
 {
   const JPH::Shape* shape = Impl::shapeOf(probe);
+
   if (!shape || m->bodies.empty())
     return std::nullopt;
+
   JPH::CollideShapeSettings settings;
   JPH::AllHitCollisionCollector<JPH::CollideShapeCollector> hits;
   const Impl::Filter filter(m->bodies, layers, ignore);
@@ -295,17 +317,23 @@ CollisionWorld3D::overlap(const Probe& probe,
       {},
       {},
       filter);
+
   if (!hits.HadHit())
     return std::nullopt;
+
   const JPH::CollideShapeResult* deepest = &hits.mHits.front();
+
   for (const JPH::CollideShapeResult& each : hits.mHits)
     if (each.mPenetrationDepth > deepest->mPenetrationDepth)
       deepest = &each;
+
   const JPH::BodyLockInterfaceNoLock& locks =
       m->physics.GetBodyLockInterfaceNoLock();
   JPH::BodyLockRead lock(locks, deepest->mBodyID2);
+
   if (!lock.Succeeded())
     return std::nullopt;
+
   const Body& body =
       m->bodies[static_cast<std::size_t>(lock.GetBody().GetUserData())];
   const JPH::Vec3 point = deepest->mContactPointOn2;
@@ -324,8 +352,10 @@ CollisionWorld3D::cast(const Probe& probe,
                        std::span<const uint64_t> ignore) const
 {
   const JPH::Shape* shape = Impl::shapeOf(probe);
+
   if (!shape || m->bodies.empty())
     return std::nullopt;
+
   const glm::vec3 d = to - from;
   const JPH::RShapeCast sweep = JPH::RShapeCast::sFromWorldTransform(
       shape,
@@ -341,8 +371,10 @@ CollisionWorld3D::cast(const Probe& probe,
   const Impl::Filter filter(m->bodies, layers, ignore);
   m->physics.GetNarrowPhaseQueryNoLock().CastShape(
       sweep, settings, JPH::RVec3::sZero(), hit, {}, {}, filter);
+
   if (!hit.HadHit())
     return std::nullopt;
+
   return std::clamp(hit.mHit.mFraction, 0.0f, 1.0f);
 }
 

@@ -1,7 +1,12 @@
 #include "engine/core/rendering/frustum.h"
 
-#include "glm/glm/geometric.hpp"
-#include "glm/glm/matrix.hpp"
+#include "engine/core/rendering/aabb.h"
+
+#include <glm/glm/ext/matrix_float4x4.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
+#include <glm/glm/ext/vector_float4.hpp>
+#include <glm/glm/geometric.hpp>
+#include <glm/glm/matrix.hpp>
 
 namespace sfs
 {

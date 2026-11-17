@@ -3,9 +3,9 @@
 // one target per case and checks the output). Case 0 holds the allowed uses
 // and must compile.
 
-#include <engine/core/ecs/ecs.h>
-#include <engine/core/events/events.h>
-#include <engine/core/events/responder.h>
+#include "engine/core/ecs/ecs.h"
+#include "engine/core/events/events.h"
+#include "engine/core/events/responder.h"
 
 #ifndef SFS_COMPILE_FAIL_CASE
   #define SFS_COMPILE_FAIL_CASE 0
@@ -79,6 +79,7 @@ protected:
           const sfs::Entity made = createEntity();
           made.addComponent<Health>(Health{hit.value});
           broadcast<HitEvent>();
+
           if (Score* own = sceneData<Score>())
             own->points += hit.value;
         });
@@ -88,10 +89,13 @@ protected:
                        {
                          if (!entity)
                            return;
+
                          entity.addComponent<Health>().addTag<Hidden>();
+
                          if (entity.hasComponent<Health>() &&
                              entity.getComponent<Health>())
                            entity.removeComponent<Hidden>();
+
                          send(entity, DiedEvent{1});
                          cancel<DiedEvent>(entity);
                          destroyEntity(entity);

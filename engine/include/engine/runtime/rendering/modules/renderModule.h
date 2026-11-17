@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/core/ecs/moduleSettings.h"
+
 #include <iterator>
 #include <vector>
 
@@ -43,6 +44,10 @@ class IRenderModule
 public:
   virtual ~IRenderModule() = default;
 
+  /** Append this module's render commands for the frame. */
+  virtual void emit(const TContext& context,
+                    std::vector<RenderCommandFor<TContext>>& out) = 0;
+
   /** Receive registration-time dependencies (registry, asset store). */
   virtual void init(const ModuleInit&) {}
 
@@ -52,19 +57,15 @@ public:
    */
   virtual void setHost(RenderModuleHost<TContext>&) {}
 
-  /** Advance any per-frame simulation the module owns. */
-  virtual void update(double /*deltaTime*/) {}
-
-  /** Append this module's render commands for the frame. */
-  virtual void emit(const TContext& context,
-                    std::vector<RenderCommandFor<TContext>>& out) = 0;
-
   /**
    * UI-agnostic descriptors for this module's settings, for a debug panel or
    * editor. The render context lets a module expose only the settings that
    * apply to what's being drawn. Default: none.
    */
   virtual std::vector<ModuleSetting> settings(const TContext&) { return {}; }
+
+  /** Advance any per-frame simulation the module owns. */
+  virtual void update(double /*deltaTime*/) {}
 };
 
 /** Helper base for modules that build a vector of one command type. */
@@ -72,9 +73,6 @@ template <typename TContext, typename TCommand>
 class CommandModule : public IRenderModule<TContext>
 {
 public:
-  /** Build the frame's commands into m_commands. */
-  virtual void computeCommands(const TContext& context) = 0;
-
   /**
    * The commands the last computeCommands() built. A module that builds them
    * afresh every frame, as rebuildsEveryFrame() says, hands them on in
@@ -85,10 +83,14 @@ public:
    */
   const std::vector<TCommand>& commands() const { return m_commands; }
 
+  /** Build the frame's commands into m_commands. */
+  virtual void computeCommands(const TContext& context) = 0;
+
   void emit(const TContext& context,
             std::vector<RenderCommandFor<TContext>>& out) override
   {
     computeCommands(context);
+
     // TCommand -> the context's command variant.
     if (rebuildsEveryFrame())
       out.insert(out.end(),

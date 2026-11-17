@@ -232,6 +232,23 @@ private:
   // with the tile passes' bindings.
   struct GpuGrass
   {
+    // A camera feed's blades (CameraFeedComponent::grassBlades), grown apart
+    // from the view's: buffers and settings of its own (made when first
+    // grown).
+    struct Feed
+    {
+      std::array<uint32_t, 3> capacity{0, 0, 0};
+      wgpu::Buffer blades;
+      wgpu::Buffer draws;
+      wgpu::Buffer casters; // (none cast: bound only)
+      wgpu::Buffer growUniforms;
+      wgpu::Buffer drawUniforms;
+      wgpu::BindGroup growBindings;
+      std::array<wgpu::BindGroup, 3> drawBindings;
+      bool grown = false; // this frame
+      glm::uvec3 workgroups{0, 0, 0};
+    };
+
     GrassFieldState state; // its grids, trample bounds and blade capacity
     GpuImage ground;
     GpuImage shape;
@@ -276,22 +293,6 @@ private:
     bool grown = false;  // this frame: its blades
     bool placed = false; // this frame: its draw's uniforms (for its ground)
     bool groundPlaced = false; // likewise, kept for a camera feed's ground
-    // A camera feed's blades (CameraFeedComponent::grassBlades), grown apart
-    // from the view's: buffers and settings of its own (made when first
-    // grown).
-    struct Feed
-    {
-      std::array<uint32_t, 3> capacity{0, 0, 0};
-      wgpu::Buffer blades;
-      wgpu::Buffer draws;
-      wgpu::Buffer casters; // (none cast: bound only)
-      wgpu::Buffer growUniforms;
-      wgpu::Buffer drawUniforms;
-      wgpu::BindGroup growBindings;
-      std::array<wgpu::BindGroup, 3> drawBindings;
-      bool grown = false; // this frame
-      glm::uvec3 workgroups{0, 0, 0};
-    };
     std::unique_ptr<Feed> feed;
     bool casts = false;    // this frame: its blades into the sun's shadow
     uint32_t castInto = 0; // the cascades they're drawn into so far (bits)
@@ -720,12 +721,6 @@ private:
   static constexpr uint32_t kGrassStatistics = 3; // each one's numbers
   struct GrassStats
   {
-    bool pixels = false;    // counting each pixel's fragments
-    wgpu::QuerySet queries; // the device's counts, each field's blades
-    wgpu::Buffer resolved;
-    uint32_t queried = 0; // this frame's fields
-    uint32_t copiedQueries = 0;
-    std::array<double, kGrassStatistics> statistics{};
     enum class Readback
     {
       Idle,
@@ -733,6 +728,13 @@ private:
       Mapping,
       Mapped,
     };
+
+    bool pixels = false;    // counting each pixel's fragments
+    wgpu::QuerySet queries; // the device's counts, each field's blades
+    wgpu::Buffer resolved;
+    uint32_t queried = 0; // this frame's fields
+    uint32_t copiedQueries = 0;
+    std::array<double, kGrassStatistics> statistics{};
     wgpu::Buffer fragments; // a count a pixel, the lit pass's size
     glm::ivec2 size{0};
     wgpu::Buffer readback; // the counters, then the fragments
@@ -779,6 +781,7 @@ private:
       uint32_t frames = 0; // the frames it ran in
       bool nested = false; // a span inside a pass (counted in the pass's)
     };
+
     wgpu::QuerySet queries;
     wgpu::Buffer resolved;
     wgpu::Buffer readback;

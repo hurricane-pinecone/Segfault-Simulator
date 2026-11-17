@@ -1,6 +1,6 @@
 #pragma once
 
-#include <sfs/codegen/model.h>
+#include "sfs/codegen/model.h"
 
 #include <tree_sitter/api.h>
 
@@ -34,29 +34,6 @@ using FileReader = std::function<std::string(const std::filesystem::path&)>;
 class Linter
 {
 public:
-  Linter();
-  ~Linter();
-
-  /**
-   * Lints one file.
-   *
-   * @param source the file's text
-   * @param tree its syntax tree
-   * @param path the file, for the diagnostics
-   * @param index the project's types, to tell its systems
-   * @param out gains a diagnostic for each finding, with its fix if it has one
-   * @param read gives other files' text (a class's header); null: from disk
-   * @param events codegen's event models of the file, for the response types
-   *        it declares; null: none
-   */
-  void run(std::string_view source,
-           const TSTree* tree,
-           const std::filesystem::path& path,
-           const ProjectIndex& index,
-           std::vector<codegen::Diagnostic>& out,
-           const FileReader* read = nullptr,
-           const std::vector<codegen::EventModel>* events = nullptr);
-
   /** The node kinds the walk tells apart. */
   enum class Kind : uint8_t
   {
@@ -132,11 +109,35 @@ public:
     DestructorName,
   };
 
+  Linter();
+  ~Linter();
+
   /** The kind of `node`. */
   Kind kindOf(TSNode node) const;
 
+  /**
+   * Lints one file.
+   *
+   * @param source the file's text
+   * @param tree its syntax tree
+   * @param path the file, for the diagnostics
+   * @param index the project's types, to tell its systems
+   * @param out gains a diagnostic for each finding, with its fix if it has one
+   * @param read gives other files' text (a class's header); null: from disk
+   * @param events codegen's event models of the file, for the response types
+   *        it declares; null: none
+   */
+  void run(std::string_view source,
+           const TSTree* tree,
+           const std::filesystem::path& path,
+           const ProjectIndex& index,
+           std::vector<codegen::Diagnostic>& out,
+           const FileReader* read = nullptr,
+           const std::vector<codegen::EventModel>* events = nullptr);
+
 private:
   struct Walk;
+
   std::vector<Kind> m_kinds;    // by tree-sitter symbol
   std::unique_ptr<Walk> m_walk; // its containers are kept from run to run
 };

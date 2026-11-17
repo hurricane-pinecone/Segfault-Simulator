@@ -1,9 +1,10 @@
 #pragma once
 
 #include "engine/core/ecs/entity.h"
-#include "glm/glm/ext/matrix_float4x3.hpp"
-#include "glm/glm/ext/matrix_float4x4.hpp"
-#include "glm/glm/ext/vector_float3.hpp"
+
+#include <glm/glm/ext/matrix_float4x3.hpp>
+#include <glm/glm/ext/matrix_float4x4.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
 
 #include <cstdint>
 
@@ -25,6 +26,11 @@ namespace sfs
  */
 struct WorldTransformComponent
 {
+  /** The world matrix as a 4x4 (bottom row 0, 0, 0, 1). */
+  glm::mat4 matrix() const { return glm::mat4(world); }
+  /** The entity's world position (the matrix's origin). */
+  glm::vec3 position() const { return world[3]; }
+
   /**
    * The local-to-world matrix, affine: the scaled x, y and z axes, then the
    * origin (as hierarchy::composeWorld() makes it).
@@ -43,11 +49,6 @@ struct WorldTransformComponent
    * parent, unless that only groups); HierarchyLinks::kNone for none.
    */
   Entity::EntityId parent = Entity::InvalidId;
-
-  /** The world matrix as a 4x4 (bottom row 0, 0, 0, 1). */
-  glm::mat4 matrix() const { return glm::mat4(world); }
-  /** The entity's world position (the matrix's origin). */
-  glm::vec3 position() const { return world[3]; }
 };
 
 /**

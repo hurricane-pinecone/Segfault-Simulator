@@ -7,9 +7,11 @@
 #include "engine/core/rendering/lighting.h"
 #include "engine/core/rendering/rain.h"
 #include "engine/core/rendering/sky.h"
-#include "glm/glm/ext/vector_float3.hpp"
-#include "nlohmann/json.hpp"
 
+#include <glm/glm/ext/vector_float3.hpp>
+#include <nlohmann/json.hpp>
+
+#include <cstdint>
 #include <map>
 #include <optional>
 #include <string>
@@ -64,6 +66,24 @@ namespace sfs
  */
 struct VisualStyle
 {
+  /** Missing keys keep their defaults; nothing if `json` isn't an object. */
+  static std::optional<VisualStyle> fromJson(const nlohmann::json& json);
+
+  /** The sun's and ambient's multipliers. */
+  LightBalance lightBalance() const
+  {
+    return {sunTint * sunIntensity, ambientTint * ambientIntensity};
+  }
+
+  bool operator==(const VisualStyle&) const = default;
+
+  /** The scene's shadow settings, with this style's in place of its own. */
+  ShadowSettings shadows(const ShadowSettings& scene) const;
+
+  glm::vec3 skyScale() const { return skyTint * skyIntensity; }
+
+  nlohmann::json toJson() const;
+
   static constexpr int kFormatVersion = 1;
 
   ColorGrading grading;
@@ -104,22 +124,6 @@ struct VisualStyle
   // over their variants, and for materials a game makes in code too (e.g. a
   // ground it paints as it plays). See MeshLibrary::setMaterialOverrides().
   std::map<std::string, std::string> materials;
-
-  /** The sun's and ambient's multipliers. */
-  LightBalance lightBalance() const
-  {
-    return {sunTint * sunIntensity, ambientTint * ambientIntensity};
-  }
-  glm::vec3 skyScale() const { return skyTint * skyIntensity; }
-
-  /** The scene's shadow settings, with this style's in place of its own. */
-  ShadowSettings shadows(const ShadowSettings& scene) const;
-
-  nlohmann::json toJson() const;
-  /** Missing keys keep their defaults; nothing if `json` isn't an object. */
-  static std::optional<VisualStyle> fromJson(const nlohmann::json& json);
-
-  bool operator==(const VisualStyle&) const = default;
 };
 
 /** Bloom's settings as a style or scene file holds them. */

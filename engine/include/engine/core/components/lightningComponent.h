@@ -1,7 +1,8 @@
 #pragma once
 
 #include "engine/core/rendering/mesh.h"
-#include "glm/glm/ext/vector_float3.hpp"
+
+#include <glm/glm/ext/vector_float3.hpp>
 
 #include <cstdint>
 

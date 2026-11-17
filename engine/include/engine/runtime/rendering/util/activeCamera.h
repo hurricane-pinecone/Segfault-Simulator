@@ -2,12 +2,15 @@
 
 #include "engine/core/components/cameraComponent.h"
 #include "engine/core/components/transformComponent.h"
+#include "engine/core/ecs/entity.h"
 #include "engine/core/ecs/registry.h"
 #include "engine/core/rendering/camera.h"
 #include "engine/core/rendering/lighting.h"
-#include "glm/glm/common.hpp"
-#include "glm/glm/ext/matrix_float4x4.hpp"
-#include "glm/glm/trigonometric.hpp"
+
+#include <glm/glm/common.hpp>
+#include <glm/glm/ext/matrix_float4x4.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
+#include <glm/glm/trigonometric.hpp>
 
 namespace sfs
 {
@@ -21,6 +24,7 @@ inline Entity findActiveCamera(Registry& registry)
        registry.query<CameraComponent, TransformComponent>())
     if (camera.active)
       return entity;
+
   return {};
 }
 

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstddef>
 #include <string>
 #include <string_view>
 
@@ -30,6 +31,7 @@ inline bool globMatch(std::string_view text, std::string_view pattern)
   std::size_t t = 0, p = 0;
   // Where the last `*` was, and the text it's matched up to so far.
   std::size_t star = std::string_view::npos, starText = 0;
+
   while (t < text.size())
   {
     // A `*` in the pattern is always a wildcard, even against a `*` in the
@@ -52,8 +54,10 @@ inline bool globMatch(std::string_view text, std::string_view pattern)
     else
       return false;
   }
+
   while (p < pattern.size() && pattern[p] == '*')
     ++p;
+
   return p == pattern.size();
 }
 
@@ -67,11 +71,14 @@ inline bool globMatch(std::string_view text, std::string_view pattern)
 inline std::string_view baseNodeName(std::string_view name)
 {
   const std::size_t dot = name.rfind('.');
+
   if (dot == std::string_view::npos || dot + 1 >= name.size())
     return name;
+
   for (std::size_t i = dot + 1; i < name.size(); ++i)
     if (name[i] < '0' || name[i] > '9')
       return name;
+
   return name.substr(0, dot);
 }
 

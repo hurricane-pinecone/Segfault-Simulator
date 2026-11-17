@@ -1,13 +1,20 @@
+#include "document.h"
 #include "lspFeatures.h"
+#include "sfs/codegen/model.h"
+#include "sfs/codegen/parser.h"
+#include "sfs/codegen/rules.h"
+#include "sfs/codegen/suppressions.h"
+#include "sfs/lsp/protocol.h"
 
-#include <sfs/codegen/parser.h>
-#include <sfs/codegen/suppressions.h>
-#include <sfs/lsp/protocol.h>
-
-#include <tree_sitter/api.h>
+#include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cstdint>
 #include <cstring>
+#include <filesystem>
+#include <string_view>
+#include <utility>
+#include <vector>
 
 namespace sfs::lsp
 {
@@ -39,9 +46,11 @@ TextEdit addToList(const Document& document,
                    codegen::RuleId rule)
 {
   uint32_t before = directive.close;
+
   while (before > directive.open + 1 && (document.text[before - 1] == ' ' ||
                                          document.text[before - 1] == '\t'))
     --before;
+
   const bool empty = before == directive.open + 1;
   const auto [row, column] = pointOf(document, before);
   return {{row, column, row, column},
@@ -58,18 +67,23 @@ nlohmann::json editsJson(const Document& document,
 {
   // The files in the order their first edit comes; the document first.
   std::vector<std::filesystem::path> files = {{}};
+
   for (const TextEdit& edit : edits)
     if (std::find(files.begin(), files.end(), edit.file) == files.end())
       files.push_back(edit.file);
+
   nlohmann::json documentChanges = nlohmann::json::array();
   nlohmann::json changes = nlohmann::json::object();
+
   for (const std::filesystem::path& file : files)
   {
     const Document* target = &document;
     Document fromDisk;
+
     if (!file.empty())
     {
       target = open ? open(file) : nullptr;
+
       if (!target)
       {
         fromDisk.path = file;
@@ -78,14 +92,18 @@ nlohmann::json editsJson(const Document& document,
         target = &fromDisk;
       }
     }
+
     nlohmann::json list = nlohmann::json::array();
+
     for (const TextEdit& edit : edits)
       if (edit.file == file)
         list.push_back(
             {{"range", rangeJson(*target, edit.range, settings.encoding)},
              {"newText", edit.text}});
+
     if (list.empty())
       continue;
+
     // A file that isn't open has no version to check against.
     const nlohmann::json version = target == &fromDisk
                                        ? nlohmann::json()
@@ -95,8 +113,10 @@ nlohmann::json editsJson(const Document& document,
          {"edits", list}});
     changes[target->uri] = std::move(list);
   }
+
   if (settings.documentChanges)
     return {{"documentChanges", std::move(documentChanges)}};
+
   return {{"changes", std::move(changes)}};
 }
 
@@ -114,15 +134,20 @@ nlohmann::json diagnosticJson(const Document& document,
       {"source",
        rule.source == codegen::RuleSource::Codegen ? "sfs-codegen" : "sfs"},
       {"message", diagnostic.message}};
+
   if (settings.diagnosticTags && (rule.unnecessary || rule.deprecated))
   {
     nlohmann::json tags = nlohmann::json::array();
+
     if (rule.unnecessary)
       tags.push_back(1);
+
     if (rule.deprecated)
       tags.push_back(2);
+
     json["tags"] = std::move(tags);
   }
+
   return json;
 }
 
@@ -131,24 +156,30 @@ ignoreEdits(const Document& document, RuleId rule, uint32_t row, bool wholeFile)
 {
   const std::vector<IgnoreDirective> directives = directivesIn(document);
   const std::string name(codegen::ruleInfo(rule).name);
+
   if (wholeFile)
   {
     for (const IgnoreDirective& found : directives)
       if (found.form == IgnoreForm::File)
         return {addToList(document, found, rule)};
+
     // Below #pragma once, or at the top.
     uint32_t line = 0;
+
     for (uint32_t i = 0; i < document.lineStarts.size(); ++i)
     {
       std::string_view text = lineText(document, i);
+
       while (!text.empty() && (text.front() == ' ' || text.front() == '\t'))
         text.remove_prefix(1);
+
       if (text.starts_with("#pragma once"))
       {
         line = i + 1;
         break;
       }
     }
+
     if (line >= document.lineStarts.size())
     {
       // #pragma once on the last line, with no line break after it.
@@ -157,6 +188,7 @@ ignoreEdits(const Document& document, RuleId rule, uint32_t row, bool wholeFile)
       return {{{line - 1, end, line - 1, end},
                "\n// sfs-ignore-file(" + name + ")"}};
     }
+
     return {{{line, 0, line, 0}, "// sfs-ignore-file(" + name + ")\n"}};
   }
 
@@ -165,6 +197,7 @@ ignoreEdits(const Document& document, RuleId rule, uint32_t row, bool wholeFile)
          found.comment.endRow + 1 == row) ||
         (found.form == IgnoreForm::Line && found.comment.startRow == row))
       return {addToList(document, found, rule)};
+
   const std::string_view text = lineText(document, row);
   const std::size_t indent = text.find_first_not_of(" \t");
   const std::string_view indentation =
@@ -181,6 +214,7 @@ nlohmann::json codeActions(const Document& document,
                            const OpenDocuments& open)
 {
   nlohmann::json actions = nlohmann::json::array();
+
   for (const Diagnostic& diagnostic : document.diagnostics)
   {
     // Any diagnostic on the lines asked about: editors ask at the cursor, which
@@ -188,8 +222,10 @@ nlohmann::json codeActions(const Document& document,
     if (diagnostic.range.endRow < start.line ||
         diagnostic.range.startRow > end.line)
       continue;
+
     const nlohmann::json lspDiagnostic =
         nlohmann::json::array({diagnosticJson(document, diagnostic, settings)});
+
     if (!diagnostic.fix.empty())
       actions.push_back(
           {{"title", diagnostic.fixTitle.empty() ? "Fix" : diagnostic.fixTitle},
@@ -197,8 +233,10 @@ nlohmann::json codeActions(const Document& document,
            {"diagnostics", lspDiagnostic},
            {"isPreferred", true},
            {"edit", editsJson(document, diagnostic.fix, settings, open)}});
+
     if (!codegen::canIgnore(diagnostic.rule))
       continue;
+
     const std::string rule(codegen::ruleInfo(diagnostic.rule).name);
     actions.push_back(
         {{"title", "Ignore " + rule + " on this line"},
@@ -219,6 +257,7 @@ nlohmann::json codeActions(const Document& document,
                     ignoreEdits(document, diagnostic.rule, 0, true),
                     settings)}});
   }
+
   return actions;
 }
 

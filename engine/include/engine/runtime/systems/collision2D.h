@@ -1,7 +1,8 @@
 #pragma once
 
 #include "engine/core/ecs/entity.h"
-#include "glm/glm/ext/vector_float2.hpp"
+
+#include <glm/glm/ext/vector_float2.hpp>
 
 namespace sfs
 {

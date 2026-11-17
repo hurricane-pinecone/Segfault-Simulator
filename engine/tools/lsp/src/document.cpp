@@ -1,9 +1,21 @@
 #include "document.h"
 
+#include "sfs/codegen/model.h"
+#include "sfs/lsp/protocol.h"
+
+#include <nlohmann/json.hpp>
 #include <tree_sitter/api.h>
 #include <tree_sitter/tree-sitter-cpp.h>
 
 #include <algorithm>
+#include <chrono>
+#include <cstddef>
+#include <cstdint>
+#include <filesystem>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
 
 namespace sfs::lsp
 {
@@ -27,9 +39,11 @@ std::vector<uint32_t> countLines(std::string_view text)
   std::vector<uint32_t> starts;
   starts.reserve(text.size() / 32 + 1);
   starts.push_back(0);
+
   for (std::size_t i = 0; i < text.size(); ++i)
     if (text[i] == '\n')
       starts.push_back(static_cast<uint32_t>(i + 1));
+
   return starts;
 }
 
@@ -48,12 +62,15 @@ std::string_view lineText(const Document& document, uint32_t line)
 {
   if (line >= document.lineStarts.size())
     return {};
+
   const uint32_t start = document.lineStarts[line];
   uint32_t end = line + 1 < document.lineStarts.size()
                      ? document.lineStarts[line + 1] - 1
                      : static_cast<uint32_t>(document.text.size());
+
   if (end > start && document.text[end - 1] == '\r')
     --end;
+
   return std::string_view(document.text).substr(start, end - start);
 }
 
@@ -63,6 +80,7 @@ uint32_t byteOffset(const Document& document,
 {
   if (position.line >= document.lineStarts.size())
     return static_cast<uint32_t>(document.text.size());
+
   return document.lineStarts[position.line] +
          characterToByte(
              lineText(document, position.line), position.character, encoding);
@@ -97,8 +115,10 @@ void applyEdit(Document& document,
   const auto [oldEndRow, oldEndColumn] = pointOf(document, to);
 
   const std::size_t size = document.text.size() - (to - from) + text.size();
+
   if (size > document.text.capacity())
     document.text.reserve(size + size / 4);
+
   document.text.replace(from, to - from, text);
 
   // Lines that started inside the replaced text go; the new text's come in;
@@ -108,19 +128,24 @@ void applyEdit(Document& document,
   const auto last = std::upper_bound(first, starts.end(), to);
   const int64_t delta =
       static_cast<int64_t>(text.size()) - static_cast<int64_t>(to - from);
+
   for (auto it = last; it != starts.end(); ++it)
     *it = static_cast<uint32_t>(*it + delta);
+
   const std::size_t at = static_cast<std::size_t>(first - starts.begin());
   starts.erase(first, last);
   std::size_t inserted = 0;
+
   for (std::size_t i = 0; i < text.size(); ++i)
     if (text[i] == '\n')
       ++inserted;
+
   if (inserted > 0)
   {
     starts.insert(
         starts.begin() + static_cast<std::ptrdiff_t>(at), inserted, 0);
     std::size_t next = at;
+
     for (std::size_t i = 0; i < text.size(); ++i)
       if (text[i] == '\n')
         starts[next++] = static_cast<uint32_t>(from + i + 1);
@@ -139,6 +164,7 @@ void applyEdit(Document& document,
     edit.new_end_point = {newEndRow, newEndColumn};
     ts_tree_edit(document.tree.get(), &edit);
   }
+
   document.stale = true;
   document.dirty = true;
   document.lastChange = std::chrono::steady_clock::now();
@@ -148,6 +174,7 @@ void reparse(Document& document, TSParser* parser)
 {
   if (!document.stale && document.tree)
     return;
+
   TSTree* tree =
       ts_parser_parse_string(parser,
                              document.tree.get(),
@@ -173,6 +200,7 @@ Position positionFrom(const nlohmann::json& position)
 {
   if (!position.is_object())
     return {};
+
   return {position.value("line", 0u), position.value("character", 0u)};
 }
 

@@ -1,6 +1,7 @@
 #include "engine/core/scripting/particleSchema.h"
 
 #include "engine/core/particles/particleEffect.h"
+#include "engine/core/scripting/luaSchema.h"
 
 namespace sfs
 {

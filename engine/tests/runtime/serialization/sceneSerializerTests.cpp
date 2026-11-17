@@ -1,43 +1,55 @@
 #include "../../testHarness.h"
 #include "../rendering/mockRenderer.h"
+#include "engine/core/components/cameraComponent.h"
+#include "engine/core/components/cameraFollowComponent.h"
+#include "engine/core/components/grassBenderComponent.h"
+#include "engine/core/components/grassComponent.h"
+#include "engine/core/components/meshRendererComponent.h"
+#include "engine/core/components/nameComponent.h"
+#include "engine/core/components/pointLightComponent.h"
+#include "engine/core/components/sceneIdComponent.h"
+#include "engine/core/components/spriteComponent.h"
+#include "engine/core/components/transformComponent.h"
+#include "engine/core/ecs/entity.h"
+#include "engine/core/hierarchy/hierarchy.h"
+#include "engine/core/reflection/reflection.h"
+#include "engine/core/reflection/registration.h"
+#include "engine/core/rendering/ambientOcclusion.h"
+#include "engine/core/rendering/colorGrading.h"
+#include "engine/core/rendering/contactShadows.h"
+#include "engine/core/rendering/fog.h"
+#include "engine/core/rendering/grass.h"
+#include "engine/core/rendering/mesh.h"
+#include "engine/core/rendering/meshPrimitives.h"
+#include "engine/core/rendering/sky.h"
+#include "engine/core/sceneData/ambientLighting.h"
+#include "engine/core/sceneData/celestialBodies.h"
+#include "engine/core/sceneData/clouds.h"
+#include "engine/core/sceneData/directionalLighting.h"
+#include "engine/core/sceneData/rain.h"
+#include "engine/core/sceneData/shaderGlobals.h"
+#include "engine/core/sceneData/wind.h"
+#include "engine/core/util/random.h"
+#include "engine/runtime/assetStore/assetStore.h"
+#include "engine/runtime/rendering/renderSystem.h"
+#include "engine/runtime/rendering/space2D.h"
+#include "engine/runtime/sceneManager/scene.h"
+#include "engine/runtime/scripting/sceneScripts.h"
+#include "engine/runtime/serialization/sceneSerializer.h"
+#include "engine/runtime/serialization/unresolvedComponents.h"
 #include "rigComponent.h"
 
-#include <engine/core/components/cameraComponent.h>
-#include <engine/core/components/cameraFollowComponent.h>
-#include <engine/core/components/grassBenderComponent.h>
-#include <engine/core/components/grassComponent.h>
-#include <engine/core/components/meshRendererComponent.h>
-#include <engine/core/components/nameComponent.h>
-#include <engine/core/components/pointLightComponent.h>
-#include <engine/core/components/sceneIdComponent.h>
-#include <engine/core/components/spriteComponent.h>
-#include <engine/core/components/transformComponent.h>
-#include <engine/core/components/windZoneComponent.h>
-#include <engine/core/hierarchy/hierarchy.h>
-#include <engine/core/reflection/reflection.h>
-#include <engine/core/reflection/registration.h>
-#include <engine/core/rendering/grass.h>
-#include <engine/core/rendering/meshPrimitives.h>
-#include <engine/core/sceneData/ambientLighting.h>
-#include <engine/core/sceneData/celestialBodies.h>
-#include <engine/core/sceneData/clouds.h>
-#include <engine/core/sceneData/directionalLighting.h>
-#include <engine/core/sceneData/rain.h>
-#include <engine/core/sceneData/shaderGlobals.h>
-#include <engine/core/sceneData/wind.h>
-#include <engine/core/util/random.h>
-#include <engine/runtime/assetStore/assetStore.h>
-#include <engine/runtime/rendering/renderSystem.h>
-#include <engine/runtime/sceneManager/scene.h>
-#include <engine/runtime/serialization/sceneSerializer.h>
-#include <engine/runtime/serialization/unresolvedComponents.h>
+#include <glm/glm/ext/quaternion_trigonometric.hpp>
+#include <nlohmann/json.hpp>
 
-#include <glm/glm/gtc/quaternion.hpp>
-
+#include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace sfs;
@@ -55,29 +67,6 @@ struct [[sfs::scene_data]] Scoreboard
   int home = 0;
   int away = 0;
 };
-
-void registerScoreboard()
-{
-  if (reflect::types().find("Scoreboard"))
-    return;
-  reflect::TypeInfo type =
-      reflect::sceneDataType<Scoreboard>("Scoreboard", "Scoreboard", "tests");
-  reflect::FieldInfo home;
-  home.name = "home";
-  home.displayName = "Home";
-  home.kind = reflect::FieldKind::Int;
-  home.address = [](void* object) -> void*
-  { return &static_cast<Scoreboard*>(object)->home; };
-  type.fields.push_back(std::move(home));
-  reflect::FieldInfo away;
-  away.name = "away";
-  away.displayName = "Away";
-  away.kind = reflect::FieldKind::Int;
-  away.address = [](void* object) -> void*
-  { return &static_cast<Scoreboard*>(object)->away; };
-  type.fields.push_back(std::move(away));
-  reflect::types().add(std::move(type));
-}
 
 // A 3D scene with a named cube mesh, like an editor scene.
 struct World
@@ -112,9 +101,34 @@ struct World
       if (const NameComponent* named = entity.getComponent<NameComponent>();
           named && named->name == name)
         return entity;
+
     return {};
   }
 };
+
+void registerScoreboard()
+{
+  if (reflect::types().find("Scoreboard"))
+    return;
+
+  reflect::TypeInfo type =
+      reflect::sceneDataType<Scoreboard>("Scoreboard", "Scoreboard", "tests");
+  reflect::FieldInfo home;
+  home.name = "home";
+  home.displayName = "Home";
+  home.kind = reflect::FieldKind::Int;
+  home.address = [](void* object) -> void*
+  { return &static_cast<Scoreboard*>(object)->home; };
+  type.fields.push_back(std::move(home));
+  reflect::FieldInfo away;
+  away.name = "away";
+  away.displayName = "Away";
+  away.kind = reflect::FieldKind::Int;
+  away.address = [](void* object) -> void*
+  { return &static_cast<Scoreboard*>(object)->away; };
+  type.fields.push_back(std::move(away));
+  reflect::types().add(std::move(type));
+}
 } // namespace
 
 int main()
@@ -329,6 +343,7 @@ int main()
     World plain;
     const nlohmann::json plainSaved = plain.serializer().save(plain.scene);
     CHECK(!plainSaved.contains("sceneData"));
+
     for (const char* old : {"lighting", "wind", "weather"})
       CHECK(!plainSaved["render"].contains(old));
 
@@ -554,6 +569,7 @@ int main()
         source.serializer().save(source.scene), target.scene);
     const Entity loaded = target.findByName("Lawn");
     CHECK(loaded.isValid() && loaded.hasComponent<GrassComponent>());
+
     if (const GrassComponent* back = loaded.getComponent<GrassComponent>())
     {
       CHECK(back->material == grass.material);
@@ -561,6 +577,7 @@ int main()
       CHECK(testing::approx(back->stiffness, 0.8f));
       CHECK(GrassMaps::fromJson(back->paint) == paint);
     }
+
     const Entity bender = target.findByName("Walker");
     const auto* bends = bender.getComponent<GrassBenderComponent>();
     CHECK((bends && testing::approx(bends->radius, 1.25f)));
@@ -698,6 +715,7 @@ int main()
     };
 
     World source;
+
     for (const char* name : {"First", "Second", "Third"})
     {
       Entity entity = source.scene.createEntity();
@@ -705,11 +723,13 @@ int main()
       entity.addComponent<TransformComponent>(
           TransformComponent{{0.45f, 0.1f, -2.3f}});
     }
+
     CHECK(source.serializer().saveFile(source.scene, dir / "a.scene"));
 
     // Clear and reload into the same scene, as the editor does.
     for (Entity entity : source.scene.entities())
       source.scene.destroyEntity(entity);
+
     source.scene.flushEntities();
     CHECK(source.serializer().loadFile(dir / "a.scene", source.scene));
     source.scene.flushEntities();
@@ -841,13 +861,16 @@ int main()
 
     for (Entity entity : world.scene.entities())
       world.scene.destroyEntity(entity);
+
     world.scene.flushEntities();
     CHECK(world.serializer().load(saved, world.scene));
     world.scene.flushEntities();
 
     std::vector<std::string> names;
+
     for (const Entity& entity : world.scene.entities())
       names.push_back(world.nameOf(entity));
+
     CHECK((names == std::vector<std::string>{"B", "C", "A"}));
     CHECK(world.serializer().save(world.scene) == saved);
   }
@@ -870,8 +893,10 @@ int main()
     CHECK(world.scene.entities().size() == 5u);
     CHECK(hierarchy::parentOf(copy) == root);
     std::vector<Entity> rootChildren;
+
     for (const Entity& child : hierarchy::childrenOf(root))
       rootChildren.push_back(child);
+
     CHECK((rootChildren == std::vector<Entity>{lamp, copy}));
     CHECK(world.nameOf(hierarchy::findChild<NameComponent>(copy)) == "Bulb");
   }
@@ -887,8 +912,10 @@ int main()
     world.scene.flushEntities();
     const nlohmann::json saved = world.serializer().save(world.scene);
     CHECK(saved["entities"].size() == 1u);
+
     for (const nlohmann::json& entry : saved["entities"])
       CHECK(!entry.empty());
+
     CHECK(world.scene.preorder().size() == 1u);
   }
 
@@ -963,8 +990,10 @@ int main()
     World opened;
     const SceneSerializer serializer = opened.serializer();
     SceneSerializer::LoadSession session;
+
     for (const json& entry : saved["entities"])
       serializer.loadEntity(entry, opened.scene, {}, &session);
+
     Entity loadedA = opened.findByName("A");
     CHECK(!loadedA.getComponent<RigComponent>()->arm.isValid());
     serializer.finish(session, opened.scene);
@@ -1008,8 +1037,10 @@ int main()
     w.scene.flushEntities();
     CHECK(copy != top);
     std::vector<Entity> children;
+
     for (const Entity& child : hierarchy::childrenOf(copy))
       children.push_back(child);
+
     CHECK(children.size() == 2u);
     const RigComponent* rig = children[0].getComponent<RigComponent>();
     CHECK(rig->arm == children[1]);
@@ -1041,6 +1072,7 @@ int main()
               {{{"CameraFollowComponent", {{"target", 0}}}},
                {{"CameraFollowComponent", {{"target", -1}}}}}}},
         old.scene);
+
     for (const Entity& entity : old.scene.entities())
       CHECK(!entity.getComponent<CameraFollowComponent>()->target.isValid());
   }
@@ -1144,9 +1176,11 @@ int main()
 
     // The merge keeps both branches' new entries.
     json merged = start;
+
     for (const json* side : {&left, &right})
       for (std::size_t i = 1; i < (*side)["entities"].size(); ++i)
         merged["entities"].push_back((*side)["entities"][i]);
+
     World w;
     w.serializer().load(merged, w.scene);
     CHECK(w.findByName("Left Pointer").getComponent<RigComponent>()->arm ==

@@ -3,6 +3,8 @@
 #include "engine/runtime/rendering/uiDraw.h"
 #include "engine/runtime/ui/layout.h"
 
+#include <glm/glm/ext/vector_int2.hpp>
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -21,9 +23,6 @@ namespace sfs::ui
 class ImageAtlas
 {
 public:
-  static constexpr int kPageSize = 1024;
-  static constexpr int kLargest = 256;
-
   /**
    * `pixels` (RGBA8, rows from the top, `size.x * size.y * 4` bytes) added:
    * where it went, kept while the atlas lives; null if it's no size.
@@ -32,6 +31,9 @@ public:
 
   /** How many shared pages there are. */
   std::size_t pages() const { return m_pages.size(); }
+
+  static constexpr int kPageSize = 1024;
+  static constexpr int kLargest = 256;
 
 private:
   struct Page

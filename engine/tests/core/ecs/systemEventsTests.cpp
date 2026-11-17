@@ -1,9 +1,10 @@
 #include "../../testHarness.h"
-
-#include <engine/core/ecs/ecs.h>
-#include <engine/core/events/events.h>
-#include <engine/core/logger/logger.h>
-#include <engine/core/util/allocationMetrics.h>
+#include "engine/core/ecs/ecs.h"
+#include "engine/core/events/eventQueue.h"
+#include "engine/core/events/eventRows.h"
+#include "engine/core/events/events.h"
+#include "engine/core/logger/logger.h"
+#include "engine/core/util/allocationMetrics.h"
 
 #include <cstdio>
 #include <functional>
@@ -22,7 +23,7 @@ namespace
 {
 
 // A response handler that does nothing, for requesters that only ask.
-constexpr auto ignored = [](const Entity&, const auto&) {};
+constexpr auto IGNORED = [](const Entity&, const auto&) {};
 
 struct [[sfs::event_news]] PingEvent
 {
@@ -169,9 +170,11 @@ struct LogCapture
   int count(Logger::Level level, std::string_view part) const
   {
     int found = 0;
+
     for (const auto& [at, line] : lines)
       if (at == level && line.find(part) != std::string::npos)
         ++found;
+
     return found;
   }
 };
@@ -207,6 +210,7 @@ protected:
   void create() override
   {
     registerComponent<int>();
+
     if (m_setUp)
       m_setUp(*this);
   }
@@ -314,9 +318,11 @@ EventStats statsOf(Registry& registry, std::string_view name)
 {
   std::vector<EventStats> stats;
   registry.events().stats(stats);
+
   for (const EventStats& type : stats)
     if (type.type.ends_with(name))
       return type;
+
   return {};
 }
 
@@ -358,7 +364,9 @@ int main()
         {
           for (const PingEvent& ping : pings.read())
             first.push_back(ping.value);
+
           p.send(PingEvent{2});
+
           for (const PingEvent& ping : pings.read())
             second.push_back(ping.value);
         });
@@ -400,7 +408,7 @@ int main()
         [&](Probe& p)
         {
           late = p.consumer<MadeLateEvent>();
-          asker = p.requester<AskedRequest>().onResponse(ignored);
+          asker = p.requester<AskedRequest>().onResponse(IGNORED);
         });
     CHECK(!late.valid());
     CHECK(!asker.valid());
@@ -491,8 +499,10 @@ int main()
         });
     const Entity a = registry.createEntity();
     const Entity b = registry.createEntity();
+
     for (int i = 0; i < 3; ++i)
       registry.events().send(HandledEvent{i});
+
     registry.events().send(a, HandledKeyedEvent{1});
     registry.events().send(b, HandledKeyedEvent{2});
     registry.events().send(a, HandledKeyedEvent{3});
@@ -586,6 +596,7 @@ int main()
         {
           held.push_back(p.consumer<ReusedSlotEvent>().onEvent(
               [&](const ReusedSlotEvent&) { ++stayed; }));
+
           for (int i = 0; i < 4; ++i)
             held.push_back(p.consumer<ReusedSlotEvent>().onEvent(
                 [&](const ReusedSlotEvent&) { ++went; }));
@@ -698,11 +709,13 @@ int main()
     EventConsumer<DisabledEvent> disabled;
     Probe& probe = registry.addSystem<Probe>(consuming(disabled));
     probe.setEnabled(false);
+
     for (int i = 0; i < 5; ++i)
     {
       registry.events().send(DisabledEvent{i});
       frame(registry);
     }
+
     probe.setEnabled(true);
     CHECK(
         (values(registry, probe, disabled) == std::vector<int>{0, 1, 2, 3, 4}));
@@ -718,12 +731,14 @@ int main()
     EventConsumer<JobEvent> slowJobs;
     Probe& fast = registry.addSystem<Probe>(consuming(fastJobs));
     Probe& slow = registry.addSystem<Probe>(consuming(slowJobs));
+
     for (int i = 0; i < 10; ++i)
     {
       registry.events().send(JobEvent{i});
       values(registry, fast, fastJobs);
       frame(registry);
     }
+
     CHECK(kept(registry, "::JobEvent") == 10u);
     CHECK(values(registry, slow, slowJobs).size() == 10u);
     frame(registry);
@@ -739,8 +754,10 @@ int main()
     Probe& stuck = registry.addSystem<Probe>(consuming(capped));
     stuck.setEnabled(false);
     LogCapture log;
+
     for (int i = 0; i < 10; ++i)
       registry.events().send(CappedEvent{i});
+
     frame(registry);
     stuck.setEnabled(true);
     CHECK((values(registry, stuck, capped) == std::vector<int>{6, 7, 8, 9}));
@@ -763,8 +780,10 @@ int main()
     // A consumer that holds every event, so the cap is what drops them.
     Probe& holder = registry.addSystem<Probe>(consuming(held));
     holder.setEnabled(false);
+
     for (int i = 0; i < 5; ++i)
       registry.events().send(registry.createEntity(), LatestCappedEvent{i});
+
     frame(registry);
     // The latest consumer misses the 3 current ones now; the holder counts
     // its own when it next reads.
@@ -874,8 +893,10 @@ int main()
     latest(registry, probe, orders);
     probe.setEnabled(false);
     const Entity a = registry.createEntity();
+
     for (int i = 0; i < 5; ++i)
       registry.events().send(a, OrderEvent{i});
+
     frame(registry);
     CHECK(kept(registry, "::OrderEvent") == 1u);
     probe.setEnabled(true);
@@ -904,6 +925,7 @@ int main()
         {
           for (auto [entity, order] : all.read())
             every.push_back(order.value);
+
           for (auto [entity, order] : newest.readLatest())
             last.push_back(order.value);
         });
@@ -922,8 +944,10 @@ int main()
     Probe& offset = registry.addSystem<Probe>(consuming(offsetEvents));
     Probe& every = registry.addSystem<Probe>(consuming(everyEvents));
     std::vector<Entity> keys;
+
     for (int i = 0; i < 4; ++i)
       keys.push_back(registry.createEntity());
+
     std::vector<int> read;
     std::vector<int> readOffset;
     std::vector<int> readEvery;
@@ -946,24 +970,32 @@ int main()
           });
     };
     int next = 0;
+
     for (int frameIndex = 0; frameIndex < 12; ++frameIndex)
     {
       for (int i = 0; i < 4; ++i, ++next)
         registry.events().send(
             keys[static_cast<std::size_t>(i)], KeyedSlowEvent{next});
+
       readInto(every, everyEvents, readEvery);
+
       // Two consumers read every third frame, a frame apart, so the head
       // stops between them and the buffer's front is erased behind it.
       if (frameIndex % 3 == 2)
         readInto(slow, slowEvents, read);
+
       if (frameIndex % 3 == 0)
         readInto(offset, offsetEvents, readOffset);
+
       frame(registry);
     }
+
     readInto(offset, offsetEvents, readOffset);
     std::vector<int> all;
+
     for (int i = 0; i < next; ++i)
       all.push_back(i);
+
     CHECK(readEvery == all);
     CHECK(read == all);
     CHECK(readOffset == all);
@@ -989,6 +1021,7 @@ int main()
           {
             for (int i = 0; i < 64; ++i)
               p.send(entity, SentWhileEvent{10 + i});
+
             // The row is read after the sends.
             seen.emplace_back(entity, event.value);
           }
@@ -1010,6 +1043,7 @@ int main()
               [&](const ChainEvent& event)
               {
                 seen.push_back(event.depth);
+
                 if (event.depth < 2)
                   for (int i = 0; i < 40; ++i)
                     p.send(ChainEvent{event.depth + 1});
@@ -1038,6 +1072,7 @@ int main()
               {
                 for (int i = 0; i < 64; ++i)
                   p.send(entity, KeyedChainEvent{event.value + 1});
+
                 seen.emplace_back(entity, event.value);
               });
         });
@@ -1075,8 +1110,10 @@ int main()
     Registry registry;
     EventConsumer<CountedEvent> counted;
     Probe& probe = registry.addSystem<Probe>(consuming(counted));
+
     for (int i = 0; i < 5; ++i)
       registry.events().send(CountedEvent{i});
+
     values(registry, probe, counted);
     frame(registry);
     CHECK(statsOf(registry, "::CountedEvent").sentLastFrame == 5u);
@@ -1112,6 +1149,7 @@ int main()
     int read = 0;
     int readLatest = 0;
     int unread = 0;
+
     for (const EventConsumerStats& row : rows)
     {
       read += row.how == "read" && row.consumer.ends_with("Probe") &&
@@ -1120,6 +1158,7 @@ int main()
       unread += row.how.empty() && row.consumer == "a consumer" &&
                 row.unconsumed == 2u;
     }
+
     CHECK((read == 1 && readLatest == 1 && unread == 1));
   }
 
@@ -1154,13 +1193,16 @@ int main()
           {
             for (const LookupEvent& lookup : lookups.read())
               (void)lookup;
+
             for (const LookupEvent& lookup : lookups.read())
               (void)lookup;
           });
       frame(registry);
     };
+
     for (int i = 0; i < 4; ++i)
       once();
+
     if (!tracking())
       std::printf("      note: allocation tracking is off in this build\n");
     else
@@ -1169,11 +1211,13 @@ int main()
       const std::size_t before = metrics.allocationCount.load();
       {
         ScopedMemoryTracking track(MemoryTrackingPhase::Update);
+
         for (int i = 0; i < 100; ++i)
           once();
       }
       CHECK(metrics.allocationCount.load() == before);
     }
+
     // Each run's event, once per handler.
     CHECK(count == 2 * runs);
   }

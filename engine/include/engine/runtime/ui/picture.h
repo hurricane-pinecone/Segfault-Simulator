@@ -2,6 +2,8 @@
 
 #include "engine/runtime/rendering/uiDraw.h"
 
+#include <glm/glm/ext/vector_int2.hpp>
+
 #include <cstdint>
 
 namespace sfs::ui
@@ -29,24 +31,22 @@ public:
   Picture(int width, int height, const Color& fill);
   Picture(const Picture&) = delete;
   Picture& operator=(const Picture&) = delete;
-
-  glm::ivec2 size() const { return m_texture.size; }
+  /** Its pixels have been written: shown from the next frame. */
+  void changed() { ++m_texture.revision; }
+  /** Every pixel. */
+  void fill(const Color& color);
   /** Its pixels: size().x * size().y * 4 bytes, R G B A. */
   uint8_t* pixels() { return m_texture.pixels.data(); }
   const uint8_t* pixels() const { return m_texture.pixels.data(); }
-  /** One pixel (outside it: nothing). */
-  void set(int x, int y, const Color& color);
-  /** Every pixel. */
-  void fill(const Color& color);
   /** Another size, every pixel clear. */
   void resize(int width, int height);
-  /** Its pixels have been written: shown from the next frame. */
-  void changed() { ++m_texture.revision; }
-  /** Counted up by changed(). */
-  uint32_t version() const { return m_texture.revision; }
-
+  /** One pixel (outside it: nothing). */
+  void set(int x, int y, const Color& color);
+  glm::ivec2 size() const { return m_texture.size; }
   /** What the renderer draws (its revision is version()). */
   const UiTexture& texture() const { return m_texture; }
+  /** Counted up by changed(). */
+  uint32_t version() const { return m_texture.revision; }
 
 private:
   UiTexture m_texture;

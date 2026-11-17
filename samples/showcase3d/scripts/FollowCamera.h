@@ -1,7 +1,7 @@
 #pragma once
 #include <sfs/sfs.h>
 
-#include "glm/glm/gtc/quaternion.hpp"
+#include <glm/glm/gtc/quaternion.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -13,6 +13,12 @@
 class FollowCamera : public sfs::GameObject
 {
 public:
+  /** Shake the view (a thump: 0.1 small, 0.4 big); it settles by itself. */
+  void shake(float amount) { m_shake = std::max(m_shake, amount); }
+
+  /** Which way it looks across the ground (radians around Z, 0 = +X). */
+  float yaw() const { return m_yaw; }
+
   // How far behind, and the point on the hero it looks at.
   [[sfs::range(2, 30)]] float distance = 8.5f;
   [[sfs::range(1, 10)]] float minDistance = 3.0f;
@@ -28,12 +34,6 @@ public:
   // The angle it looks down at when it settles back.
   [[sfs::range(0, 1.2)]] float restingPitch = 0.38f;
 
-  /** Which way it looks across the ground (radians around Z, 0 = +X). */
-  float yaw() const { return m_yaw; }
-
-  /** Shake the view (a thump: 0.1 small, 0.4 big); it settles by itself. */
-  void shake(float amount) { m_shake = std::max(m_shake, amount); }
-
 protected:
   void onCreate(sfs::Scene& scene) override
   {
@@ -43,6 +43,7 @@ protected:
     // Start behind the hero.
     m_yaw = heroFacing();
     m_pitch = restingPitch;
+
     if (m_hero.isValid())
     {
       m_focus = heroFocus();
@@ -55,12 +56,14 @@ protected:
     const sfs::MouseInput& mouse = input.mouse();
     m_dragging = mouse.mouseHeld(sfs::MouseButton::Left) ||
                  mouse.mouseHeld(sfs::MouseButton::Right);
+
     if (m_dragging)
     {
       const glm::vec2 delta = mouse.getDelta();
       m_yaw -= delta.x * dragSensitivity;
       m_pitch = std::clamp(m_pitch + delta.y * dragSensitivity, -0.12f, 1.2f);
     }
+
     if (const int scroll = mouse.getScrollY(); scroll != 0)
       distance =
           std::clamp(distance * std::pow(0.88f, static_cast<float>(scroll)),
@@ -71,8 +74,10 @@ protected:
   void onUpdate(double deltaTime) override
   {
     auto* transform = entity().getComponent<sfs::TransformComponent>();
+
     if (!m_hero.isValid() || !transform)
       return;
+
     const float dt = static_cast<float>(deltaTime);
 
     // Unless you're looking around, it swings round behind the hero.
@@ -88,15 +93,18 @@ protected:
 
     // Back off as far as asked, but not through the ground or a wall.
     float reach = distance;
+
     if (m_physics)
     {
       const glm::vec3 back = desiredEye(1.0f) - m_focus;
       sfs::Ray ray;
       ray.origin = m_focus + glm::vec3(0.0f, 0.0f, 0.6f); // clear of the hero
       ray.direction = glm::normalize(back);
+
       if (const auto hit = m_physics->raycast(ray, distance))
         reach = std::max(hit->distance - 0.35f, 1.2f);
     }
+
     const glm::vec3 wanted = desiredEye(reach);
     m_eye += (wanted - m_eye) * ease;
     m_eye.z = std::max(m_eye.z, 0.35f);
@@ -111,30 +119,12 @@ protected:
 
     transform->position = m_eye + jitter;
     transform->rotation = lookRotation(m_focus - m_eye);
+
     if (auto* camera = entity().getComponent<sfs::CameraComponent>())
       camera->focusDistance = std::max(glm::length(m_focus - m_eye), 0.5f);
   }
 
 private:
-  // Which way the hero faces across the ground (its model's turn).
-  float heroFacing() const
-  {
-    sfs::TransformComponent* transform =
-        m_heroModel.getComponent<sfs::TransformComponent>();
-    if (!transform)
-      return 1.5707963f;
-    const glm::vec3 forward = transform->rotation * glm::vec3(1.0f, 0.0f, 0.0f);
-    return std::atan2(forward.y, forward.x);
-  }
-
-  glm::vec3 heroFocus() const
-  {
-    const auto* hero = m_hero.getComponent<sfs::TransformComponent>();
-    if (!sfs::expect(hero, m_hero))
-      return m_focus;
-    return hero->position + glm::vec3(0.0f, 0.0f, lookHeight);
-  }
-
   // Where the eye goes `reach` metres back from the focus.
   glm::vec3 desiredEye(float reach) const
   {
@@ -142,6 +132,29 @@ private:
                             std::cos(m_pitch) * std::sin(m_yaw),
                             -std::sin(m_pitch));
     return m_focus - forward * reach;
+  }
+
+  // Which way the hero faces across the ground (its model's turn).
+  float heroFacing() const
+  {
+    sfs::TransformComponent* transform =
+        m_heroModel.getComponent<sfs::TransformComponent>();
+
+    if (!transform)
+      return 1.5707963f;
+
+    const glm::vec3 forward = transform->rotation * glm::vec3(1.0f, 0.0f, 0.0f);
+    return std::atan2(forward.y, forward.x);
+  }
+
+  glm::vec3 heroFocus() const
+  {
+    const auto* hero = m_hero.getComponent<sfs::TransformComponent>();
+
+    if (!sfs::expect(hero, m_hero))
+      return m_focus;
+
+    return hero->position + glm::vec3(0.0f, 0.0f, lookHeight);
   }
 
   // A camera entity looks along its +X with +Z up (CameraComponent::applyTo).

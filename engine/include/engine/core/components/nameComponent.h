@@ -15,10 +15,10 @@ namespace sfs
  */
 struct NameComponent
 {
-  std::string name;
-
   NameComponent() = default;
   explicit NameComponent(std::string name) : name(std::move(name)) {}
+
+  std::string name;
 };
 
 } // namespace sfs

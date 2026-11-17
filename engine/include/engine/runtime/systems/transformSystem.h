@@ -39,9 +39,9 @@ class TransformSystem : public System
 {
 protected:
   void create() override;
-  void render() override;
   void onEntityAdded(const Entity& entity) override;
   void onEntityRemoved(const Entity& entity) override;
+  void render() override;
 
 private:
   // The nearest entity at or above a preorder entry with a transform: its

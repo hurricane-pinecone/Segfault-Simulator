@@ -4,6 +4,7 @@
 #include "engine/runtime/ui/ui.h"
 
 #include <SDL_events.h>
+
 #include <cstddef>
 #include <string>
 #include <vector>
@@ -27,11 +28,6 @@ namespace sfs
 class DevConsole
 {
 public:
-  bool isOpen() const { return m_open; }
-
-  // Flip visibility, starting/stopping SDL text input to match.
-  void toggle();
-
   // Feed one SDL event. Returns true when the console consumed it, so the host
   // skips its own handling. Backtick toggles from any state; while open, this
   // captures typing, Backspace/Delete, Left/Right/Home/End (move the caret),
@@ -39,15 +35,16 @@ public:
   // (closes).
   bool handleEvent(const SDL_Event& event);
 
+  bool isOpen() const { return m_open; }
+
   // The console bar (last result, prompt + input) along the bottom of the
   // screen, as UI to draw over the scene: hidden while closed.
   ui::Layer& layer() { return m_layer; }
 
-private:
-  // Run the current line against the live VM and keep its result/error to show.
-  void submit();
-  ui::View view() const;
+  // Flip visibility, starting/stopping SDL text input to match.
+  void toggle();
 
+private:
   // Shows the console's view.
   class Layer : public ui::Layer
   {
@@ -63,9 +60,12 @@ private:
     DevConsole& m_console;
   };
 
+  void recallNewer();
   // Walk the submitted-command history into the input line (older / newer).
   void recallOlder();
-  void recallNewer();
+  // Run the current line against the live VM and keep its result/error to show.
+  void submit();
+  ui::View view() const;
 
   bool m_open = false;
   std::string m_input;

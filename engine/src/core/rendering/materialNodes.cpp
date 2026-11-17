@@ -1,13 +1,25 @@
 #include "engine/core/rendering/materialNodes.h"
 
 #include "engine/core/rendering/mesh.h"
-#include "glm/glm/common.hpp"
-#include "glm/glm/exponential.hpp"
-#include "glm/glm/geometric.hpp"
-#include "glm/glm/trigonometric.hpp"
+
+#include <glm/glm/common.hpp>
+#include <glm/glm/exponential.hpp>
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
+#include <glm/glm/ext/vector_float4.hpp>
+#include <glm/glm/geometric.hpp>
+#include <glm/glm/trigonometric.hpp>
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <optional>
+#include <span>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
 
 namespace sfs::materialGraph
 {
@@ -65,8 +77,10 @@ OutputPin output(std::string name, ValueType type)
 std::string call(const char* function, Inputs inputs)
 {
   std::string out = std::string(function) + "(";
+
   for (std::size_t i = 0; i < inputs.size(); ++i)
     out += (i ? ", " : "") + inputs[i];
+
   return out + ")";
 }
 
@@ -96,6 +110,7 @@ float smoothstepScalar(float low, float high, float x)
   // WGSL's smoothstep: undefined for low == high there, a step here.
   if (low == high)
     return x < low ? 0.0f : 1.0f;
+
   const float t = std::clamp((x - low) / (high - low), 0.0f, 1.0f);
   return t * t * (3.0f - 2.0f * t);
 }
@@ -103,7 +118,7 @@ float smoothstepScalar(float low, float high, float x)
 // --- Noise: 2D gradient noise, the same arithmetic in WGSL and C++ (u32 maths
 // wraps the same way in both), so previews match the GPU.
 
-constexpr const char* kNoiseHelpers = R"(
+constexpr const char* NOISE_HELPERS = R"(
 fn noiseGradient(cell: vec2f) -> vec2f {
   let c = bitcast<vec2u>(vec2i(cell));
   var h = c.x * 0x8da6b343u + c.y * 0xd8163841u;
@@ -162,7 +177,7 @@ float gradientNoise(glm::vec2 p)
 // --- Voronoi: cells around random points, one per grid square, with the same
 // u32 hashing in WGSL and C++.
 
-constexpr const char* kVoronoiHelpers = R"(
+constexpr const char* VORONOI_HELPERS = R"(
 fn voronoiMix(x: u32) -> u32 {
   var h = x;
   h = h ^ (h >> 16u);
@@ -220,6 +235,7 @@ glm::vec2 voronoiCells(glm::vec2 p, float randomness)
 {
   const glm::vec2 base = glm::floor(p);
   float best = 8.0f, value = 0.0f;
+
   for (int y = -1; y <= 1; ++y)
     for (int x = -1; x <= 1; ++x)
     {
@@ -228,12 +244,14 @@ glm::vec2 voronoiCells(glm::vec2 p, float randomness)
       const glm::vec2 offset =
           glm::vec2(voronoiRandom(cell, 0u), voronoiRandom(cell, 1u)) - 0.5f;
       const float d = glm::distance(p, cell + 0.5f + offset * randomness);
+
       if (d < best)
       {
         best = d;
         value = voronoiRandom(cell, 2u);
       }
     }
+
   return {best, value};
 }
 
@@ -352,6 +370,7 @@ std::vector<NodeType> makeNodeTypes()
       const glm::vec4 texel = sampleTexture(a.texture, glm::vec2(a.inputs[0]));
       out[0] = texel;
       out[1] = glm::vec4(glm::vec3(texel), 0.0f);
+
       for (int i = 0; i < 4; ++i)
         out[2 + i] = glm::vec4(texel[i], 0.0f, 0.0f, 0.0f);
     };
@@ -506,7 +525,9 @@ std::vector<NodeType> makeNodeTypes()
     {
       for (int i = 0; i < 3; ++i)
         out[i] = glm::vec4(a.point->grass[i], 0, 0, 0);
+
       out[3] = a.point->grassData;
+
       for (int i = 0; i < 4; ++i)
         out[4 + i] = glm::vec4(a.point->grassData[i], 0, 0, 0);
     };
@@ -776,11 +797,15 @@ std::vector<NodeType> makeNodeTypes()
     {
       const std::string& in = a.inputs[0];
       const int w = width(a.dynamic);
+
       if (w == 1)
         return std::vector<std::string>{in, "0.0", "0.0", "0.0"};
+
       std::vector<std::string> out;
+
       for (int i = 0; i < 4; ++i)
         out.push_back(i < w ? in + "." + "rgba"[i] : std::string("0.0"));
+
       return out;
     };
     type.evaluate = [](const EvaluateArgs& a, Outputs out)
@@ -833,6 +858,7 @@ std::vector<NodeType> makeNodeTypes()
       if (a.dynamic == F)
         return std::vector<std::string>{"(" + a.inputs[0] + " * " +
                                         a.inputs[1] + ")"};
+
       return std::vector<std::string>{call("dot", a.inputs)};
     };
     type.evaluate = [](const EvaluateArgs& a, Outputs out)
@@ -973,7 +999,7 @@ std::vector<NodeType> makeNodeTypes()
     type.inputs = {fallbackInput("UV", V2, Fallback::Uv),
                    input("Scale", F, glm::vec4(10.0f))};
     type.outputs = {output("Out", F)};
-    type.helpers = kNoiseHelpers;
+    type.helpers = NOISE_HELPERS;
     type.emit = [](const EmitArgs& a)
     {
       return std::vector<std::string>{"noiseGradientNoise(" + a.inputs[0] +
@@ -1002,7 +1028,7 @@ std::vector<NodeType> makeNodeTypes()
                    input("Scale", F, glm::vec4(5.0f)),
                    unitInput("Randomness", 1.0f)};
     type.outputs = {output("Distance", F), output("Cell", F)};
-    type.helpers = kVoronoiHelpers;
+    type.helpers = VORONOI_HELPERS;
     type.emit = [](const EmitArgs& a)
     {
       *a.body += "  let " + a.local + " = voronoiCells(" + a.inputs[0] + " * " +
@@ -1238,6 +1264,24 @@ float srgbToLinear(uint8_t value)
 
 } // namespace
 
+std::optional<uint32_t> NodeType::findInput(std::string_view name) const
+{
+  for (std::size_t i = 0; i < inputs.size(); ++i)
+    if (inputs[i].name == name)
+      return static_cast<uint32_t>(i);
+
+  return std::nullopt;
+}
+
+std::optional<uint32_t> NodeType::findOutput(std::string_view name) const
+{
+  for (std::size_t i = 0; i < outputs.size(); ++i)
+    if (outputs[i].name == name)
+      return static_cast<uint32_t>(i);
+
+  return std::nullopt;
+}
+
 const char* typeName(ValueType type)
 {
   switch (type)
@@ -1251,6 +1295,7 @@ const char* typeName(ValueType type)
   case ValueType::Float:
     break;
   }
+
   return "Number";
 }
 
@@ -1269,6 +1314,7 @@ const char* fallbackName(Fallback fallback)
   case Fallback::Value:
     break;
   }
+
   return "";
 }
 
@@ -1285,23 +1331,8 @@ const char* wgslType(ValueType type)
   case ValueType::Float:
     break;
   }
+
   return "f32";
-}
-
-std::optional<uint32_t> NodeType::findInput(std::string_view name) const
-{
-  for (std::size_t i = 0; i < inputs.size(); ++i)
-    if (inputs[i].name == name)
-      return static_cast<uint32_t>(i);
-  return std::nullopt;
-}
-
-std::optional<uint32_t> NodeType::findOutput(std::string_view name) const
-{
-  for (std::size_t i = 0; i < outputs.size(); ++i)
-    if (outputs[i].name == name)
-      return static_cast<uint32_t>(i);
-  return std::nullopt;
 }
 
 const std::vector<NodeType>& nodeTypes()
@@ -1315,6 +1346,7 @@ const NodeType* findNodeType(std::string_view id)
   for (const NodeType& type : nodeTypes())
     if (type.id == id)
       return &type;
+
   return nullptr;
 }
 
@@ -1322,16 +1354,22 @@ std::string convert(const std::string& expression, ValueType from, ValueType to)
 {
   if (from == to)
     return expression;
+
   if (from == ValueType::Float)
     return std::string(wgslType(to)) + "(" + expression + ")";
+
   if (to == ValueType::Float)
     return "(" + expression + ").x";
+
   if (width(to) < width(from))
     return "(" + expression + ")." + std::string("xyzw").substr(0, width(to));
+
   // Wider: zeros, and an alpha of 1 for a Vector 4.
   std::string padding;
+
   for (int i = width(from); i < width(to); ++i)
     padding += (i == 3) ? ", 1.0" : ", 0.0";
+
   return std::string(wgslType(to)) + "(" + expression + padding + ")";
 }
 
@@ -1339,9 +1377,12 @@ glm::vec4 convert(glm::vec4 value, ValueType from, ValueType to)
 {
   if (from == ValueType::Float)
     return trim(glm::vec4(value.x), to);
+
   glm::vec4 out = trim(value, std::min(from, to));
+
   if (width(from) < 4 && to == ValueType::Vec4)
     out.w = 1.0f;
+
   return out;
 }
 
@@ -1349,6 +1390,7 @@ glm::vec4 trim(glm::vec4 value, ValueType type)
 {
   for (int i = width(type); i < 4; ++i)
     value[i] = 0.0f;
+
   return value;
 }
 
@@ -1361,11 +1403,13 @@ void textureDirections(const glm::vec3 positions[3],
                   e2 = positions[2] - positions[0];
   const glm::vec2 d1 = uvs[1] - uvs[0], d2 = uvs[2] - uvs[0];
   const float det = d1.x * d2.y - d2.x * d1.y;
+
   if (std::abs(det) < 1e-12f)
   {
     tangent = bitangent = glm::vec3(0.0f);
     return;
   }
+
   // Solve e = dp/du * du + dp/dv * dv for both edges.
   tangent = (e1 * d2.y - e2 * d1.y) / det;
   bitangent = -(e2 * d1.x - e1 * d2.x) / det;
@@ -1379,10 +1423,12 @@ void tangentFrame(const glm::vec3& normal,
 {
   const glm::vec3 flatU = alongU - normal * glm::dot(normal, alongU);
   const glm::vec3 flatUp = upImage - normal * glm::dot(normal, upImage);
+
   if (glm::dot(flatU, flatU) > 1e-20f)
   {
     tangent = glm::normalize(flatU);
     bitangent = glm::cross(normal, tangent);
+
     if (glm::dot(bitangent, flatUp) < 0.0f) // a mirrored texture
       bitangent = -bitangent;
   }
@@ -1422,8 +1468,10 @@ glm::vec4 sampleTexture(const TextureData* texture, glm::vec2 uv)
     x = ((x % w) + w) % w;
     y = ((y % h) + h) % h;
     const uint8_t* p = &texture->rgba[(std::size_t(y) * w + x) * 4];
+
     if (linear)
       return glm::vec4(p[0], p[1], p[2], p[3]) / 255.0f;
+
     return glm::vec4(srgbToLinear(p[0]),
                      srgbToLinear(p[1]),
                      srgbToLinear(p[2]),
@@ -1433,11 +1481,13 @@ glm::vec4 sampleTexture(const TextureData* texture, glm::vec2 uv)
   // Texel centres sit at half-texel positions, as on the GPU.
   const glm::vec2 position =
       uv * glm::vec2(texture->width, texture->height) - 0.5f;
+
   if (texture->nearest)
   {
     const glm::vec2 nearest = glm::floor(position + 0.5f);
     return texel(static_cast<int>(nearest.x), static_cast<int>(nearest.y));
   }
+
   const glm::vec2 base = glm::floor(position);
   const glm::vec2 t = position - base;
   const int x = static_cast<int>(base.x), y = static_cast<int>(base.y);

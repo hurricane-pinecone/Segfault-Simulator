@@ -1,9 +1,7 @@
 #include "build/fillParts.h"
 
-#include "scene/parts.h"
-
 #include "engine/core/assets/assetDatabase.h"
-#include "engine/core/ecs/ecs.h" // IWYU pragma: keep (Entity templates)
+#include "engine/core/ecs/ecs.h"
 #include "engine/core/logger/logger.h"
 #include "engine/core/reflection/reflection.h"
 #include "engine/core/util/atomicFile.h"
@@ -15,10 +13,20 @@
 #include "engine/runtime/serialization/legacyComponentNames.h"
 #include "engine/runtime/serialization/prefabComponents.h"
 #include "engine/runtime/serialization/sceneSerializer.h"
+#include "scene/parts.h"
+
+#include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cstddef>
 #include <exception>
+#include <filesystem>
 #include <optional>
+#include <string>
+#include <string_view>
+#include <system_error>
+#include <utility>
+#include <vector>
 
 namespace fs = std::filesystem;
 using json = nlohmann::json;
@@ -43,11 +51,14 @@ void changesOf(const json& before,
   {
     if (before != after)
       out.push_back({pointer, &after});
+
     return;
   }
+
   for (const auto& [key, value] : after.items())
   {
     const std::string at = pointer + "/" + sfs::jsonPointerSegment(key);
+
     if (const auto it = before.find(key); it != before.end())
       changesOf(*it, value, at, out);
     else
@@ -84,11 +95,13 @@ std::optional<std::string> editInPlace(const std::string& text,
 {
   const std::optional<std::vector<sfs::JsonToken>> tokens =
       sfs::scanJsonTokens(text);
+
   if (!tokens)
   {
     LOG_ERROR(path + ": not valid JSON");
     return std::nullopt;
   }
+
   std::vector<sfs::TextEdit> edits;
   std::vector<std::string> whole; // pointers written whole: what's below is in
   const auto within = [&](const std::string& pointer)
@@ -98,10 +111,12 @@ std::optional<std::string> editInPlace(const std::string& text,
                        [&](const std::string& done)
                        { return pointer.starts_with(done + "/"); });
   };
+
   for (const Change& change : changes)
   {
     if (within(change.pointer))
       continue;
+
     if (const std::optional<sfs::JsonSpan> span =
             sfs::findJsonValue(text, change.pointer))
     {
@@ -115,14 +130,18 @@ std::optional<std::string> editInPlace(const std::string& text,
     // Not in the file: the member under the nearest object it has goes in.
     std::string at = change.pointer;
     std::optional<sfs::JsonSpan> parent;
+
     while (!at.empty() && !(parent = sfs::findJsonValue(text, parentOf(at))))
       at = parentOf(at);
+
     const std::string into = parentOf(at);
+
     if (at.empty() || !parent || text[parent->begin] != '{')
     {
       LOG_ERROR(path + ": has no place for " + change.pointer);
       return std::nullopt;
     }
+
     whole.push_back(at);
     const int depth = depthOf(at);
     const std::string key = json::json_pointer(at).back();
@@ -134,14 +153,17 @@ std::optional<std::string> editInPlace(const std::string& text,
     // after it, else after the last.
     const sfs::JsonToken* before = nullptr;
     const sfs::JsonToken* last = nullptr;
+
     for (const sfs::JsonToken& token : *tokens)
       if (token.kind == sfs::JsonToken::Kind::Key &&
           parentOf(token.pointer) == into)
       {
         last = &token;
+
         if (!before && token.text > key)
           before = &token;
       }
+
     if (!last)
       edits.push_back(
           {parent->begin,
@@ -157,15 +179,19 @@ std::optional<std::string> editInPlace(const std::string& text,
 
   // Members going in at one place go in in key order, as one edit.
   std::vector<sfs::TextEdit> merged;
+
   for (sfs::TextEdit& edit : edits)
     if (!merged.empty() && edit.begin == edit.end &&
         merged.back().begin == edit.begin && merged.back().end == edit.end)
       merged.back().text += edit.text;
     else
       merged.push_back(std::move(edit));
+
   std::optional<std::string> edited = sfs::applyTextEdits(text, merged);
+
   if (!edited)
     LOG_ERROR(path + ": its edits overlap");
+
   return edited;
 }
 
@@ -174,11 +200,13 @@ fill(const fs::path& project, std::string_view which, bool write)
 {
   FillPartsReport report;
   std::error_code error;
+
   if (!fs::is_directory(project, error))
   {
     LOG_ERROR("No project folder at " + project.string());
     return report;
   }
+
   const sfs::AssetDatabase database(project,
                                     sfs::AssetDatabase::Mode::ReadOnly,
                                     sfs::AssetDatabase::projectFolders());
@@ -196,6 +224,7 @@ fill(const fs::path& project, std::string_view which, bool write)
       {
         if (edited && name == checking)
           return edited;
+
         const std::optional<sfs::AssetMeshName> asset =
             sfs::parseAssetMeshName(name);
         return asset && asset->part.empty() ? store.prefab(asset->model)
@@ -205,6 +234,7 @@ fill(const fs::path& project, std::string_view which, bool write)
   {
     for (const sfs::Entity& entity : scene.entities())
       scene.destroyEntity(entity);
+
     scene.flushEntities();
   };
   // As the editor's prefab tab opens one: its root no longer an instance.
@@ -213,10 +243,12 @@ fill(const fs::path& project, std::string_view which, bool write)
     clear();
     sfs::Entity root = serializer.instantiate(name, scene);
     scene.flushEntities();
+
     if (root.isValid() && root.hasComponent<sfs::PrefabInstanceComponent>())
       root.removeComponent<sfs::PrefabInstanceComponent>();
     else
       root = {};
+
     return root;
   };
   // A nested instance of another .prefab: that prefab's own file holds its
@@ -225,8 +257,10 @@ fill(const fs::path& project, std::string_view which, bool write)
   {
     sfs::PrefabInstanceComponent* prefabInstance =
         entity.getComponent<sfs::PrefabInstanceComponent>();
+
     if (!prefabInstance)
       return false;
+
     const std::optional<sfs::AssetMeshName> asset =
         sfs::parseAssetMeshName(prefabInstance->prefab);
     const sfs::AssetRecord* record =
@@ -235,16 +269,19 @@ fill(const fs::path& project, std::string_view which, bool write)
   };
 
   std::vector<const sfs::AssetRecord*> prefabs;
+
   for (const sfs::AssetRecord& record : database.records())
     if (record.kind == sfs::AssetKind::Prefab &&
         (which == "all" ||
          record.path.generic_string() ==
              fs::path(which).lexically_normal().generic_string()))
       prefabs.push_back(&record);
+
   std::sort(prefabs.begin(),
             prefabs.end(),
             [](const sfs::AssetRecord* a, const sfs::AssetRecord* b)
             { return a->path < b->path; });
+
   if (prefabs.empty())
   {
     LOG_ERROR(which == "all" ? std::string("The project has no prefabs")
@@ -253,6 +290,7 @@ fill(const fs::path& project, std::string_view which, bool write)
   }
 
   bool ok = true;
+
   for (const sfs::AssetRecord* record : prefabs)
   {
     ++report.prefabs;
@@ -262,6 +300,7 @@ fill(const fs::path& project, std::string_view which, bool write)
     const std::optional<std::string> text = sfs::readFileText(file);
     const json read = text ? json::parse(*text, nullptr, false) : json();
     const sfs::Entity root = open(name);
+
     if (!text || read.is_discarded() || !root.isValid())
     {
       LOG_ERROR(path + ": can't be read");
@@ -271,8 +310,10 @@ fill(const fs::path& project, std::string_view which, bool write)
 
     const json before = serializer.savePrefab(root, true);
     const std::size_t fields = parts::fillAll(root, nestedPrefab);
+
     if (fields == 0)
       continue;
+
     const json after = serializer.savePrefab(root, true);
     report.changed.push_back({path, fields});
 
@@ -280,6 +321,7 @@ fill(const fs::path& project, std::string_view which, bool write)
     // component names would get the new ones beside them.
     json upgraded = read;
     sfs::upgradeComponentNames(upgraded);
+
     if (upgraded != read)
     {
       LOG_ERROR(path + ": uses old component names, so it can't be edited in "
@@ -287,6 +329,7 @@ fill(const fs::path& project, std::string_view which, bool write)
       ok = false;
       continue;
     }
+
     std::vector<Change> changes;
     changesOf(before, after, "", changes);
     const std::optional<std::string> result =
@@ -299,6 +342,7 @@ fill(const fs::path& project, std::string_view which, bool write)
     const bool same =
         again.isValid() && serializer.savePrefab(again, true) == after;
     edited.reset();
+
     if (!same)
     {
       LOG_ERROR(path + ": editing it in place doesn't give what was filled; "
@@ -306,16 +350,20 @@ fill(const fs::path& project, std::string_view which, bool write)
       ok = false;
       continue;
     }
+
     if (!write)
       continue;
+
     if (!sfs::writeFileAtomically(file, *result))
     {
       LOG_ERROR(path + ": can't be written");
       ok = false;
       continue;
     }
+
     store.forgetPrefab(record->id); // a prefab holding it reads it again
   }
+
   clear();
   report.ok = ok;
   return report;

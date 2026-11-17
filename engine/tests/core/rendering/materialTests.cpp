@@ -1,7 +1,9 @@
 #include "../../testHarness.h"
+#include "engine/core/rendering/material.h"
+#include "engine/core/rendering/mesh.h"
+#include "engine/core/rendering/terrain.h"
 
-#include <engine/core/rendering/material.h>
-#include <engine/core/rendering/terrain.h>
+#include <glm/glm/ext/vector_int2.hpp>
 
 using namespace sfs;
 
@@ -47,8 +49,10 @@ int main()
 
     const auto loaded = MaterialAsset::fromJson(material.toJson());
     CHECK(loaded.has_value());
+
     if (loaded)
       CHECK(*loaded == material);
+
     CHECK(material.toJson()["alphaMode"] == "mask");
   }
 
@@ -56,6 +60,7 @@ int main()
   {
     const auto loaded = MaterialAsset::fromJson({{"roughness", 0.5}});
     CHECK(loaded.has_value());
+
     if (loaded)
     {
       CHECK(loaded->roughness == 0.5f);
@@ -76,12 +81,14 @@ int main()
                                                  {"metallic", "very"},
                                                  {"baseColor", {1, 2}}});
     CHECK(loaded.has_value());
+
     if (loaded)
     {
       CHECK(loaded->alphaMode == AlphaMode::Opaque);
       CHECK(loaded->metallic == 0.0f);
       CHECK(loaded->baseColor.r == 1.0f);
     }
+
     CHECK(!MaterialAsset::fromJson(nlohmann::json::array()).has_value());
   }
 
@@ -92,6 +99,7 @@ int main()
                                  AlphaMode::Blend,
                                  AlphaMode::Additive})
       CHECK(alphaModeFromName(alphaModeName(mode)) == mode);
+
     CHECK(!alphaModeFromName("glass").has_value());
   }
 
@@ -130,8 +138,10 @@ int main()
 
     // More layers than there can be: the first five.
     nlohmann::json many = saved;
+
     for (int i = 0; i < 6; ++i)
       many["terrain"]["layers"].push_back({{"name", "Extra"}});
+
     const auto clipped = MaterialAsset::fromJson(many);
     CHECK(clipped && clipped->terrain->layers.size() == kMaxTerrainLayers);
     // A plain material has none.

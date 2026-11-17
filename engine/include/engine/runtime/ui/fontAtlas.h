@@ -1,6 +1,11 @@
 #pragma once
 
+#include "engine/runtime/rendering/uiDraw.h"
 #include "engine/runtime/ui/layout.h"
+
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_float4.hpp>
+#include <glm/glm/ext/vector_int2.hpp>
 
 #include <cstddef>
 #include <cstdint>
@@ -8,8 +13,10 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 struct _TTF_Font;
 
@@ -30,9 +37,8 @@ public:
    */
   FontAtlas(std::function<std::string(const std::string&)> resolve,
             std::string fallbackFile);
-  ~FontAtlas() override;
-
   FontAtlas(const FontAtlas&) = delete;
+  ~FontAtlas() override;
   FontAtlas& operator=(const FontAtlas&) = delete;
 
   /**
@@ -42,25 +48,23 @@ public:
    * Text drawn before this call mustn't be drawn after it.
    */
   void beginFrame();
-
-  /** The faces kept beyond those in use. */
-  static constexpr std::size_t kMostFaces = 24;
-
-  /** How many faces (a font at a size) it has now. */
-  std::size_t faceCount() const { return m_faces.size(); }
-
-  float lineHeight(const std::string& font, float pixels) override;
-  /** A line's width: kept from frame to frame (the lines measured lately). */
-  float
-  width(const std::string& font, float pixels, std::string_view line) override;
   void draw(const std::string& font,
             float pixels,
             std::string_view line,
             glm::vec2 at,
             glm::vec4 color,
             std::vector<UiQuad>& out) override;
+  /** How many faces (a font at a size) it has now. */
+  std::size_t faceCount() const { return m_faces.size(); }
   uint64_t generation() const override { return m_generation; }
   void keep(const UiTexture* texture) override;
+  float lineHeight(const std::string& font, float pixels) override;
+  /** A line's width: kept from frame to frame (the lines measured lately). */
+  float
+  width(const std::string& font, float pixels, std::string_view line) override;
+
+  /** The faces kept beyond those in use. */
+  static constexpr std::size_t kMostFaces = 24;
 
   /** The widths kept, at most, in each of the two generations of them. */
   static constexpr std::size_t kMostWidths = 4096;
@@ -114,15 +118,18 @@ void forEachCodepoint(std::string_view text, Visit&& visit)
                  : (byte >> 3) == 0x1E ? 4
                                        : 0;
     char32_t codepoint = 0xFFFD;
+
     if (length > 0 && i + length <= text.size())
     {
       codepoint = length == 1 ? byte : byte & (0x7F >> length);
+
       for (int k = 1; k < length; ++k)
         codepoint =
             (codepoint << 6) | (static_cast<unsigned char>(text[i + k]) & 0x3F);
     }
     else
       length = 1;
+
     visit(codepoint);
     i += static_cast<std::size_t>(length);
   }

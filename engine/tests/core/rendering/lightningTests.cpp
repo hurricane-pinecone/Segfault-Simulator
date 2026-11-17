@@ -1,8 +1,14 @@
 #include "../../testHarness.h"
+#include "engine/core/rendering/lightning.h"
+#include "engine/core/rendering/mesh.h"
 
-#include <engine/core/rendering/lightning.h>
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/geometric.hpp>
 
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <vector>
 
 using namespace sfs;
 
@@ -31,9 +37,11 @@ int main()
         int rises = 0;
         float last = 1.0f;
         bool falling = true;
+
         for (float t = 0.0f; t < duration; t += 0.002f)
         {
           const float light = lightningBrightness(strike, t);
+
           if (falling && light > last + 0.05f)
           {
             ++rises;
@@ -41,8 +49,10 @@ int main()
           }
           else if (light < last)
             falling = true;
+
           last = light;
         }
+
         CHECK(rises >= 1 || inCloud);
 
         // The channel's afterimage outlasts its light.
@@ -59,9 +69,11 @@ int main()
     CHECK(lightningDuration(a) == lightningDuration(b));
     b.seed = 4;
     bool differs = false;
+
     for (float t = 0.0f; t < 0.6f; t += 0.01f)
       differs =
           differs || lightningBrightness(a, t) != lightningBrightness(b, t);
+
     CHECK(differs);
   }
 
@@ -79,6 +91,7 @@ int main()
     std::size_t main = 0;
     std::size_t branches = 0;
     float pathLength = 0.0f;
+
     for (const LightningSegment& segment : channel)
     {
       if (segment.branch)
@@ -87,9 +100,11 @@ int main()
         CHECK(segment.from.z > strike.position.z + 1.0f);
         continue;
       }
+
       ++main;
       pathLength += glm::distance(segment.from, segment.to);
     }
+
     CHECK(main == 128);
     CHECK(branches > 0);
     // It starts at the top and ends on the ground, and is longer than a
@@ -120,6 +135,7 @@ int main()
     CHECK(std::abs(std::abs(main.vertices[0].position.y) - 1.0f) < 1e-4f);
     CHECK(main.vertices[1].color.r == 1.0f);
     CHECK(main.vertices[0].color.r == 0.0f);
+
     // Its triangles face the eye (counter-clockwise seen from it).
     for (std::size_t i = 0; i < main.indices.size(); i += 3)
     {
@@ -129,6 +145,7 @@ int main()
       CHECK(glm::dot(glm::cross(b - a, c - a), glm::vec3(50, 0, 50) - a) >
             0.0f);
     }
+
     const MeshData branch = lightningMesh(segments, {50, 0, 50}, 2.0f, true);
     CHECK(branch.vertices.size() == 6);
     CHECK(lightningMesh({}, {0, 0, 0}, 1.0f, false).empty());

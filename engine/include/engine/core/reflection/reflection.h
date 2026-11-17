@@ -67,6 +67,12 @@ struct FieldAttributes
 /** One reflected field of a type. */
 struct FieldInfo
 {
+  template <typename T>
+  T& in(void* object) const
+  {
+    return *static_cast<T*>(address(object));
+  }
+
   std::string name;        // as declared, e.g. "castsShadow"
   std::string displayName; // for the editor, e.g. "Casts Shadow"
   // The type that declares it: the owning type's own name, or a reflected
@@ -77,12 +83,6 @@ struct FieldInfo
 
   // The field's address inside an object of the owning type.
   void* (*address)(void* object) = nullptr;
-
-  template <typename T>
-  T& in(void* object) const
-  {
-    return *static_cast<T*>(address(object));
-  }
 };
 
 /** What a reflected type is, which decides how the editor uses it. */
@@ -166,8 +166,8 @@ public:
   /** Add a type (replacing any with the same name). */
   void add(TypeInfo type);
 
-  /** Drop every type a module registered, e.g. before unloading it. */
-  void removeModule(std::string_view module);
+  /** `type` and the reflected types it derives from, nearest first. */
+  std::vector<std::string> chain(std::string_view type) const;
 
   const TypeInfo* find(std::string_view name) const;
 
@@ -176,10 +176,6 @@ public:
    * (false if either isn't registered, or the chain is broken).
    */
   bool isA(std::string_view type, std::string_view base) const;
-  /** `type` and the reflected types it derives from, nearest first. */
-  std::vector<std::string> chain(std::string_view type) const;
-
-  const std::vector<TypeInfo>& types() const { return m_types; }
 
   /**
    * The component types with an Entity or EntityList field, in registration
@@ -191,11 +187,16 @@ public:
     return m_referencing;
   }
 
+  /** Drop every type a module registered, e.g. before unloading it. */
+  void removeModule(std::string_view module);
+
+  const std::vector<TypeInfo>& types() const { return m_types; }
+
 private:
+  void inheritFields();
   // Fill every derived type's inherited fields in again (inheritFields), and
   // list the referencing types.
   void resolve();
-  void inheritFields();
 
   std::vector<TypeInfo> m_types;
   std::vector<const TypeInfo*> m_referencing;

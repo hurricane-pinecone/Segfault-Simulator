@@ -1,10 +1,22 @@
 #include "engine/core/rendering/terrain.h"
 
 #include "engine/core/rendering/mesh.h"
-#include "glm/glm/common.hpp"
+
+#include <glm/glm/common.hpp>
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_float4.hpp>
+#include <glm/glm/ext/vector_int2.hpp>
+#include <glm/glm/geometric.hpp>
+#include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <utility>
 
 namespace sfs
 {
@@ -26,6 +38,7 @@ glm::vec4 sampleSplat(const TextureData& splat, glm::vec2 uv)
   if (splat.empty() ||
       splat.rgba.size() < std::size_t(splat.width) * splat.height * 4)
     return glm::vec4(0.0f);
+
   const glm::vec2 size(splat.width, splat.height);
   const glm::vec2 at =
       glm::clamp(uv * size - 0.5f, glm::vec2(0.0f), size - 1.0f);
@@ -47,9 +60,11 @@ float terrainGrass(const TerrainMaterial& terrain, glm::vec2 uv)
 {
   if (terrain.layers.empty())
     return 1.0f;
+
   const std::array<float, kMaxTerrainLayers> weights = terrainWeights(
       terrain.splat ? sampleSplat(*terrain.splat, uv) : glm::vec4(0.0f));
   float grass = 0.0f;
+
   for (std::size_t i = 0; i < weights.size(); ++i)
   {
     // A channel with no layer of its own shows the first.
@@ -57,6 +72,7 @@ float terrainGrass(const TerrainMaterial& terrain, glm::vec2 uv)
         terrain.layers[i < terrain.layers.size() ? i : 0];
     grass += weights[i] * std::clamp(layer.grass, 0.0f, 1.0f);
   }
+
   return grass;
 }
 
@@ -64,15 +80,18 @@ float terrainPuddles(const TerrainMaterial& terrain, glm::vec2 uv)
 {
   if (terrain.layers.empty())
     return 1.0f;
+
   const std::array<float, kMaxTerrainLayers> weights = terrainWeights(
       terrain.splat ? sampleSplat(*terrain.splat, uv) : glm::vec4(0.0f));
   float puddles = 0.0f;
+
   for (std::size_t i = 0; i < weights.size(); ++i)
   {
     const TerrainLayer& layer =
         terrain.layers[i < terrain.layers.size() ? i : 0];
     puddles += weights[i] * std::clamp(layer.puddles, 0.0f, 1.0f);
   }
+
   return puddles;
 }
 
@@ -92,11 +111,13 @@ std::pair<glm::ivec2, glm::ivec2> paintSplat(TextureData& splat,
                                              float softness)
 {
   const std::pair<glm::ivec2, glm::ivec2> none{{0, 0}, {0, 0}};
+
   if (splat.empty() || layer < 0 ||
       layer >= static_cast<int>(kMaxTerrainLayers) || radius.x <= 0.0f ||
       radius.y <= 0.0f ||
       splat.rgba.size() < std::size_t(splat.width) * splat.height * 4)
     return none;
+
   const glm::vec2 size(splat.width, splat.height);
   const glm::vec2 middle = center * size;
   const glm::vec2 reach = radius * size;
@@ -105,6 +126,7 @@ std::pair<glm::ivec2, glm::ivec2> paintSplat(TextureData& splat,
   const glm::ivec2 to = glm::clamp(glm::ivec2(glm::ceil(middle + reach)) + 1,
                                    glm::ivec2(0),
                                    glm::ivec2(size));
+
   if (to.x <= from.x || to.y <= from.y)
     return none;
 
@@ -112,38 +134,50 @@ std::pair<glm::ivec2, glm::ivec2> paintSplat(TextureData& splat,
   const float inner = 1.0f - std::clamp(softness, 0.0f, 1.0f);
   const float amount = std::clamp(strength, 0.0f, 1.0f);
   glm::vec4 target(0.0f);
+
   if (layer > 0)
     target[layer - 1] = 1.0f;
+
   bool changed = false;
+
   for (int y = from.y; y < to.y; ++y)
     for (int x = from.x; x < to.x; ++x)
     {
       const glm::vec2 offset = (glm::vec2(x, y) + 0.5f - middle) / reach;
       const float distance = glm::length(offset);
+
       if (distance >= 1.0f)
         continue;
+
       float weight = 1.0f;
+
       if (distance > inner)
       {
         const float t = (distance - inner) / std::max(1.0f - inner, 1e-4f);
         weight = 1.0f - t * t * (3.0f - 2.0f * t);
       }
+
       weight *= amount;
       uint8_t* p = &splat.rgba[(std::size_t(y) * splat.width + x) * 4];
       std::array<int, 4> next{};
+
       for (int c = 0; c < 4; ++c)
       {
         const float value = p[c] / 255.0f;
         next[c] = static_cast<int>(
             std::lround((value + (target[c] - value) * weight) * 255.0f));
+
         // Always at least a step toward the target, so slow strokes still
         // arrive.
         if (next[c] == p[c] && weight > 0.0f && target[c] * 255.0f != p[c])
           next[c] += target[c] > value ? 1 : -1;
+
         next[c] = std::clamp(next[c], 0, 255);
       }
+
       // Never past one in all (rounding): what's over off the others.
       int over = next[0] + next[1] + next[2] + next[3] - 255;
+
       for (int c = 0; c < 4 && over > 0; ++c)
         if (target[c] == 0.0f)
         {
@@ -151,12 +185,14 @@ std::pair<glm::ivec2, glm::ivec2> paintSplat(TextureData& splat,
           next[c] -= taken;
           over -= taken;
         }
+
       for (int c = 0; c < 4; ++c)
       {
         changed = changed || next[c] != p[c];
         p[c] = static_cast<uint8_t>(next[c]);
       }
     }
+
   return changed ? std::pair{from, to} : none;
 }
 
@@ -186,6 +222,68 @@ void read(const nlohmann::json& json, const char* key, std::string& out)
 
 } // namespace
 
+TerrainAsset TerrainAsset::fromJson(const nlohmann::json& json)
+{
+  TerrainAsset out;
+
+  if (!json.is_object())
+    return out;
+
+  read(json, "splatMap", out.splatMap);
+  read(json, "blendSharpness", out.blendSharpness);
+  read(json, "variation", out.variation);
+  read(json, "triplanarSharpness", out.triplanarSharpness);
+  read(json, "puddleDepth", out.puddleDepth);
+  read(json, "microRelief", out.microRelief);
+  read(json, "microReliefSize", out.microReliefSize);
+
+  if (const auto it = json.find("antiTiling");
+      it != json.end() && it->is_boolean())
+    out.antiTiling = it->get<bool>();
+
+  if (const auto it = json.find("puddles");
+      it != json.end() && it->is_boolean())
+    out.puddles = it->get<bool>();
+
+  if (const auto it = json.find("deformable");
+      it != json.end() && it->is_boolean())
+    out.deformable = it->get<bool>();
+
+  if (const auto it = json.find("layers"); it != json.end() && it->is_array())
+    for (const nlohmann::json& item : *it)
+    {
+      if (!item.is_object() || out.layers.size() >= kMaxTerrainLayers)
+        continue;
+
+      TerrainLayerAsset layer;
+      read(item, "name", layer.name);
+      read(item, "baseTexture", layer.baseTexture);
+      read(item, "normalTexture", layer.normalTexture);
+      read(item, "roughnessTexture", layer.roughnessTexture);
+
+      if (const auto tint = item.find("tint");
+          tint != item.end() && tint->is_array() && tint->size() == 3)
+        for (int i = 0; i < 3; ++i)
+          if ((*tint)[i].is_number())
+            layer.tint[i] = (*tint)[i].get<float>();
+
+      read(item, "tileSize", layer.tileSize);
+      read(item, "roughness", layer.roughness);
+      read(item, "normalScale", layer.normalScale);
+      read(item, "grass", layer.grass);
+      read(item, "meadow", layer.meadow);
+
+      if (const auto triplanar = item.find("triplanar");
+          triplanar != item.end() && triplanar->is_boolean())
+        layer.triplanar = triplanar->get<bool>();
+
+      read(item, "puddles", layer.puddles);
+      out.layers.push_back(std::move(layer));
+    }
+
+  return out;
+}
+
 nlohmann::json TerrainAsset::toJson() const
 {
   nlohmann::json out = {{"splatMap", splatMap},
@@ -199,6 +297,7 @@ nlohmann::json TerrainAsset::toJson() const
                         {"microReliefSize", microReliefSize},
                         {"deformable", deformable}};
   nlohmann::json saved = nlohmann::json::array();
+
   for (const TerrainLayerAsset& layer : layers)
     saved.push_back({{"name", layer.name},
                      {"baseTexture", layer.baseTexture},
@@ -212,57 +311,8 @@ nlohmann::json TerrainAsset::toJson() const
                      {"meadow", layer.meadow},
                      {"triplanar", layer.triplanar},
                      {"puddles", layer.puddles}});
-  out["layers"] = std::move(saved);
-  return out;
-}
 
-TerrainAsset TerrainAsset::fromJson(const nlohmann::json& json)
-{
-  TerrainAsset out;
-  if (!json.is_object())
-    return out;
-  read(json, "splatMap", out.splatMap);
-  read(json, "blendSharpness", out.blendSharpness);
-  read(json, "variation", out.variation);
-  read(json, "triplanarSharpness", out.triplanarSharpness);
-  read(json, "puddleDepth", out.puddleDepth);
-  read(json, "microRelief", out.microRelief);
-  read(json, "microReliefSize", out.microReliefSize);
-  if (const auto it = json.find("antiTiling");
-      it != json.end() && it->is_boolean())
-    out.antiTiling = it->get<bool>();
-  if (const auto it = json.find("puddles");
-      it != json.end() && it->is_boolean())
-    out.puddles = it->get<bool>();
-  if (const auto it = json.find("deformable");
-      it != json.end() && it->is_boolean())
-    out.deformable = it->get<bool>();
-  if (const auto it = json.find("layers"); it != json.end() && it->is_array())
-    for (const nlohmann::json& item : *it)
-    {
-      if (!item.is_object() || out.layers.size() >= kMaxTerrainLayers)
-        continue;
-      TerrainLayerAsset layer;
-      read(item, "name", layer.name);
-      read(item, "baseTexture", layer.baseTexture);
-      read(item, "normalTexture", layer.normalTexture);
-      read(item, "roughnessTexture", layer.roughnessTexture);
-      if (const auto tint = item.find("tint");
-          tint != item.end() && tint->is_array() && tint->size() == 3)
-        for (int i = 0; i < 3; ++i)
-          if ((*tint)[i].is_number())
-            layer.tint[i] = (*tint)[i].get<float>();
-      read(item, "tileSize", layer.tileSize);
-      read(item, "roughness", layer.roughness);
-      read(item, "normalScale", layer.normalScale);
-      read(item, "grass", layer.grass);
-      read(item, "meadow", layer.meadow);
-      if (const auto triplanar = item.find("triplanar");
-          triplanar != item.end() && triplanar->is_boolean())
-        layer.triplanar = triplanar->get<bool>();
-      read(item, "puddles", layer.puddles);
-      out.layers.push_back(std::move(layer));
-    }
+  out["layers"] = std::move(saved);
   return out;
 }
 

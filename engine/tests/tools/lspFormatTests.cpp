@@ -1,9 +1,8 @@
 #include "../testHarness.h"
-#include "lspTestSupport.h"
-
 #include "format.h"
 #include "formatBlankLines.h"
 #include "formatOrder.h"
+#include "lspTestSupport.h"
 #include "runProcess.h"
 #include "server.h"
 

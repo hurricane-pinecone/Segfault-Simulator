@@ -4,7 +4,7 @@
 // beside its other per-id arrays. Read it through hierarchy.h; only
 // hierarchy::setParent and the flush that removes an entity change it.
 
-#include "engine/core/ecs/entity.h"
+#include "engine/core/ecs/entityDeclaration.h"
 
 #include <cstdint>
 #include <vector>
@@ -37,9 +37,6 @@ struct HierarchyNode
  */
 struct HierarchyLinks
 {
-  /** No entity: a root's parent, a leaf's first child, a last sibling. */
-  static constexpr Entity::EntityId kNone = Entity::InvalidId;
-
   /** An entry of the preorder index: 8 bytes. */
   struct Placed
   {
@@ -49,6 +46,8 @@ struct HierarchyLinks
     uint32_t parentPos;
   };
 
+  /** No entity: a root's parent, a leaf's first child, a last sibling. */
+  static constexpr Entity::EntityId kNone = Entity::InvalidId;
   /** Each entity's links, by id; sized with the registry's per-id arrays. */
   std::vector<HierarchyNode> nodes;
   /**

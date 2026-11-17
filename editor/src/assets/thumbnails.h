@@ -2,8 +2,9 @@
 
 #include "engine/core/assets/assetDatabase.h"
 #include "engine/runtime/rendering/backend/iRenderBackend.h"
+#include "engine/runtime/rendering/backend/renderTarget.h"
 
-#include "imgui.h"
+#include <imgui.h>
 
 #include <cstdint>
 #include <filesystem>
@@ -30,13 +31,22 @@ class EditorScene;
 class Thumbnails
 {
 public:
-  static constexpr int kSize = 128; // pixels square; drawn smaller as needed
+  /** Previews made since none were being made: how many are done, of how many.
+   */
+  struct Progress
+  {
+    int done = 0;
+    int total = 0;
+  };
 
   explicit Thumbnails(sfs::IRenderBackend& backend);
   ~Thumbnails();
 
   /** Call once a frame, before get(): takes in the previews finished since. */
   void beginFrame();
+
+  /** Forget every preview (e.g. another project was opened). */
+  void clear() { m_entries.clear(); }
 
   /**
    * The asset's preview, or 0 if it has none (not a texture, material, model
@@ -48,19 +58,12 @@ public:
                   sfs::AssetStore& store,
                   EditorScene* scene);
 
-  /** Forget every preview (e.g. another project was opened). */
-  void clear() { m_entries.clear(); }
+  Progress progress() const { return m_progress; }
 
   /** Check shown previews' files again (they may have changed). */
   void recheck() { ++m_generation; }
 
-  /** Previews made since none were being made: how many are done, of how many. */
-  struct Progress
-  {
-    int done = 0;
-    int total = 0;
-  };
-  Progress progress() const { return m_progress; }
+  static constexpr int kSize = 128; // pixels square; drawn smaller as needed
 
 private:
   struct Entry
@@ -98,5 +101,6 @@ private:
   Progress m_progress;
   std::mutex m_finishedMutex;
   std::vector<Finished> m_finished; // filled by the workers
-  std::unique_ptr<sfs::WorkerPool> m_workers; // last: stopped before the rest goes
+  std::unique_ptr<sfs::WorkerPool>
+      m_workers; // last: stopped before the rest goes
 };

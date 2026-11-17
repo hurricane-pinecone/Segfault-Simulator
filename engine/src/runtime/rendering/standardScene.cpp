@@ -1,9 +1,10 @@
 #include "engine/runtime/rendering/standardScene.h"
 
+#include "engine/core/assets/assetDatabase.h"
 #include "engine/core/components/cursorPickComponent.h"
-#include "engine/core/hierarchy/hierarchy.h"
 #include "engine/core/logger/logger.h"
 #include "engine/core/reflection/reflection.h"
+#include "engine/core/rendering/mesh.h"
 #include "engine/core/rendering/meshPrimitives.h"
 #include "engine/runtime/animation/animationSystem.h"
 #include "engine/runtime/assetStore/assetStore.h"
@@ -24,73 +25,47 @@
 #include "engine/runtime/systems/physicsSystem3D.h"
 #include "engine/runtime/systems/prefabSystem.h"
 
+#include <glm/glm/ext/vector_float3.hpp>
+#include <nlohmann/json.hpp>
+
+#include <memory>
+#include <optional>
+#include <string_view>
+#include <utility>
+#include <vector>
+
 namespace sfs
 {
 
 namespace
 {
 // Neutral grey so a primitive reads as "unstyled" until given a tint.
-constexpr glm::vec3 kPrimitiveColor{0.78f, 0.78f, 0.80f};
+constexpr glm::vec3 PRIMITIVE_COLOR{0.78f, 0.78f, 0.80f};
 } // namespace
-
-PhysicsSystem3D* StandardScene::physicsSystem()
-{
-#ifdef SFS_HAS_PHYSICS
-  return tryGetSystem<PhysicsSystem3D>();
-#else
-  return nullptr;
-#endif
-}
 
 void StandardScene::onUpdate(double)
 {
   // Models loaded in the background since: their stand-ins become them.
   AssetStore& store = assetStore();
   store.collectLoads();
+
   if (store.loadGeneration() != m_seenLoads)
   {
     m_seenLoads = store.loadGeneration();
+
     if (m_render)
       m_render->meshes().fulfilPending();
   }
-}
-
-SceneSerializer StandardScene::serializer()
-{
-  SceneSerializer out(reflect::types(), &m_render->meshes());
-  AssetStore& store = assetStore();
-  out.setPrefabSource(
-      [&store](std::string_view name) -> std::optional<nlohmann::json>
-      {
-        const std::optional<AssetMeshName> asset = parseAssetMeshName(name);
-        return asset && asset->part.empty() ? store.prefab(asset->model)
-                                            : std::nullopt;
-      });
-  return out;
-}
-
-bool StandardScene::play(const std::filesystem::path& file)
-{
-  for (const Entity& entity : entities())
-    destroyEntity(entity);
-  flushEntities();
-
-  if (!serializer().loadFile(file, *this, &m_scripts))
-    return false;
-  flushEntities();
-  // Scriptable objects load into this scene's meshes (afresh, if another's were
-  // used).
-  scriptableObjects().setMeshes(&m_render->meshes());
-  startScripts(*this, m_scripts, &m_render->meshes());
-  return true;
 }
 
 void StandardScene::filterInput(Input& input)
 {
   if (!m_render)
     return;
+
   if (UiModule* ui = m_render->module<UiModule>())
     ui->handleInput(input);
+
   // What the cursor is over, for the camera that picks: after the UI has had
   // the mouse, before any object sees the input.
   if (CursorPickComponent* pick =
@@ -128,13 +103,13 @@ void StandardScene::onInit()
   MeshLibrary& library = m_render->meshes();
   // Named, so scenes that use them save and load.
   m_cube = library.add(
-      meshes::box({1.0f, 1.0f, 1.0f}, kPrimitiveColor), "builtin:cube");
+      meshes::box({1.0f, 1.0f, 1.0f}, PRIMITIVE_COLOR), "builtin:cube");
   m_sphere = library.add(
-      meshes::sphere(0.5f, 24, 16, kPrimitiveColor), "builtin:sphere");
+      meshes::sphere(0.5f, 24, 16, PRIMITIVE_COLOR), "builtin:sphere");
   m_plane = library.add(
-      meshes::plane({10.0f, 10.0f}, kPrimitiveColor), "builtin:plane");
+      meshes::plane({10.0f, 10.0f}, PRIMITIVE_COLOR), "builtin:plane");
   m_cylinder = library.add(
-      meshes::cylinder(0.5f, 1.0f, 24, kPrimitiveColor), "builtin:cylinder");
+      meshes::cylinder(0.5f, 1.0f, 24, PRIMITIVE_COLOR), "builtin:cylinder");
 
   // Meshes the game builds in code, so scenes can name them like the above.
   for (const ScriptType& script : scripts().types())
@@ -149,13 +124,32 @@ void StandardScene::onInit()
       [&store](std::string_view name) -> std::optional<VisualStyle>
       {
         const std::optional<AssetMeshName> asset = parseAssetMeshName(name);
+
         if (!asset || !asset->part.empty())
         {
           LOG_ERROR("Not a visual style asset: '" + std::string(name) + "'");
           return std::nullopt;
         }
+
         return store.visualStyle(asset->model);
       });
+}
+
+MeshHandle StandardScene::builtinMesh(BuiltinMesh mesh) const
+{
+  switch (mesh)
+  {
+  case BuiltinMesh::Cube:
+    return m_cube;
+  case BuiltinMesh::Sphere:
+    return m_sphere;
+  case BuiltinMesh::Plane:
+    return m_plane;
+  case BuiltinMesh::Cylinder:
+    return m_cylinder;
+  }
+
+  return {};
 }
 
 MeshLibrary::Provider StandardScene::modelMeshes()
@@ -171,9 +165,11 @@ MeshLibrary::Provider StandardScene::modelMeshes()
   {
     if (part.empty())
       return &model.whole;
+
     for (const ModelPart& candidate : model.parts)
       if (candidate.name == part)
         return &candidate.mesh;
+
     return nullptr;
   };
 
@@ -183,9 +179,12 @@ MeshLibrary::Provider StandardScene::modelMeshes()
                       MeshLibrary& library, std::string_view name) -> MeshHandle
   {
     const std::optional<AssetMeshName> asset = parseAssetMeshName(name);
+
     if (!asset)
       return {};
+
     const ModelData* model = nullptr;
+
     switch (store.requestModel(asset->model, &model))
     {
     case AssetStore::LoadState::Loading:
@@ -195,6 +194,7 @@ MeshLibrary::Provider StandardScene::modelMeshes()
     case AssetStore::LoadState::Loaded:
       break;
     }
+
     const MeshData* mesh = meshIn(*model, asset->part);
     return mesh ? library.add(*mesh, std::string(name)) : MeshHandle{};
   };
@@ -203,8 +203,10 @@ MeshLibrary::Provider StandardScene::modelMeshes()
                         std::string_view name, bool& waiting) -> const MeshData*
   {
     const std::optional<AssetMeshName> asset = parseAssetMeshName(name);
+
     if (!asset)
       return nullptr;
+
     const ModelData* model = nullptr;
     const AssetStore::LoadState state =
         store.requestModel(asset->model, &model);
@@ -218,8 +220,10 @@ MeshLibrary::Provider StandardScene::modelMeshes()
     const AssetRecord* record = asset && store.database()
                                     ? store.database()->find(asset->model)
                                     : nullptr;
+
     if (!record)
       return {};
+
     return record->path.generic_string() +
            (asset->part.empty() ? "" : " : " + asset->part);
   };
@@ -236,11 +240,13 @@ MeshLibrary::Provider StandardScene::modelMeshes()
   const auto assetsOf = [&store](AssetKind kind)
   {
     std::vector<std::pair<std::string, std::string>> out;
+
     if (store.database())
       for (const AssetRecord& record : store.database()->records())
         if (record.kind == kind && record.id.valid())
           out.emplace_back(
               assetMeshName(record.id), record.path.generic_string());
+
     return out;
   };
   provider.materials = [assetsOf] { return assetsOf(AssetKind::Material); };
@@ -251,38 +257,68 @@ MeshLibrary::Provider StandardScene::modelMeshes()
     // Every model file, and the parts of those already loaded (listing parts
     // means reading the file, which only choosing it should cost).
     std::vector<std::pair<std::string, std::string>> out;
+
     if (!store.database())
       return out;
+
     for (const AssetRecord& record : store.database()->records())
     {
       if (record.kind != AssetKind::Model || !record.id.valid())
         continue;
+
       const std::string path = record.path.generic_string();
       out.emplace_back(assetMeshName(record.id), path);
+
       if (const ModelData* model = store.loadedModel(record.id))
         for (const ModelPart& part : model->parts)
           out.emplace_back(
               assetMeshName(record.id, part.name), path + " : " + part.name);
     }
+
     return out;
   };
   return provider;
 }
 
-MeshHandle StandardScene::builtinMesh(BuiltinMesh mesh) const
+PhysicsSystem3D* StandardScene::physicsSystem()
 {
-  switch (mesh)
-  {
-  case BuiltinMesh::Cube:
-    return m_cube;
-  case BuiltinMesh::Sphere:
-    return m_sphere;
-  case BuiltinMesh::Plane:
-    return m_plane;
-  case BuiltinMesh::Cylinder:
-    return m_cylinder;
-  }
-  return {};
+#ifdef SFS_HAS_PHYSICS
+  return tryGetSystem<PhysicsSystem3D>();
+#else
+  return nullptr;
+#endif
+}
+
+bool StandardScene::play(const std::filesystem::path& file)
+{
+  for (const Entity& entity : entities())
+    destroyEntity(entity);
+
+  flushEntities();
+
+  if (!serializer().loadFile(file, *this, &m_scripts))
+    return false;
+
+  flushEntities();
+  // Scriptable objects load into this scene's meshes (afresh, if another's were
+  // used).
+  scriptableObjects().setMeshes(&m_render->meshes());
+  startScripts(*this, m_scripts, &m_render->meshes());
+  return true;
+}
+
+SceneSerializer StandardScene::serializer()
+{
+  SceneSerializer out(reflect::types(), &m_render->meshes());
+  AssetStore& store = assetStore();
+  out.setPrefabSource(
+      [&store](std::string_view name) -> std::optional<nlohmann::json>
+      {
+        const std::optional<AssetMeshName> asset = parseAssetMeshName(name);
+        return asset && asset->part.empty() ? store.prefab(asset->model)
+                                            : std::nullopt;
+      });
+  return out;
 }
 
 } // namespace sfs

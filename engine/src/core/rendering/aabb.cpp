@@ -1,26 +1,15 @@
 #include "engine/core/rendering/aabb.h"
 
-#include "glm/glm/common.hpp"
-#include "glm/glm/geometric.hpp"
+#include <glm/glm/common.hpp>
+#include <glm/glm/ext/matrix_float4x4.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
+#include <glm/glm/ext/vector_float4.hpp>
+#include <glm/glm/geometric.hpp>
 
 #include <algorithm>
 
 namespace sfs
 {
-
-float largestScale(const glm::mat4& transform)
-{
-  return std::max({glm::length(glm::vec3(transform[0])),
-                   glm::length(glm::vec3(transform[1])),
-                   glm::length(glm::vec3(transform[2]))});
-}
-
-glm::vec4
-placedSphere(const glm::mat4& model, const glm::vec3& center, float radius)
-{
-  return glm::vec4(
-      glm::vec3(model * glm::vec4(center, 1.0f)), radius * largestScale(model));
-}
 
 void Aabb::expand(const glm::vec3& point)
 {
@@ -41,6 +30,7 @@ bool Aabb::intersectsSphere(const glm::vec3& center, float radius) const
 {
   if (empty())
     return false;
+
   // The box's nearest point to the centre.
   const glm::vec3 nearest = glm::clamp(center, min, max);
   const glm::vec3 offset = nearest - center;
@@ -71,6 +61,20 @@ Aabb Aabb::transformed(const glm::mat4& transform) const
   }
 
   return out;
+}
+
+float largestScale(const glm::mat4& transform)
+{
+  return std::max({glm::length(glm::vec3(transform[0])),
+                   glm::length(glm::vec3(transform[1])),
+                   glm::length(glm::vec3(transform[2]))});
+}
+
+glm::vec4
+placedSphere(const glm::mat4& model, const glm::vec3& center, float radius)
+{
+  return glm::vec4(
+      glm::vec3(model * glm::vec4(center, 1.0f)), radius * largestScale(model));
 }
 
 } // namespace sfs

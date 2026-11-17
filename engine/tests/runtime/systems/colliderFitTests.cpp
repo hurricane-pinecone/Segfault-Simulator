@@ -1,22 +1,53 @@
 #include "../../testHarness.h"
 #include "../rendering/mockRenderer.h"
-
-#include <engine/core/components/meshRendererComponent.h>
-#include <engine/core/components/transformComponent.h>
-#include <engine/core/hierarchy/hierarchy.h>
-#include <engine/core/rendering/meshPrimitives.h>
-#include <engine/runtime/assetStore/assetStore.h>
-#include <engine/runtime/rendering/meshLibrary.h>
-#include <engine/runtime/sceneManager/scene.h>
-#include <engine/runtime/systems/colliderFit.h>
+#include "engine/core/components/boxCollider3DComponent.h"
+#include "engine/core/components/capsuleCollider3DComponent.h"
+#include "engine/core/components/meshRendererComponent.h"
+#include "engine/core/components/sphereCollider3DComponent.h"
+#include "engine/core/components/transformComponent.h"
+#include "engine/core/hierarchy/hierarchy.h"
+#include "engine/core/rendering/aabb.h"
+#include "engine/core/rendering/mesh.h"
+#include "engine/core/rendering/meshPrimitives.h"
+#include "engine/runtime/assetStore/assetStore.h"
+#include "engine/runtime/rendering/meshLibrary.h"
+#include "engine/runtime/sceneManager/scene.h"
+#include "engine/runtime/systems/colliderFit.h"
 
 #include <glm/glm/ext/quaternion_trigonometric.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
+#include <glm/glm/trigonometric.hpp>
 
 using namespace sfs;
 using sfs::testing3d::MockRenderer;
 
 namespace
 {
+struct World
+{
+  AssetStore store;
+  MockRenderer renderer;
+  Scene scene{0, SceneBackends{.assetStore = store, .renderer = &renderer}};
+  MeshLibrary meshes{renderer};
+
+  Entity spawn(const MeshData* mesh,
+               const TransformComponent& transform = TransformComponent{},
+               const Entity& parent = {})
+  {
+    Entity entity = scene.createEntity();
+    entity.addComponent<TransformComponent>(transform);
+
+    if (mesh)
+      entity.addComponent<MeshRendererComponent>(
+          MeshRendererComponent{meshes.add(*mesh)});
+
+    if (parent.isValid())
+      hierarchy::setParent(entity, parent);
+
+    return entity;
+  }
+};
+
 bool near(const glm::vec3& a, const glm::vec3& b)
 {
   return testing::approx(a.x, b.x) && testing::approx(a.y, b.y) &&
@@ -36,32 +67,12 @@ Aabb box(const glm::vec3& min, const glm::vec3& max)
 MeshData boxAt(const glm::vec3& size, const glm::vec3& centre)
 {
   MeshData mesh = meshes::box(size);
+
   for (MeshVertex& vertex : mesh.vertices)
     vertex.position += centre - glm::vec3(0.0f, 0.0f, size.z * 0.5f);
+
   return mesh;
 }
-
-struct World
-{
-  AssetStore store;
-  MockRenderer renderer;
-  Scene scene{0, SceneBackends{.assetStore = store, .renderer = &renderer}};
-  MeshLibrary meshes{renderer};
-
-  Entity spawn(const MeshData* mesh,
-               const TransformComponent& transform = TransformComponent{},
-               const Entity& parent = {})
-  {
-    Entity entity = scene.createEntity();
-    entity.addComponent<TransformComponent>(transform);
-    if (mesh)
-      entity.addComponent<MeshRendererComponent>(
-          MeshRendererComponent{meshes.add(*mesh)});
-    if (parent.isValid())
-      hierarchy::setParent(entity, parent);
-    return entity;
-  }
-};
 } // namespace
 
 int main()

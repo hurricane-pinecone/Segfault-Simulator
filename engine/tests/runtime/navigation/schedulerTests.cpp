@@ -1,14 +1,18 @@
 #include "../../testHarness.h"
-
-#include <engine/runtime/navigation/planScheduler.h>
+#include "engine/runtime/navigation/planScheduler.h"
 
 #include <algorithm>
+#include <any>
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
+#include <memory>
 #include <mutex>
+#include <ratio>
 #include <stdexcept>
 #include <thread>
+#include <utility>
 #include <vector>
 
 using namespace sfs::nav;
@@ -30,10 +34,13 @@ struct Gate
                 [this](const std::atomic<bool>&)
                 {
                   holding = true;
+
                   while (!open)
                     std::this_thread::sleep_for(1ms);
+
                   return std::any(0);
                 });
+
     while (!holding)
       std::this_thread::sleep_for(1ms);
   }
@@ -44,6 +51,7 @@ void work(double seconds)
 {
   const auto end = Clock::now() + std::chrono::duration_cast<Clock::duration>(
                                       std::chrono::duration<double>(seconds));
+
   while (Clock::now() < end)
   {
   }
@@ -53,13 +61,17 @@ bool waitFor(PlanScheduler& s, PlanScheduler::JobId id, double seconds = 10.0)
 {
   const auto end = Clock::now() + std::chrono::duration_cast<Clock::duration>(
                                       std::chrono::duration<double>(seconds));
+
   while (Clock::now() < end)
   {
     const PlanScheduler::State st = s.state(id);
+
     if (st == PlanScheduler::State::Done || st == PlanScheduler::State::Failed)
       return true;
+
     std::this_thread::sleep_for(1ms);
   }
+
   return false;
 }
 
@@ -78,6 +90,7 @@ double percentile(std::vector<double> v, double p)
 {
   if (v.empty())
     return 0.0;
+
   std::sort(v.begin(), v.end());
   const std::size_t i =
       std::min(v.size() - 1,
@@ -106,6 +119,7 @@ int main()
     std::vector<int> order;
     std::vector<PlanScheduler::JobId> ids;
     const double deadlines[] = {3.0, 1.0, 4.0, 2.0};
+
     for (int i = 0; i < 4; ++i)
       ids.push_back(s.submitOne(static_cast<uint64_t>(i + 1),
                                 "job",
@@ -116,9 +130,12 @@ int main()
                                   order.push_back(i);
                                   return std::any(i);
                                 }));
+
     gate.open = true;
+
     for (const auto id : ids)
       CHECK(waitFor(s, id));
+
     CHECK(order == std::vector<int>({1, 3, 0, 2}));
     CHECK(s.stats().escalated == 1u); // (the gate only: asked for now)
   }
@@ -169,6 +186,7 @@ int main()
     PlanScheduler s(settings);
     // Owner 1: six 200 ms plans, all needed now.
     std::vector<PlanScheduler::JobId> big;
+
     for (int i = 0; i < 6; ++i)
       big.push_back(s.submitOne(1,
                                 "big",
@@ -178,6 +196,7 @@ int main()
                                   work(0.2);
                                   return std::any(0);
                                 }));
+
     std::this_thread::sleep_for(20ms);
     // Owner 2: one short one, asked after them all.
     const auto asked = Clock::now();
@@ -196,6 +215,7 @@ int main()
         "    (the short one started %.1f ms after it was asked)\n", waited);
     // (One owner holds at most threads - reserve workers: the other's free.)
     CHECK(waited < 50.0);
+
     for (const auto id : big)
       CHECK(waitFor(s, id));
   }
@@ -219,22 +239,30 @@ int main()
     const auto id = s.submit(r);
     std::vector<std::vector<int>> legs;
     bool firstBeforeDone = false;
+
     for (int i = 0; i < 5000; ++i)
     {
       const PlanScheduler::Collected c = s.collect(id);
+
       for (const std::any& leg : c.legs)
         legs.push_back(std::any_cast<std::vector<int>>(leg));
+
       if (!legs.empty() && c.state == PlanScheduler::State::Running)
         firstBeforeDone = true;
+
       if (c.state == PlanScheduler::State::Done ||
           c.state == PlanScheduler::State::Unknown)
         break;
+
       std::this_thread::sleep_for(2ms);
     }
+
     CHECK(firstBeforeDone);
     CHECK(legs.size() == 5u);
+
     for (std::size_t i = 0; i < legs.size(); ++i)
       CHECK(legs[i] == std::vector<int>(3, static_cast<int>(i)));
+
     // (Collected and done: forgotten.)
     CHECK(s.state(id) == PlanScheduler::State::Unknown);
   }
@@ -253,15 +281,19 @@ int main()
     r.step = [&](PlanScheduler::Context& ctx)
     {
       ++steps;
+
       for (int i = 0; i < 200 && !ctx.cancelled(); ++i)
         std::this_thread::sleep_for(1ms);
+
       sawCancel = sawCancel || ctx.cancelled();
       ctx.publish(1);
       return PlanScheduler::Step::More;
     };
     const auto running = s.submit(r);
+
     while (steps == 0)
       std::this_thread::sleep_for(1ms);
+
     Gate gate;
     gate.hold(s, 7); // (the other worker held)
     const auto queued = s.submitOne(2,
@@ -302,8 +334,10 @@ int main()
                           : PlanScheduler::Step::Done;
     };
     const auto job = s.submit(r);
+
     while (steps < 3)
       std::this_thread::sleep_for(1ms);
+
     wanted = false;
     std::this_thread::sleep_for(50ms);
     const int stopped = steps;
@@ -400,23 +434,30 @@ int main()
                 std::this_thread::sleep_for(150ms);
                 (*results)[static_cast<std::size_t>(i)] = i + 1;
               });
+
         return PlanScheduler::Step::More;
       }
+
       ctx.publish((*results)[0] + (*results)[1] + (*results)[2]);
       return PlanScheduler::Step::Done;
     };
     const auto t0 = Clock::now();
     const auto id = s.submit(r);
     int sum = 0;
+
     for (int i = 0; i < 5000; ++i)
     {
       const PlanScheduler::Collected c = s.collect(id);
+
       for (const std::any& leg : c.legs)
         sum = std::any_cast<int>(leg);
+
       if (c.state == PlanScheduler::State::Done)
         break;
+
       std::this_thread::sleep_for(1ms);
     }
+
     const double took = ms(t0, Clock::now());
     std::printf("    (3 x 150 ms in parallel: %.0f ms)\n", took);
     CHECK(sum == 6);
@@ -467,6 +508,7 @@ int main()
       std::vector<double> latency;
       std::mutex m;
       std::vector<PlanScheduler::JobId> ids;
+
       for (int i = 0; i < 60; ++i)
       {
         const auto asked = Clock::now();
@@ -482,8 +524,10 @@ int main()
                                   }));
         std::this_thread::sleep_for(25ms);
       }
+
       for (const auto id : ids)
         waitFor(s, id);
+
       return latency;
     };
     PlanScheduler::Settings settings;
@@ -511,8 +555,10 @@ int main()
         {
           for (unsigned i = 0; i < forks; ++i)
             ctx.fork([](const std::atomic<bool>&) { work(1.5); });
+
           return PlanScheduler::Step::More;
         }
+
         work(0.15);
         ctx.publish(*phase);
         return *phase <= 10 ? PlanScheduler::Step::More
@@ -552,8 +598,10 @@ int main()
     PlanScheduler s;
     std::atomic<std::thread::id> freed{};
     s.release(std::make_shared<Heavy>(&freed));
+
     for (int i = 0; i < 2000 && freed.load() == std::thread::id{}; ++i)
       std::this_thread::sleep_for(1ms);
+
     CHECK(freed.load() != std::thread::id{});
     CHECK(freed.load() != std::this_thread::get_id());
     // (A finished job's step held it last: collected, freed on a worker.)
@@ -569,8 +617,10 @@ int main()
       CHECK(waitFor(s, id));
       s.collect(id);
     }
+
     for (int i = 0; i < 2000 && jobFreed.load() == std::thread::id{}; ++i)
       std::this_thread::sleep_for(1ms);
+
     CHECK(jobFreed.load() != std::thread::id{});
     CHECK(jobFreed.load() != std::this_thread::get_id());
   }
@@ -592,6 +642,7 @@ int main()
       {
         if (std::this_thread::get_id() != made)
           *onOtherThread = true;
+
         ++*freed;
       }
     };
@@ -615,11 +666,15 @@ int main()
         {
           while (!ctx.cancelled())
             std::this_thread::sleep_for(1ms);
+
           return PlanScheduler::Step::Done;
         }
+
         ++ended;
+
         if (outcome == 1)
           throw std::runtime_error("no way through");
+
         return PlanScheduler::Step::Done;
       };
       return s.submit(std::move(r));
@@ -627,11 +682,15 @@ int main()
     const PlanScheduler::JobId done = uncollected(1, 0);
     const PlanScheduler::JobId failed = uncollected(2, 1);
     const PlanScheduler::JobId cancelled = uncollected(3, 2);
+
     for (int i = 0; i < 2000 && ended.load() < 2; ++i)
       std::this_thread::sleep_for(1ms);
+
     s.cancel(cancelled);
+
     for (int i = 0; i < 2000 && freed.load() < 3; ++i)
       std::this_thread::sleep_for(1ms);
+
     CHECK(freed.load() == 3);
     CHECK(onWorker.load());
     CHECK(s.state(done) == PlanScheduler::State::Unknown);

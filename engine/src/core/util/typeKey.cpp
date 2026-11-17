@@ -15,8 +15,10 @@ int TypeIds::idOf(std::string_view typeKey, bool* added)
   const std::lock_guard lock(m_mutex);
   const auto [it, inserted] =
       m_ids.try_emplace(std::string(typeKey), static_cast<int>(m_ids.size()));
+
   if (added)
     *added = inserted;
+
   return it->second;
 }
 
@@ -39,15 +41,15 @@ std::string readableTypeName(std::string_view typeKey)
 #else
   // "... componentTypeKey() [with T = game::Door; ...]" (GCC) or
   // "... componentTypeKey() [T = game::Door]" (Clang)
-  constexpr std::string_view open = "T = ";
-  const std::size_t start = typeKey.find(open);
+  constexpr std::string_view OPEN = "T = ";
+  const std::size_t start = typeKey.find(OPEN);
   if (start == std::string_view::npos)
     return std::string(typeKey);
   const std::size_t end = typeKey.find_first_of(";]", start);
-  return std::string(typeKey.substr(start + open.size(),
+  return std::string(typeKey.substr(start + OPEN.size(),
                                     end == std::string_view::npos
                                         ? std::string_view::npos
-                                        : end - (start + open.size())));
+                                        : end - (start + OPEN.size())));
 #endif
 }
 

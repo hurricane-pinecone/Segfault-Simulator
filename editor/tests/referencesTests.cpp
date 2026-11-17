@@ -1,34 +1,30 @@
 #include "../../engine/tests/runtime/serialization/rigComponent.h"
 #include "../../engine/tests/testHarness.h"
-#include "partsTestSupport.h"
-
 #include "build/fillParts.h"
-#include "scene/entityLabel.h"
-#include "scene/parts.h"
-#include "scene/references.h"
-#include "scene/unusedOverrides.h"
-
-#include "engine/core/assets/assetDatabase.h"
 #include "engine/core/components/nameComponent.h"
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/ecs/ecs.h"
 #include "engine/core/hierarchy/hierarchy.h"
-#include "engine/core/logger/logger.h"
-#include "engine/core/reflection/registration.h"
+#include "engine/core/reflection/reflection.h"
 #include "engine/runtime/assetStore/assetStore.h"
 #include "engine/runtime/assetStore/modelData.h"
 #include "engine/runtime/assetStore/modelImporter.h"
 #include "engine/runtime/sceneManager/scene.h"
 #include "engine/runtime/serialization/prefabComponents.h"
 #include "engine/runtime/serialization/sceneSerializer.h"
-#include "engine/runtime/serialization/unresolvedComponents.h"
+#include "partsTestSupport.h"
+#include "scene/parts.h"
+#include "scene/references.h"
+#include "scene/unusedOverrides.h"
 
-#include <algorithm>
+#include <nlohmann/json.hpp>
+
+#include <cstddef>
 #include <filesystem>
-#include <fstream>
-#include <iterator>
 #include <map>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -64,8 +60,10 @@ struct World
   {
     Entity entity = scene.createEntity();
     entity.addComponent<sfs::NameComponent>(name);
+
     if (parent.isValid())
       sfs::hierarchy::setParent(entity, parent);
+
     return entity;
   }
 };
@@ -292,6 +290,7 @@ int main()
                            b,
                            type.component.get(b),
                            false));
+
     for (const Entity& each : {a, b})
     {
       const json saved = w.serializer().instanceEntry(each);
@@ -378,12 +377,14 @@ int main()
         "Body", "Body/Arm\\/2", "Body/Arm\\/2/Hand", "Body/Leg"};
     const std::vector<std::string> names = {"Body", "Arm/2", "Hand", "Leg"};
     std::vector<sfs::ModelNode> nodes(paths.size());
+
     for (std::size_t i = 0; i < paths.size(); ++i)
     {
       nodes[i].name = names[i];
       nodes[i].parent = i == 0 ? -1 : (i == 2 ? 1 : 0);
       nodes[i].id = sfs::stableNodeId(paths[i]);
     }
+
     CHECK(paths[1] == "Body/" + sfs::nodeNameSegment("Arm/2"));
     const auto id = [&](const std::string& path)
     { return std::to_string(sfs::stableNodeId(path)); };
@@ -477,9 +478,11 @@ int main()
     const std::string arm = "\"arm\": null";
     const std::size_t at = expected.find(arm);
     CHECK(at != std::string::npos);
+
     if (at != std::string::npos)
       expected.replace(
           at, arm.size(), "\"arm\": \"1\",\n      \"blades\": [\"2\", \"3\"]");
+
     CHECK(readText(rig) == expected);
     const std::optional<json> written = sfs::SceneSerializer::readJsonFile(rig);
     CHECK(written && (*written)["root"]["PartsComponent"] ==

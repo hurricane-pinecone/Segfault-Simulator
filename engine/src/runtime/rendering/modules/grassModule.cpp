@@ -5,7 +5,6 @@
 #include "engine/core/components/grassBenderComponent.h"
 #include "engine/core/components/grassComponent.h"
 #include "engine/core/components/meshRendererComponent.h"
-#include "engine/core/components/rigidBody3DComponent.h"
 #include "engine/core/components/sphereCollider3DComponent.h"
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/ecs/ecs.h"
@@ -13,24 +12,49 @@
 #include "engine/core/jobs/workerPool.h"
 #include "engine/core/logger/logger.h"
 #include "engine/core/rendering/aabb.h"
+#include "engine/core/rendering/grass.h"
+#include "engine/core/rendering/mesh.h"
 #include "engine/core/rendering/terrain.h"
 #include "engine/core/util/cpuTiming.h"
+#include "engine/runtime/rendering/commands.h"
+#include "engine/runtime/rendering/frame.h"
 #include "engine/runtime/rendering/iRenderer.h"
 #include "engine/runtime/rendering/meshLibrary.h"
-#include "glm/glm/geometric.hpp"
-#include "glm/glm/matrix.hpp"
+#include "engine/runtime/rendering/renderContext.h"
+
+#include <glm/glm/common.hpp>
+#include <glm/glm/ext/matrix_float3x3.hpp>
+#include <glm/glm/ext/matrix_float4x4.hpp>
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
+#include <glm/glm/ext/vector_int4.hpp>
+#include <glm/glm/geometric.hpp>
+#include <glm/glm/matrix.hpp>
+#include <glm/glm/vector_relational.hpp>
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
+#include <future>
+#include <memory>
+#include <optional>
+#include <span>
 #include <string>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 
 namespace sfs
 {
 
 namespace
 {
+
+// Growing tiles brought on to the clock a frame, a grass at most (each about
+// a 16 x 16 texel upload).
+constexpr int GROWING_TILES_A_FRAME = 48;
 
 // How far a world unit across the ground is in its mesh's own XY.
 float sidewaysScale(const glm::mat4& model)
@@ -39,10 +63,6 @@ float sidewaysScale(const glm::mat4& model)
                           glm::length(glm::vec3(model[1]))),
                   1e-6f);
 }
-
-// Growing tiles brought on to the clock a frame, a grass at most (each about
-// a 16 x 16 texel upload).
-constexpr int kGrowingTilesAFrame = 48;
 
 // The tallest a field's blades grow (its trampling reaches that high).
 float tallest(const GrassComponent& grass)
@@ -65,20 +85,317 @@ GrassModule::~GrassModule()
 {
   for (auto& [key, patch] : m_patches)
     m_renderer.destroyGrass(patch.gpu);
+
   m_renderer.destroyMaterial(m_defaultMaterial);
 }
 
-uint64_t GrassModule::keyOf(const Entity& entity)
+void GrassModule::update(double deltaTime)
 {
-  // Ids are reused once an entity's gone: the generation tells them apart.
-  return (uint64_t(entity.getGeneration()) << 32) | entity.getId();
+  const float seconds = static_cast<float>(deltaTime);
+  {
+    SFS_CPU_SCOPE("grass/benders");
+    gatherBenders(seconds);
+  }
+
+  for (auto& [key, patch] : m_patches)
+  {
+    if (!patch.gpu.valid())
+      continue;
+
+    bool changed = false;
+    {
+      SFS_CPU_SCOPE("grass/trample");
+      changed = patch.trample.update(seconds, m_benders, patch.recovery);
+    }
+
+    if (!changed && patch.trample.size() == patch.uploadedTrample)
+      continue;
+
+    SFS_CPU_SCOPE("grass/trample upload");
+    uploadTrample(patch);
+  }
+}
+
+void GrassModule::computeCommands(const RenderContext& context)
+{
+  flush();
+
+  if (!m_registry || !context.meshes)
+    return;
+
+  m_meshes = context.meshes;
+
+  for (auto& [key, patch] : m_patches)
+    patch.seen = false;
+
+  if (context.camera)
+    m_camera = context.camera->position();
+
+  for (auto [entity, transform, meshRenderer, grass] :
+       m_registry
+           ->query<TransformComponent, MeshRendererComponent, GrassComponent>())
+  {
+    const Patch* patch = refresh(entity);
+
+    if (!patch)
+      continue;
+
+    MaterialHandle material = grass.material.empty()
+                                  ? MaterialHandle{}
+                                  : m_meshes->material(grass.material);
+
+    if (!material.valid())
+      material = m_defaultMaterial;
+
+    m_commands.push_back(GrassDrawCommand{
+        patch->gpu,
+        material,
+        MeshHandle{patch->mesh},
+        patch->model,
+        {grass.density, grass.height, grass.heightVariation, grass.width},
+        grass.stiffness,
+        grass.drawDistance,
+        grass.castsShadows,
+        grass.selfShadow,
+        meshRenderer.materials.empty()
+            ? MaterialHandle{}
+            : m_meshes->material(meshRenderer.materials[0]),
+        patch->vigour});
+  }
+
+  // Grass whose entity (or component) is gone.
+  for (auto it = m_patches.begin(); it != m_patches.end();)
+    if (!it->second.seen)
+    {
+      m_renderer.destroyGrass(it->second.gpu);
+      it = m_patches.erase(it);
+    }
+    else
+      ++it;
+}
+
+GrassModule::Window GrassModule::buildWindow(const Source& source,
+                                             const glm::mat4& model,
+                                             glm::vec2 center,
+                                             float half,
+                                             float trampleHeight,
+                                             const GrassMaps* painted,
+                                             const TerrainMaterial* terrain,
+                                             std::optional<double> clock)
+{
+  Window window;
+  window.center = center;
+  window.half = half;
+  window.model = model;
+  window.trampleHeight = trampleHeight;
+  const GrassGrid grid = grassWindow(
+      source.min, source.max, center, half, kGrassTexel / sidewaysScale(model));
+
+  if (grid.empty())
+    return window;
+
+  window.ground = GrassGround::build(
+      source.positions, source.indices, model, source.uvs, &grid);
+
+  if (window.ground.empty())
+    return window;
+
+  window.trample = GrassTrample(window.ground, model, trampleHeight);
+  window.maps = GrassMaps(grid);
+
+  // Its paint, as it is over this part of the mesh.
+  if (painted && !painted->empty())
+    for (int c = 0; c < GrassMaps::kChannels; ++c)
+    {
+      const auto channel = static_cast<GrassMaps::Channel>(c);
+
+      for (int y = 0; y < grid.size.y; ++y)
+        for (int x = 0; x < grid.size.x; ++x)
+          window.maps.set(
+              channel, x, y, painted->sample(channel, grid.center(x, y)));
+    }
+
+  if (terrain)
+    window.cover = coverOf(window.ground, grid, *terrain);
+
+  // All of its maps' images too (a 1024^2 grid's take tens of milliseconds:
+  // not on the frame that puts it in place).
+  if (clock)
+    window.maps.setClock(*clock);
+
+  window.images = imagesOf(window.maps, window.cover);
+  return window;
+}
+
+const std::vector<uint8_t>& GrassModule::coverFor(const Patch& patch)
+{
+  static const std::vector<uint8_t> kNone;
+  return patch.terrain && patch.coverGrid == patch.maps.grid() ? patch.cover
+                                                               : kNone;
+}
+
+std::vector<uint8_t> GrassModule::coverOf(const GrassGround& ground,
+                                          const GrassGrid& grid,
+                                          const TerrainMaterial& terrain)
+{
+  // Each of the maps' texels at the ground's texel under it, by the
+  // terrain's layers there.
+  const GrassGrid& groundGrid = ground.grid();
+  std::vector<uint8_t> cover(grid.count(), 255);
+
+  if (!ground.hasUvs() || groundGrid.empty())
+    return cover;
+
+  for (int y = 0; y < grid.size.y; ++y)
+    for (int x = 0; x < grid.size.x; ++x)
+    {
+      const glm::ivec2 at = glm::clamp(
+          glm::ivec2(glm::floor(groundGrid.toTexels(grid.center(x, y)))),
+          glm::ivec2(0),
+          groundGrid.size - 1);
+
+      // Where there's no ground (a hole in the mesh) nothing grows anyway:
+      // left full, so the grass round a hole doesn't give out toward it as
+      // at an edge (see grassShape() in meshGrassGrow.wgsl).
+      if (!ground.has(at.x, at.y))
+        continue;
+
+      const float grows = terrainGrass(terrain, ground.uv(at.x, at.y));
+      cover[std::size_t(y) * grid.size.x + x] = static_cast<uint8_t>(
+          std::lround(std::clamp(grows, 0.0f, 1.0f) * 255.0f));
+    }
+
+  return cover;
+}
+
+void GrassModule::coverRepainted(Patch& patch)
+{
+  std::vector<uint8_t> cover =
+      coverOf(patch.ground, patch.coverGrid, *patch.terrain);
+  // The blocks of texels (as GrassMaps::takeGrownChanged()'s) where it
+  // changed, run together along their rows, and all of them as one.
+  constexpr int BLOCK = GrassMaps::kGrownBlock;
+  const glm::ivec2 size = patch.coverGrid.size;
+  const glm::ivec2 blocks = (size + BLOCK - 1) / BLOCK;
+
+  for (int by = 0; by < blocks.y; ++by)
+  {
+    int run = -1; // the first block of a run of changed ones
+
+    for (int bx = 0; bx <= blocks.x; ++bx)
+    {
+      bool changed = false;
+
+      for (int y = by * BLOCK;
+           bx < blocks.x && !changed && y < std::min((by + 1) * BLOCK, size.y);
+           ++y)
+        for (int x = bx * BLOCK; x < std::min((bx + 1) * BLOCK, size.x); ++x)
+        {
+          const std::size_t i = std::size_t(y) * size.x + x;
+
+          if (i < patch.cover.size() && cover[i] != patch.cover[i])
+          {
+            changed = true;
+            break;
+          }
+        }
+
+      if (changed && run < 0)
+        run = bx;
+
+      if (changed || run < 0)
+        continue;
+
+      const glm::ivec4 rect(run * BLOCK,
+                            by * BLOCK,
+                            std::min(bx * BLOCK, size.x),
+                            std::min((by + 1) * BLOCK, size.y));
+      run = -1;
+      const bool none = patch.coverTo.x <= patch.coverFrom.x ||
+                        patch.coverTo.y <= patch.coverFrom.y;
+      patch.coverFrom = none ? glm::ivec2(rect.x, rect.y)
+                             : glm::min(patch.coverFrom, glm::ivec2(rect));
+      patch.coverTo = none
+                          ? glm::ivec2(rect.z, rect.w)
+                          : glm::max(patch.coverTo, glm::ivec2(rect.z, rect.w));
+      patch.coverRegrow.push_back(rect);
+    }
+  }
+
+  patch.cover = std::move(cover);
+}
+
+void GrassModule::cut(const Entity& entity, GrassCut cut)
+{
+  GrassMaps* painted = maps(entity);
+
+  if (!painted)
+    return;
+
+  const glm::mat4& model = m_patches.at(keyOf(entity)).model;
+  const glm::mat4 toOwn = glm::inverse(model);
+  const float height = model[3].z;
+  cut.a = glm::vec2(toOwn * glm::vec4(cut.a, height, 1.0f));
+  cut.b = glm::vec2(toOwn * glm::vec4(cut.b, height, 1.0f));
+  cut.width /= sidewaysScale(model);
+  painted->cut(cut);
+}
+
+void GrassModule::fill(const Entity& entity,
+                       GrassMaps::Channel channel,
+                       float value)
+{
+  if (GrassMaps* painted = maps(entity))
+    painted->fill(channel, value);
+}
+
+const GrassModule::Patch* GrassModule::find(const Entity& entity) const
+{
+  const auto it = m_patches.find(keyOf(entity));
+  return it != m_patches.end() && it->second.gpu.valid() ? &it->second
+                                                         : nullptr;
+}
+
+void GrassModule::finishWindows()
+{
+  for (auto& [key, patch] : m_patches)
+    if (patch.nextWindow.valid())
+    {
+      patch.nextWindow.wait();
+      useWindow(patch, patch.nextWindow.get());
+    }
+}
+
+void GrassModule::flatten(const Entity& entity,
+                          glm::vec3 center,
+                          float radius,
+                          float to,
+                          float softness)
+{
+  GrassMaps* painted = maps(entity);
+
+  if (!painted)
+    return;
+
+  const glm::mat4& model = m_patches.at(keyOf(entity)).model;
+  const glm::vec3 local(glm::inverse(model) * glm::vec4(center, 1.0f));
+  painted->flatten(
+      glm::vec2(local), radius / sidewaysScale(model), to, softness);
+}
+
+float GrassModule::flattened(const Entity& entity, glm::vec2 point) const
+{
+  const Patch* patch = find(entity);
+  return patch ? patch->trample.flattened(point) : 0.0f;
 }
 
 void GrassModule::gatherBenders(float seconds)
 {
   m_benders.clear();
+
   if (!m_registry)
     return;
+
   std::unordered_map<uint64_t, glm::vec3> positions;
   // `part`: which of an entity's shapes (it may have several), so each keeps
   // its own last position.
@@ -87,9 +404,11 @@ void GrassModule::gatherBenders(float seconds)
   {
     const uint64_t key = keyOf(entity) ^ (uint64_t(part) << 56);
     glm::vec3 velocity(0.0f);
+
     if (const auto last = m_lastPositions.find(key);
         last != m_lastPositions.end() && seconds > 0.0f)
       velocity = (center - last->second) / seconds;
+
     positions[key] = center;
     m_benders.push_back({center, radius, velocity});
   };
@@ -102,6 +421,7 @@ void GrassModule::gatherBenders(float seconds)
     const glm::vec3 scale(glm::length(glm::vec3(model[0])),
                           glm::length(glm::vec3(model[1])),
                           glm::length(glm::vec3(model[2])));
+
     if (const SphereCollider3DComponent* sphere =
             entity.getComponent<SphereCollider3DComponent>())
     {
@@ -111,6 +431,7 @@ void GrassModule::gatherBenders(float seconds)
             glm::vec3(model * glm::vec4(sphere->offset, 1.0f)),
             sphere->radius * largestScale(model));
     }
+
     if (const BoxCollider3DComponent* box =
             entity.getComponent<BoxCollider3DComponent>())
     {
@@ -122,6 +443,7 @@ void GrassModule::gatherBenders(float seconds)
         add(entity, 1, center - glm::vec3(0.0f, 0.0f, half.z - radius), radius);
       }
     }
+
     if (const CapsuleCollider3DComponent* capsule =
             entity.getComponent<CapsuleCollider3DComponent>())
     {
@@ -142,11 +464,13 @@ void GrassModule::gatherBenders(float seconds)
        m_registry->query<TransformComponent, GrassBenderComponent>())
   {
     const glm::mat4 model = hierarchy::worldMatrix(entity);
+
     if (bender.fitColliders)
     {
       addColliders(entity, model);
       continue;
     }
+
     // Around its mesh, as placed: its middle, and its largest half-extent.
     const auto* renderer = bender.fitMesh && m_meshes
                                ? entity.getComponent<MeshRendererComponent>()
@@ -154,6 +478,7 @@ void GrassModule::gatherBenders(float seconds)
     const Aabb* bounds =
         renderer ? m_meshes->posedBounds(renderer->mesh, entity.getId())
                  : nullptr;
+
     if (bounds && !bounds->empty())
     {
       const glm::vec3 half = (bounds->max - bounds->min) * 0.5f *
@@ -172,72 +497,121 @@ void GrassModule::gatherBenders(float seconds)
           glm::vec3(model * glm::vec4(bender.offset, 1.0f)),
           bender.radius * largestScale(model));
   }
+
   m_lastPositions = std::move(positions);
 }
 
-void GrassModule::update(double deltaTime)
+const GrassGround* GrassModule::ground(const Entity& entity) const
 {
-  const float seconds = static_cast<float>(deltaTime);
-  {
-    SFS_CPU_SCOPE("grass/benders");
-    gatherBenders(seconds);
-  }
-  for (auto& [key, patch] : m_patches)
-  {
-    if (!patch.gpu.valid())
-      continue;
-    bool changed = false;
+  const Patch* patch = find(entity);
+  return patch ? &patch->ground : nullptr;
+}
+
+GrassModule::MapImages GrassModule::imagesOf(GrassMaps& maps,
+                                             const std::vector<uint8_t>& cover)
+{
+  // As uploadMaps() works out a changed rectangle, for all of them.
+  MapImages images;
+  images.grid = maps.grid();
+  const glm::ivec2 size = images.grid.size;
+
+  if (size.x <= 0 || size.y <= 0)
+    return images;
+
+  maps.pixels(glm::ivec2(0), size, images.shape, images.data);
+
+  if (cover.size() == std::size_t(size.x) * size.y)
+    for (std::size_t i = 0; i < cover.size(); ++i)
     {
-      SFS_CPU_SCOPE("grass/trample");
-      changed = patch.trample.update(seconds, m_benders, patch.recovery);
+      uint8_t& coverage = images.shape[i * 4];
+      coverage = static_cast<uint8_t>((coverage * cover[i] + 127) / 255);
     }
-    if (!changed && patch.trample.size() == patch.uploadedTrample)
-      continue;
-    SFS_CPU_SCOPE("grass/trample upload");
-    uploadTrample(patch);
-  }
+
+  grassEdgeBand(images.shape, size);
+  maps.keepBand(glm::ivec2(0), size, images.shape);
+  nowOf(maps, cover, glm::ivec2(0), size, images.now, images.cut);
+  return images;
 }
 
-void GrassModule::uploadTrample(Patch& patch)
+uint64_t GrassModule::keyOf(const Entity& entity)
 {
-  if (!patch.gpu.valid())
+  // Ids are reused once an entity's gone: the generation tells them apart.
+  return (uint64_t(entity.getGeneration()) << 32) | entity.getId();
+}
+
+float GrassModule::lengthAt(const Entity& entity, glm::vec3 point) const
+{
+  const Patch* patch = find(entity);
+
+  if (!patch)
+    return 1.0f;
+
+  const glm::vec3 local(glm::inverse(patch->model) * glm::vec4(point, 1.0f));
+  const float vigour =
+      grassVigour(patch->vigourField.get(), patch->vigour, glm::vec2(point));
+  const float most = glm::mix(
+      patch->vigour.on ? patch->vigour.lengthLeast : 1.0f, 1.0f, vigour);
+  const glm::vec2 own(local);
+  return std::min(patch->maps.sampleNow(GrassMaps::Length, own),
+                  patch->maps.sample(GrassMaps::Length, own) * most);
+}
+
+GrassMaps* GrassModule::maps(const Entity& entity)
+{
+  // As of the last frame, if it was drawn then (a game may stamp many times
+  // a frame); else made now.
+  const auto it = m_patches.find(keyOf(entity));
+  Patch* patch = it != m_patches.end() && it->second.gpu.valid() &&
+                         entity.hasComponent<GrassComponent>()
+                     ? &it->second
+                     : refresh(entity);
+
+  if (!patch)
+    return nullptr;
+
+  if (patch->maps.empty())
+    patch->maps = GrassMaps(patch->ground.grid());
+
+  return &patch->maps;
+}
+
+void GrassModule::nowOf(const GrassMaps& maps,
+                        const std::vector<uint8_t>& cover,
+                        glm::ivec2 from,
+                        glm::ivec2 to,
+                        std::vector<uint8_t>& now,
+                        std::vector<uint8_t>& cut)
+{
+  maps.nowPixels(from, to, now);
+  maps.cutPixels(from, to, cut);
+  const GrassGrid& grid = maps.grid();
+
+  if (cover.size() != std::size_t(grid.size.x) * grid.size.y)
     return;
-  // All of it for a new map; else just what changed.
-  if (patch.trample.size() != patch.uploadedTrample)
-    patch.trample.markAllChanged();
-  const auto [from, to] = patch.trample.takeChanged();
-  if (to.x <= from.x || to.y <= from.y)
-    return;
-  std::vector<uint8_t> pixels;
-  patch.trample.pixels(from, to, pixels);
-  m_renderer.updateGrassTrample(patch.gpu,
-                                GrassTrampleImage{patch.trample.min(),
-                                                  patch.trample.max(),
-                                                  patch.trample.size(),
-                                                  pixels,
-                                                  from,
-                                                  to});
-  patch.uploadedTrample = patch.trample.size();
-}
 
-float GrassModule::windowReach(float drawDistance)
-{
-  return 1.2f * std::max(drawDistance, 1.0f) + windowSlack(drawDistance);
-}
+  const int width = to.x - from.x;
 
-float GrassModule::windowSlack(float drawDistance)
-{
-  return std::max(0.15f * drawDistance, 8.0f);
+  for (int y = from.y; y < to.y; ++y)
+    for (int x = from.x; x < to.x; ++x)
+    {
+      uint8_t& coverage =
+          now[(std::size_t(y - from.y) * width + (x - from.x)) * 4];
+      coverage = static_cast<uint8_t>(
+          (coverage * cover[std::size_t(y) * grid.size.x + x] + 127) / 255);
+    }
 }
 
 GrassModule::Patch* GrassModule::refresh(const Entity& entity)
 {
   const auto* grass = entity.getComponent<GrassComponent>();
   const auto* renderer = entity.getComponent<MeshRendererComponent>();
+
   if (!m_meshes || !grass || !renderer ||
       !entity.hasComponent<TransformComponent>())
     return nullptr;
+
   const MeshHandle mesh = renderer->mesh;
+
   if (m_meshes->isMissing(mesh))
     return nullptr; // not loaded (yet): grass once it is
 
@@ -259,6 +633,7 @@ GrassModule::Patch* GrassModule::refresh(const Entity& entity)
   const glm::mat3 turn(model);
   const bool rebuild =
       patch.mesh != mesh.id || patch.turn != turn || patch.windowed != windowed;
+
   if (rebuild)
   {
     m_renderer.destroyGrass(patch.gpu);
@@ -267,6 +642,7 @@ GrassModule::Patch* GrassModule::refresh(const Entity& entity)
     patch.nextWindow = {};
     patch.windowHalf = 0.0f;
     patch.source.reset();
+
     if (windowed)
     {
       // Its triangles kept, for its windows (the first is built below).
@@ -291,16 +667,19 @@ GrassModule::Patch* GrassModule::refresh(const Entity& entity)
       patch.gpu = m_renderer.createGrass(patch.ground);
       patch.uploadedTrample = glm::ivec2(0);
     }
+
     patch.coverGrid = {};
     patch.mesh = mesh.id;
     patch.turn = turn;
     patch.sendMaps = true;
   }
+
   if (patch.windowed)
   {
     // Its trample map comes with its window.
     if (patch.model != model || patch.trampleHeight != tallest(*grass))
       patch.windowStale = true;
+
     patch.model = model;
   }
   else if (rebuild || patch.model != model ||
@@ -316,6 +695,7 @@ GrassModule::Patch* GrassModule::refresh(const Entity& entity)
   if (patch.paint != grass->paint || (rebuild && patch.windowed))
   {
     patch.paint = grass->paint;
+
     if (patch.windowed)
     {
       GrassMaps painted = GrassMaps::fromJson(grass->paint);
@@ -341,6 +721,7 @@ GrassModule::Patch* GrassModule::refresh(const Entity& entity)
       terrain == patch.terrain ||
       (terrain && patch.terrain && terrain->splat == patch.terrain->splat &&
        terrain->layers == patch.terrain->layers);
+
   if (sameCover)
     patch.terrain = std::move(terrain);
   else if (patch.windowed)
@@ -359,10 +740,12 @@ GrassModule::Patch* GrassModule::refresh(const Entity& entity)
     patch.terrain = std::move(terrain);
     patch.coverGrid = {};
     patch.sendMaps = true;
+
     // Maps made only for the terrain's sake go again with it.
     if (!patch.terrain && patch.coverMadeMaps &&
         patch.maps == GrassMaps(patch.maps.grid()))
       patch.maps = GrassMaps();
+
     patch.coverMadeMaps = false;
   }
 
@@ -376,10 +759,12 @@ GrassModule::Patch* GrassModule::refresh(const Entity& entity)
     patch.maps = GrassMaps(patch.ground.grid());
     patch.coverMadeMaps = true;
   }
+
   if (patch.terrain && !patch.maps.empty() &&
       (patch.coverGrid != patch.maps.grid() || patch.coverStale))
   {
     SFS_CPU_SCOPE("grass/cover");
+
     if (patch.coverGrid == patch.maps.grid())
       coverRepainted(patch);
     else
@@ -388,6 +773,7 @@ GrassModule::Patch* GrassModule::refresh(const Entity& entity)
       patch.sendMaps = true;
     }
   }
+
   patch.coverStale = false;
   {
     SFS_CPU_SCOPE("grass/maps upload");
@@ -396,249 +782,137 @@ GrassModule::Patch* GrassModule::refresh(const Entity& entity)
   return patch.gpu.valid() ? &patch : nullptr;
 }
 
-void GrassModule::windowAround(Patch& patch, const GrassComponent& grass)
+void GrassModule::roll(const Entity& entity, GrassRoll roll)
 {
-  // One built in the background, ready: in place of the last.
-  if (patch.nextWindow.valid() &&
-      patch.nextWindow.wait_for(std::chrono::seconds(0)) ==
-          std::future_status::ready)
-    useWindow(patch, patch.nextWindow.get());
+  GrassMaps* painted = maps(entity);
 
-  const float scale = sidewaysScale(patch.model);
-  const float half = windowReach(grass.drawDistance) / scale;
-  const float slack = windowSlack(grass.drawDistance) / scale;
-  // Around the camera (the mesh's middle until there is one).
-  const glm::vec2 camera =
-      m_camera
-          ? glm::vec2(glm::inverse(patch.model) * glm::vec4(*m_camera, 1.0f))
-          : (patch.source->min + patch.source->max) * 0.5f;
-  const glm::vec2 off = glm::abs(camera - patch.windowCenter);
-  const bool first = patch.windowHalf <= 0.0f;
-  const bool moved = first || std::max(off.x, off.y) > slack ||
-                     std::abs(half - patch.windowHalf) > 0.05f * half ||
-                     patch.windowStale;
-  if (!moved || patch.nextWindow.valid())
+  if (!painted)
     return;
-  patch.windowStale = false;
-  const float trampleHeight = tallest(grass);
 
-  // The first at once (there's nothing to show till then); after it, in the
-  // background, the last one showing meanwhile.
-  if (first)
-  {
-    useWindow(patch,
-              buildWindow(*patch.source,
-                          patch.model,
-                          camera,
-                          half,
-                          trampleHeight,
-                          patch.painted.get(),
-                          patch.terrain.get(),
-                          m_clock));
-    return;
-  }
-  if (!m_worker)
-    m_worker = std::make_unique<WorkerPool>(1);
-  auto job = std::make_shared<std::packaged_task<Window()>>(
-      [source = patch.source,
-       model = patch.model,
-       camera,
-       half,
-       trampleHeight,
-       painted = patch.painted,
-       terrain = patch.terrain,
-       clock = m_clock]
-      {
-        return buildWindow(*source,
-                           model,
-                           camera,
-                           half,
-                           trampleHeight,
-                           painted.get(),
-                           terrain.get(),
-                           clock);
-      });
-  patch.nextWindow = job->get_future();
-  m_worker->submit([job] { (*job)(); });
+  const glm::mat4& model = m_patches.at(keyOf(entity)).model;
+  const glm::mat4 toOwn = glm::inverse(model);
+  const float height = model[3].z;
+  roll.a = glm::vec2(toOwn * glm::vec4(roll.a, height, 1.0f));
+  roll.b = glm::vec2(toOwn * glm::vec4(roll.b, height, 1.0f));
+  roll.width /= sidewaysScale(model);
+  painted->roll(roll);
 }
 
-GrassModule::Window GrassModule::buildWindow(const Source& source,
-                                             const glm::mat4& model,
-                                             glm::vec2 center,
-                                             float half,
-                                             float trampleHeight,
-                                             const GrassMaps* painted,
-                                             const TerrainMaterial* terrain,
-                                             std::optional<double> clock)
-{
-  Window window;
-  window.center = center;
-  window.half = half;
-  window.model = model;
-  window.trampleHeight = trampleHeight;
-  const GrassGrid grid = grassWindow(
-      source.min, source.max, center, half, kGrassTexel / sidewaysScale(model));
-  if (grid.empty())
-    return window;
-  window.ground = GrassGround::build(
-      source.positions, source.indices, model, source.uvs, &grid);
-  if (window.ground.empty())
-    return window;
-  window.trample = GrassTrample(window.ground, model, trampleHeight);
-  window.maps = GrassMaps(grid);
-  // Its paint, as it is over this part of the mesh.
-  if (painted && !painted->empty())
-    for (int c = 0; c < GrassMaps::kChannels; ++c)
-    {
-      const auto channel = static_cast<GrassMaps::Channel>(c);
-      for (int y = 0; y < grid.size.y; ++y)
-        for (int x = 0; x < grid.size.x; ++x)
-          window.maps.set(
-              channel, x, y, painted->sample(channel, grid.center(x, y)));
-    }
-  if (terrain)
-    window.cover = coverOf(window.ground, grid, *terrain);
-  // All of its maps' images too (a 1024^2 grid's take tens of milliseconds:
-  // not on the frame that puts it in place).
-  if (clock)
-    window.maps.setClock(*clock);
-  window.images = imagesOf(window.maps, window.cover);
-  return window;
-}
-
-void GrassModule::useWindow(Patch& patch, Window window)
-{
-  patch.windowCenter = window.center;
-  patch.windowHalf = window.half;
-  // Off the mesh altogether: no grass, till the camera's back over it.
-  if (window.ground.empty())
-  {
-    m_renderer.destroyGrass(patch.gpu);
-    patch.gpu = {};
-    patch.ground = GrassGround();
-    return;
-  }
-  if (patch.gpu.valid())
-    m_renderer.updateGrassGround(patch.gpu, window.ground);
-  else
-    patch.gpu = m_renderer.createGrass(window.ground);
-  patch.ground = std::move(window.ground);
-  patch.trample = std::move(window.trample);
-  patch.trampleHeight = window.trampleHeight;
-  patch.maps = std::move(window.maps);
-  patch.sendMaps = true;
-  patch.cover = std::move(window.cover);
-  patch.coverGrid = patch.cover.empty() ? GrassGrid() : patch.maps.grid();
-  patch.ready = std::move(window.images);
-  patch.coverMadeMaps = true;
-  patch.trample.markAllChanged();
-  uploadTrample(patch);
-}
-
-void GrassModule::finishWindows()
-{
-  for (auto& [key, patch] : m_patches)
-    if (patch.nextWindow.valid())
-    {
-      patch.nextWindow.wait();
-      useWindow(patch, patch.nextWindow.get());
-    }
-}
-
-bool GrassModule::windowed(const Entity& entity) const
+float GrassModule::sample(const Entity& entity,
+                          GrassMaps::Channel channel,
+                          glm::vec3 point) const
 {
   const Patch* patch = find(entity);
-  return patch && patch->windowed;
+
+  if (!patch)
+    return GrassMaps::defaultValue(channel);
+
+  const glm::vec3 local(glm::inverse(patch->model) * glm::vec4(point, 1.0f));
+  return patch->maps.sample(channel, glm::vec2(local));
 }
 
-const std::vector<uint8_t>& GrassModule::coverFor(const Patch& patch)
+void GrassModule::setClock(double growthDays)
 {
-  static const std::vector<uint8_t> kNone;
-  return patch.terrain && patch.coverGrid == patch.maps.grid() ? patch.cover
-                                                               : kNone;
+  m_clock = growthDays;
+
+  for (auto& [key, patch] : m_patches)
+    patch.maps.setClock(growthDays);
 }
 
-GrassModule::MapImages GrassModule::imagesOf(GrassMaps& maps,
-                                             const std::vector<uint8_t>& cover)
+void GrassModule::setVigour(const Entity& entity,
+                            std::shared_ptr<const GrassVigourField> field,
+                            const GrassVigourSettings& settings)
 {
-  // As uploadMaps() works out a changed rectangle, for all of them.
-  MapImages images;
-  images.grid = maps.grid();
-  const glm::ivec2 size = images.grid.size;
-  if (size.x <= 0 || size.y <= 0)
-    return images;
-  maps.pixels(glm::ivec2(0), size, images.shape, images.data);
-  if (cover.size() == std::size_t(size.x) * size.y)
-    for (std::size_t i = 0; i < cover.size(); ++i)
-    {
-      uint8_t& coverage = images.shape[i * 4];
-      coverage = static_cast<uint8_t>((coverage * cover[i] + 127) / 255);
-    }
-  grassEdgeBand(images.shape, size);
-  maps.keepBand(glm::ivec2(0), size, images.shape);
-  nowOf(maps, cover, glm::ivec2(0), size, images.now, images.cut);
-  return images;
-}
+  // (Kept for when it's grown, if it isn't yet.)
+  Patch* patch = nullptr;
 
-void GrassModule::nowOf(const GrassMaps& maps,
-                        const std::vector<uint8_t>& cover,
-                        glm::ivec2 from,
-                        glm::ivec2 to,
-                        std::vector<uint8_t>& now,
-                        std::vector<uint8_t>& cut)
-{
-  maps.nowPixels(from, to, now);
-  maps.cutPixels(from, to, cut);
-  const GrassGrid& grid = maps.grid();
-  if (cover.size() != std::size_t(grid.size.x) * grid.size.y)
+  if (const auto it = m_patches.find(keyOf(entity)); it != m_patches.end())
+    patch = &it->second;
+  else if (!(patch = refresh(entity)))
     return;
-  const int width = to.x - from.x;
-  for (int y = from.y; y < to.y; ++y)
-    for (int x = from.x; x < to.x; ++x)
-    {
-      uint8_t& coverage =
-          now[(std::size_t(y - from.y) * width + (x - from.x)) * 4];
-      coverage = static_cast<uint8_t>(
-          (coverage * cover[std::size_t(y) * grid.size.x + x] + 127) / 255);
-    }
+
+  patch->vigourField = std::move(field);
+  patch->vigour = settings;
 }
 
-void GrassModule::uploadVigour(Patch& patch)
+void GrassModule::stamp(const Entity& entity,
+                        GrassMaps::Channel channel,
+                        glm::vec3 center,
+                        float radius,
+                        float value,
+                        GrassMaps::Blend blend,
+                        float strength,
+                        float softness)
 {
-  if (!patch.gpu.valid() || (patch.vigourSent == patch.vigourField.get() &&
-                             patch.vigourGpu == patch.gpu.id))
+  GrassMaps* painted = maps(entity);
+
+  if (!painted)
     return;
-  GrassVigourImage image;
-  if (patch.vigourField && !patch.vigourField->empty())
-    image = {patch.vigourField->min,
-             patch.vigourField->max,
-             patch.vigourField->size,
-             patch.vigourField->values};
-  m_renderer.updateGrassVigour(patch.gpu, image);
-  patch.vigourSent = patch.vigourField.get();
-  patch.vigourGpu = patch.gpu.id;
+
+  const glm::mat4& model = m_patches.at(keyOf(entity)).model;
+  const glm::vec3 local(glm::inverse(model) * glm::vec4(center, 1.0f));
+  painted->stamp(channel,
+                 glm::vec2(local),
+                 radius / sidewaysScale(model),
+                 value,
+                 blend,
+                 strength,
+                 softness);
+}
+
+void GrassModule::terrainPainted(const Entity& entity)
+{
+  const auto it = m_patches.find(keyOf(entity));
+
+  if (it == m_patches.end() || !it->second.terrain)
+    return;
+
+  it->second.coverStale = true; // worked out again next frame
+}
+
+std::shared_ptr<const TerrainMaterial>
+GrassModule::terrainUnder(const Entity& entity)
+{
+  const auto* meshRenderer = entity.getComponent<MeshRendererComponent>();
+
+  if (!m_meshes || !meshRenderer || meshRenderer->materials.empty())
+    return nullptr;
+
+  const MeshMaterial* drawn =
+      m_meshes->materialData(m_meshes->material(meshRenderer->materials[0]));
+
+  return drawn && drawn->terrain && terrainLimitsGrass(*drawn->terrain)
+             ? drawn->terrain
+             : nullptr;
 }
 
 void GrassModule::uploadMaps(Patch& patch)
 {
   if (!patch.gpu.valid())
     return;
+
   uploadVigour(patch);
+
   // Its growth on to the clock: the tiles that have changed by a step.
   if (m_clock)
     patch.maps.setClock(*m_clock);
-  patch.maps.update(kGrowingTilesAFrame);
+
+  patch.maps.update(GROWING_TILES_A_FRAME);
+
   // All of them for a new grid (or new maps); else just what changed.
   if (patch.maps.grid() != patch.uploadedGrid)
     patch.sendMaps = true;
+
   if (patch.sendMaps)
     patch.maps.markAllChanged();
+
   auto [from, to] = patch.maps.takeChanged();
   bool shapeChanged = patch.maps.takeShapeChanged() || patch.sendMaps;
   std::vector<glm::ivec4> regrow = patch.maps.takeGrownChanged();
   // And where the terrain under it changed.
   const bool coverChanged = patch.coverTo.x > patch.coverFrom.x &&
                             patch.coverTo.y > patch.coverFrom.y;
+
   if (coverChanged)
   {
     const bool none = to.x <= from.x || to.y <= from.y;
@@ -648,6 +922,7 @@ void GrassModule::uploadMaps(Patch& patch)
         regrow.end(), patch.coverRegrow.begin(), patch.coverRegrow.end());
     shapeChanged = true;
   }
+
   patch.coverFrom = patch.coverTo = glm::ivec2(0);
   patch.coverRegrow.clear();
   const std::vector<int> tilesNow = patch.maps.takeTilesNow();
@@ -656,14 +931,18 @@ void GrassModule::uploadMaps(Patch& patch)
   // (SFS_GRASS_GROWTH: how much of it's growing, what that sends up, and how
   // much memory its maps take, every 240 frames.)
   static const bool kGrowthLog = std::getenv("SFS_GRASS_GROWTH") != nullptr;
+
   if (kGrowthLog)
   {
     patch.tilesSent += tilesNow.size();
+
     if (++patch.framesLogged >= 240)
     {
       std::size_t active = 0;
+
       for (const uint8_t a : patch.maps.activeTiles())
         active += a;
+
       LOG_INFO("Grass growth (" + std::to_string(patch.maps.grid().size.x) +
                " x " + std::to_string(patch.maps.grid().size.y) +
                " texels): " + std::to_string(patch.maps.growingTiles()) +
@@ -675,6 +954,7 @@ void GrassModule::uploadMaps(Patch& patch)
       patch.tilesSent = 0;
     }
   }
+
   if (!patch.sendMaps && !rect && tilesNow.empty() && !activeChanged)
     return;
 
@@ -685,6 +965,7 @@ void GrassModule::uploadMaps(Patch& patch)
   const bool ready = patch.sendMaps && patch.ready.grid == patch.maps.grid() &&
                      !patch.ready.shape.empty() && rect && shapeChanged &&
                      !coverChanged;
+
   if (ready)
   {
     from = glm::ivec2(0);
@@ -707,6 +988,7 @@ void GrassModule::uploadMaps(Patch& patch)
     patch.maps.pixels(readFrom, readTo, shape, data);
     // Less where the terrain under it keeps grass off.
     const int readWidth = readTo.x - readFrom.x;
+
     if (patch.terrain && patch.coverGrid == patch.maps.grid())
       for (int y = readFrom.y; y < readTo.y; ++y)
         for (int x = readFrom.x; x < readTo.x; ++x)
@@ -720,12 +1002,15 @@ void GrassModule::uploadMaps(Patch& patch)
                127) /
               255);
         }
+
     grassEdgeBand(shape, readTo - readFrom);
+
     // Just the texels to send, if it read more round them.
     if (readFrom != from || readTo != to)
     {
       const int width = to.x - from.x;
       std::size_t at = 0;
+
       for (int y = from.y; y < to.y; ++y)
       {
         const std::size_t row =
@@ -735,9 +1020,11 @@ void GrassModule::uploadMaps(Patch& patch)
         std::copy_n(data.begin() + row, width * 4, data.begin() + at);
         at += std::size_t(width) * 4;
       }
+
       shape.resize(at);
       data.resize(at);
     }
+
     patch.maps.keepBand(from, to, shape);
     nowOf(patch.maps, coverFor(patch), from, to, now, cut);
   }
@@ -755,14 +1042,17 @@ void GrassModule::uploadMaps(Patch& patch)
   const glm::ivec2 across = patch.maps.tiles();
   tileNow.reserve(tilesNow.size());
   tileCut.reserve(tilesNow.size());
+
   for (const int tile : tilesNow)
   {
     const glm::ivec2 low =
         glm::ivec2(tile % across.x, tile / across.x) * kGrassMapTile;
     const glm::ivec2 high = glm::min(low + kGrassMapTile, size);
+
     if (!now.empty() && glm::all(glm::greaterThanEqual(low, from)) &&
         glm::all(glm::lessThanEqual(high, to)))
       continue;
+
     tileNow.emplace_back();
     tileCut.emplace_back();
     nowOf(
@@ -791,317 +1081,173 @@ void GrassModule::uploadMaps(Patch& patch)
   patch.ready = {};
 }
 
-void GrassModule::computeCommands(const RenderContext& context)
+void GrassModule::uploadTrample(Patch& patch)
 {
-  flush();
-  if (!m_registry || !context.meshes)
+  if (!patch.gpu.valid())
     return;
-  m_meshes = context.meshes;
 
-  for (auto& [key, patch] : m_patches)
-    patch.seen = false;
-  if (context.camera)
-    m_camera = context.camera->position();
+  // All of it for a new map; else just what changed.
+  if (patch.trample.size() != patch.uploadedTrample)
+    patch.trample.markAllChanged();
 
-  for (auto [entity, transform, meshRenderer, grass] :
-       m_registry
-           ->query<TransformComponent, MeshRendererComponent, GrassComponent>())
-  {
-    const Patch* patch = refresh(entity);
-    if (!patch)
-      continue;
-    MaterialHandle material = grass.material.empty()
-                                  ? MaterialHandle{}
-                                  : m_meshes->material(grass.material);
-    if (!material.valid())
-      material = m_defaultMaterial;
-    m_commands.push_back(GrassDrawCommand{
-        patch->gpu,
-        material,
-        MeshHandle{patch->mesh},
-        patch->model,
-        {grass.density, grass.height, grass.heightVariation, grass.width},
-        grass.stiffness,
-        grass.drawDistance,
-        grass.castsShadows,
-        grass.selfShadow,
-        meshRenderer.materials.empty()
-            ? MaterialHandle{}
-            : m_meshes->material(meshRenderer.materials[0]),
-        patch->vigour});
-  }
+  const auto [from, to] = patch.trample.takeChanged();
 
-  // Grass whose entity (or component) is gone.
-  for (auto it = m_patches.begin(); it != m_patches.end();)
-    if (!it->second.seen)
-    {
-      m_renderer.destroyGrass(it->second.gpu);
-      it = m_patches.erase(it);
-    }
-    else
-      ++it;
+  if (to.x <= from.x || to.y <= from.y)
+    return;
+
+  std::vector<uint8_t> pixels;
+  patch.trample.pixels(from, to, pixels);
+  m_renderer.updateGrassTrample(patch.gpu,
+                                GrassTrampleImage{patch.trample.min(),
+                                                  patch.trample.max(),
+                                                  patch.trample.size(),
+                                                  pixels,
+                                                  from,
+                                                  to});
+  patch.uploadedTrample = patch.trample.size();
 }
 
-std::shared_ptr<const TerrainMaterial>
-GrassModule::terrainUnder(const Entity& entity)
+void GrassModule::uploadVigour(Patch& patch)
 {
-  const auto* meshRenderer = entity.getComponent<MeshRendererComponent>();
-  if (!m_meshes || !meshRenderer || meshRenderer->materials.empty())
-    return nullptr;
-  const MeshMaterial* drawn =
-      m_meshes->materialData(m_meshes->material(meshRenderer->materials[0]));
+  if (!patch.gpu.valid() || (patch.vigourSent == patch.vigourField.get() &&
+                             patch.vigourGpu == patch.gpu.id))
+    return;
 
-  return drawn && drawn->terrain && terrainLimitsGrass(*drawn->terrain)
-             ? drawn->terrain
-             : nullptr;
+  GrassVigourImage image;
+
+  if (patch.vigourField && !patch.vigourField->empty())
+    image = {patch.vigourField->min,
+             patch.vigourField->max,
+             patch.vigourField->size,
+             patch.vigourField->values};
+
+  m_renderer.updateGrassVigour(patch.gpu, image);
+  patch.vigourSent = patch.vigourField.get();
+  patch.vigourGpu = patch.gpu.id;
+}
+
+void GrassModule::useWindow(Patch& patch, Window window)
+{
+  patch.windowCenter = window.center;
+  patch.windowHalf = window.half;
+
+  // Off the mesh altogether: no grass, till the camera's back over it.
+  if (window.ground.empty())
+  {
+    m_renderer.destroyGrass(patch.gpu);
+    patch.gpu = {};
+    patch.ground = GrassGround();
+    return;
+  }
+
+  if (patch.gpu.valid())
+    m_renderer.updateGrassGround(patch.gpu, window.ground);
+  else
+    patch.gpu = m_renderer.createGrass(window.ground);
+
+  patch.ground = std::move(window.ground);
+  patch.trample = std::move(window.trample);
+  patch.trampleHeight = window.trampleHeight;
+  patch.maps = std::move(window.maps);
+  patch.sendMaps = true;
+  patch.cover = std::move(window.cover);
+  patch.coverGrid = patch.cover.empty() ? GrassGrid() : patch.maps.grid();
+  patch.ready = std::move(window.images);
+  patch.coverMadeMaps = true;
+  patch.trample.markAllChanged();
+  uploadTrample(patch);
+}
+
+void GrassModule::windowAround(Patch& patch, const GrassComponent& grass)
+{
+  // One built in the background, ready: in place of the last.
+  if (patch.nextWindow.valid() &&
+      patch.nextWindow.wait_for(std::chrono::seconds(0)) ==
+          std::future_status::ready)
+    useWindow(patch, patch.nextWindow.get());
+
+  const float scale = sidewaysScale(patch.model);
+  const float half = windowReach(grass.drawDistance) / scale;
+  const float slack = windowSlack(grass.drawDistance) / scale;
+  // Around the camera (the mesh's middle until there is one).
+  const glm::vec2 camera =
+      m_camera
+          ? glm::vec2(glm::inverse(patch.model) * glm::vec4(*m_camera, 1.0f))
+          : (patch.source->min + patch.source->max) * 0.5f;
+  const glm::vec2 off = glm::abs(camera - patch.windowCenter);
+  const bool first = patch.windowHalf <= 0.0f;
+  const bool moved = first || std::max(off.x, off.y) > slack ||
+                     std::abs(half - patch.windowHalf) > 0.05f * half ||
+                     patch.windowStale;
+
+  if (!moved || patch.nextWindow.valid())
+    return;
+
+  patch.windowStale = false;
+  const float trampleHeight = tallest(grass);
+
+  // The first at once (there's nothing to show till then); after it, in the
+  // background, the last one showing meanwhile.
+  if (first)
+  {
+    useWindow(patch,
+              buildWindow(*patch.source,
+                          patch.model,
+                          camera,
+                          half,
+                          trampleHeight,
+                          patch.painted.get(),
+                          patch.terrain.get(),
+                          m_clock));
+    return;
+  }
+
+  if (!m_worker)
+    m_worker = std::make_unique<WorkerPool>(1);
+
+  auto job = std::make_shared<std::packaged_task<Window()>>(
+      [source = patch.source,
+       model = patch.model,
+       camera,
+       half,
+       trampleHeight,
+       painted = patch.painted,
+       terrain = patch.terrain,
+       clock = m_clock]
+      {
+        return buildWindow(*source,
+                           model,
+                           camera,
+                           half,
+                           trampleHeight,
+                           painted.get(),
+                           terrain.get(),
+                           clock);
+      });
+  patch.nextWindow = job->get_future();
+  m_worker->submit([job] { (*job)(); });
+}
+
+bool GrassModule::windowed(const Entity& entity) const
+{
+  const Patch* patch = find(entity);
+  return patch && patch->windowed;
+}
+
+float GrassModule::windowReach(float drawDistance)
+{
+  return 1.2f * std::max(drawDistance, 1.0f) + windowSlack(drawDistance);
+}
+
+float GrassModule::windowSlack(float drawDistance)
+{
+  return std::max(0.15f * drawDistance, 8.0f);
 }
 
 void GrassModule::workOutCover(Patch& patch)
 {
   patch.coverGrid = patch.maps.grid();
   patch.cover = coverOf(patch.ground, patch.coverGrid, *patch.terrain);
-}
-
-void GrassModule::coverRepainted(Patch& patch)
-{
-  std::vector<uint8_t> cover =
-      coverOf(patch.ground, patch.coverGrid, *patch.terrain);
-  // The blocks of texels (as GrassMaps::takeGrownChanged()'s) where it
-  // changed, run together along their rows, and all of them as one.
-  constexpr int kBlock = GrassMaps::kGrownBlock;
-  const glm::ivec2 size = patch.coverGrid.size;
-  const glm::ivec2 blocks = (size + kBlock - 1) / kBlock;
-  for (int by = 0; by < blocks.y; ++by)
-  {
-    int run = -1; // the first block of a run of changed ones
-    for (int bx = 0; bx <= blocks.x; ++bx)
-    {
-      bool changed = false;
-      for (int y = by * kBlock;
-           bx < blocks.x && !changed && y < std::min((by + 1) * kBlock, size.y);
-           ++y)
-        for (int x = bx * kBlock; x < std::min((bx + 1) * kBlock, size.x); ++x)
-        {
-          const std::size_t i = std::size_t(y) * size.x + x;
-          if (i < patch.cover.size() && cover[i] != patch.cover[i])
-          {
-            changed = true;
-            break;
-          }
-        }
-      if (changed && run < 0)
-        run = bx;
-      if (changed || run < 0)
-        continue;
-      const glm::ivec4 rect(run * kBlock,
-                            by * kBlock,
-                            std::min(bx * kBlock, size.x),
-                            std::min((by + 1) * kBlock, size.y));
-      run = -1;
-      const bool none = patch.coverTo.x <= patch.coverFrom.x ||
-                        patch.coverTo.y <= patch.coverFrom.y;
-      patch.coverFrom = none ? glm::ivec2(rect.x, rect.y)
-                             : glm::min(patch.coverFrom, glm::ivec2(rect));
-      patch.coverTo = none
-                          ? glm::ivec2(rect.z, rect.w)
-                          : glm::max(patch.coverTo, glm::ivec2(rect.z, rect.w));
-      patch.coverRegrow.push_back(rect);
-    }
-  }
-  patch.cover = std::move(cover);
-}
-
-std::vector<uint8_t> GrassModule::coverOf(const GrassGround& ground,
-                                          const GrassGrid& grid,
-                                          const TerrainMaterial& terrain)
-{
-  // Each of the maps' texels at the ground's texel under it, by the
-  // terrain's layers there.
-  const GrassGrid& groundGrid = ground.grid();
-  std::vector<uint8_t> cover(grid.count(), 255);
-  if (!ground.hasUvs() || groundGrid.empty())
-    return cover;
-  for (int y = 0; y < grid.size.y; ++y)
-    for (int x = 0; x < grid.size.x; ++x)
-    {
-      const glm::ivec2 at = glm::clamp(
-          glm::ivec2(glm::floor(groundGrid.toTexels(grid.center(x, y)))),
-          glm::ivec2(0),
-          groundGrid.size - 1);
-      // Where there's no ground (a hole in the mesh) nothing grows anyway:
-      // left full, so the grass round a hole doesn't give out toward it as
-      // at an edge (see grassShape() in meshGrassGrow.wgsl).
-      if (!ground.has(at.x, at.y))
-        continue;
-      const float grows = terrainGrass(terrain, ground.uv(at.x, at.y));
-      cover[std::size_t(y) * grid.size.x + x] = static_cast<uint8_t>(
-          std::lround(std::clamp(grows, 0.0f, 1.0f) * 255.0f));
-    }
-  return cover;
-}
-
-void GrassModule::terrainPainted(const Entity& entity)
-{
-  const auto it = m_patches.find(keyOf(entity));
-  if (it == m_patches.end() || !it->second.terrain)
-    return;
-  it->second.coverStale = true; // worked out again next frame
-}
-
-const GrassModule::Patch* GrassModule::find(const Entity& entity) const
-{
-  const auto it = m_patches.find(keyOf(entity));
-  return it != m_patches.end() && it->second.gpu.valid() ? &it->second
-                                                         : nullptr;
-}
-
-GrassMaps* GrassModule::maps(const Entity& entity)
-{
-  // As of the last frame, if it was drawn then (a game may stamp many times
-  // a frame); else made now.
-  const auto it = m_patches.find(keyOf(entity));
-  Patch* patch = it != m_patches.end() && it->second.gpu.valid() &&
-                         entity.hasComponent<GrassComponent>()
-                     ? &it->second
-                     : refresh(entity);
-  if (!patch)
-    return nullptr;
-  if (patch->maps.empty())
-    patch->maps = GrassMaps(patch->ground.grid());
-  return &patch->maps;
-}
-
-float GrassModule::sample(const Entity& entity,
-                          GrassMaps::Channel channel,
-                          glm::vec3 point) const
-{
-  const Patch* patch = find(entity);
-  if (!patch)
-    return GrassMaps::defaultValue(channel);
-  const glm::vec3 local(glm::inverse(patch->model) * glm::vec4(point, 1.0f));
-  return patch->maps.sample(channel, glm::vec2(local));
-}
-
-void GrassModule::stamp(const Entity& entity,
-                        GrassMaps::Channel channel,
-                        glm::vec3 center,
-                        float radius,
-                        float value,
-                        GrassMaps::Blend blend,
-                        float strength,
-                        float softness)
-{
-  GrassMaps* painted = maps(entity);
-  if (!painted)
-    return;
-  const glm::mat4& model = m_patches.at(keyOf(entity)).model;
-  const glm::vec3 local(glm::inverse(model) * glm::vec4(center, 1.0f));
-  painted->stamp(channel,
-                 glm::vec2(local),
-                 radius / sidewaysScale(model),
-                 value,
-                 blend,
-                 strength,
-                 softness);
-}
-
-void GrassModule::fill(const Entity& entity,
-                       GrassMaps::Channel channel,
-                       float value)
-{
-  if (GrassMaps* painted = maps(entity))
-    painted->fill(channel, value);
-}
-
-void GrassModule::setClock(double growthDays)
-{
-  m_clock = growthDays;
-  for (auto& [key, patch] : m_patches)
-    patch.maps.setClock(growthDays);
-}
-
-void GrassModule::setVigour(const Entity& entity,
-                            std::shared_ptr<const GrassVigourField> field,
-                            const GrassVigourSettings& settings)
-{
-  // (Kept for when it's grown, if it isn't yet.)
-  Patch* patch = nullptr;
-  if (const auto it = m_patches.find(keyOf(entity)); it != m_patches.end())
-    patch = &it->second;
-  else if (!(patch = refresh(entity)))
-    return;
-  patch->vigourField = std::move(field);
-  patch->vigour = settings;
-}
-
-void GrassModule::cut(const Entity& entity, GrassCut cut)
-{
-  GrassMaps* painted = maps(entity);
-  if (!painted)
-    return;
-  const glm::mat4& model = m_patches.at(keyOf(entity)).model;
-  const glm::mat4 toOwn = glm::inverse(model);
-  const float height = model[3].z;
-  cut.a = glm::vec2(toOwn * glm::vec4(cut.a, height, 1.0f));
-  cut.b = glm::vec2(toOwn * glm::vec4(cut.b, height, 1.0f));
-  cut.width /= sidewaysScale(model);
-  painted->cut(cut);
-}
-
-void GrassModule::roll(const Entity& entity, GrassRoll roll)
-{
-  GrassMaps* painted = maps(entity);
-  if (!painted)
-    return;
-  const glm::mat4& model = m_patches.at(keyOf(entity)).model;
-  const glm::mat4 toOwn = glm::inverse(model);
-  const float height = model[3].z;
-  roll.a = glm::vec2(toOwn * glm::vec4(roll.a, height, 1.0f));
-  roll.b = glm::vec2(toOwn * glm::vec4(roll.b, height, 1.0f));
-  roll.width /= sidewaysScale(model);
-  painted->roll(roll);
-}
-
-void GrassModule::flatten(const Entity& entity,
-                          glm::vec3 center,
-                          float radius,
-                          float to,
-                          float softness)
-{
-  GrassMaps* painted = maps(entity);
-  if (!painted)
-    return;
-  const glm::mat4& model = m_patches.at(keyOf(entity)).model;
-  const glm::vec3 local(glm::inverse(model) * glm::vec4(center, 1.0f));
-  painted->flatten(
-      glm::vec2(local), radius / sidewaysScale(model), to, softness);
-}
-
-float GrassModule::lengthAt(const Entity& entity, glm::vec3 point) const
-{
-  const Patch* patch = find(entity);
-  if (!patch)
-    return 1.0f;
-  const glm::vec3 local(glm::inverse(patch->model) * glm::vec4(point, 1.0f));
-  const float vigour =
-      grassVigour(patch->vigourField.get(), patch->vigour, glm::vec2(point));
-  const float most = glm::mix(
-      patch->vigour.on ? patch->vigour.lengthLeast : 1.0f, 1.0f, vigour);
-  const glm::vec2 own(local);
-  return std::min(patch->maps.sampleNow(GrassMaps::Length, own),
-                  patch->maps.sample(GrassMaps::Length, own) * most);
-}
-
-const GrassGround* GrassModule::ground(const Entity& entity) const
-{
-  const Patch* patch = find(entity);
-  return patch ? &patch->ground : nullptr;
-}
-
-float GrassModule::flattened(const Entity& entity, glm::vec2 point) const
-{
-  const Patch* patch = find(entity);
-  return patch ? patch->trample.flattened(point) : 0.0f;
 }
 
 } // namespace sfs

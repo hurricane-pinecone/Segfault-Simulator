@@ -1,12 +1,21 @@
 #include "../../testHarness.h"
+#include "engine/core/rendering/deformation.h"
+#include "engine/core/rendering/mesh.h"
+#include "engine/core/rendering/terrain.h"
 
-#include <engine/core/rendering/deformation.h>
-#include <engine/core/rendering/mesh.h>
-#include <engine/core/rendering/terrain.h>
+#include <glm/glm/ext/matrix_float4x4.hpp>
 #include <glm/glm/ext/matrix_transform.hpp>
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
+#include <glm/glm/ext/vector_float4.hpp>
+#include <glm/glm/ext/vector_int2.hpp>
+#include <glm/glm/geometric.hpp>
+#include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <vector>
 
@@ -15,7 +24,16 @@ using namespace sfs;
 namespace
 {
 
-constexpr float kNone = std::numeric_limits<float>::quiet_NaN();
+constexpr float NONE = std::numeric_limits<float>::quiet_NaN();
+
+// A flat square, `half` either side of the origin at height `z`, two
+// triangles, UVs over it.
+struct Square
+{
+  std::vector<glm::vec3> positions;
+  std::vector<uint32_t> indices{0, 1, 2, 0, 2, 3};
+  std::vector<glm::vec2> uvs{{0, 1}, {1, 1}, {1, 0}, {0, 0}};
+};
 
 bool near(float a, float b, float tolerance = 1e-4f)
 {
@@ -32,15 +50,6 @@ Footprint footprintOf(glm::ivec2 from, glm::ivec2 size, float target)
   return out;
 }
 
-// A flat square, `half` either side of the origin at height `z`, two
-// triangles, UVs over it.
-struct Square
-{
-  std::vector<glm::vec3> positions;
-  std::vector<uint32_t> indices{0, 1, 2, 0, 2, 3};
-  std::vector<glm::vec2> uvs{{0, 1}, {1, 1}, {1, 0}, {0, 0}};
-};
-
 Square square(float half, float z = 0.0f)
 {
   Square out;
@@ -53,9 +62,11 @@ Square square(float half, float z = 0.0f)
 float sumOver(const DeformationMap& map, glm::ivec2 from, glm::ivec2 to)
 {
   float sum = 0.0f;
+
   for (int y = from.y; y <= to.y; ++y)
     for (int x = from.x; x <= to.x; ++x)
       sum += map.at({x, y});
+
   return sum;
 }
 
@@ -100,10 +111,12 @@ int main()
     CHECK(!map.anyTileIn({0, 0}, {1, 1}));
     CHECK(!map.anyTileIn({2, 0}, {4, 4}));
     CHECK(!map.anyTileIn({-1, -1}, {0, 4})); // spans nothing
+
     // Blocks smaller than the map (looked up tile by tile) as well as bigger
     // (the map's tiles checked), with the same answers as listing tiles().
     for (int i = 0; i < 6; ++i)
       map.set({i * 64 + 1, 200}, -0.05f); // tiles (0..5, 3)
+
     for (const glm::ivec2 first :
          {glm::ivec2(-2, -2), glm::ivec2(0, 0), glm::ivec2(3, 3)})
       for (const glm::ivec2 count : {glm::ivec2(1, 1),
@@ -112,12 +125,14 @@ int main()
                                      glm::ivec2(10, 10)})
       {
         bool listed = false;
+
         for (const glm::ivec2 tile : map.tiles())
         {
           const glm::ivec2 at = tile - first;
           listed = listed ||
                    (at.x >= 0 && at.y >= 0 && at.x < count.x && at.y < count.y);
         }
+
         CHECK(map.anyTileIn(first, count) == listed);
       }
   }
@@ -207,9 +222,11 @@ int main()
     map.set({30, 4}, -0.2f); // an old step, far steeper than soil stands
     PressSettings settings;
     settings.ridgeMost = 1.0f;
-    Footprint footprint = footprintOf({0, 0}, {40, 10}, kNone);
+    Footprint footprint = footprintOf({0, 0}, {40, 10}, NONE);
+
     for (const glm::ivec2 t : {glm::ivec2(2, 4), glm::ivec2(2, 5)})
       footprint.target[std::size_t(t.y) * 40 + t.x] = -0.05f;
+
     map.press(footprint, settings);
     CHECK(map.at({2, 4}) < -0.02f);
     CHECK(map.at({2, 2}) > 0.0f);        // its ridge, beside it
@@ -253,8 +270,10 @@ int main()
     map.relax(1.0f);
     CHECK(near(map.at({0, 0}), -0.01f));
     CHECK(near(map.at({1, 1}), -0.01f)); // spread to its neighbours
+
     for (int i = 0; i < 50; ++i)
       map.relax(0.0f, 0.5f);
+
     CHECK(map.empty()); // all but flat: gone
   }
 
@@ -276,8 +295,10 @@ int main()
   TEST("clearing should flatten inside the region only")
   {
     DeformationMap map(0.1f);
+
     for (int x = 0; x < 20; ++x)
       map.set({x, 0}, -0.05f);
+
     map.clear({0.0f, -1.0f}, {1.0f, 1.0f});
     CHECK(map.at({5, 0}) == 0.0f);
     CHECK(near(map.at({15, 0}), -0.05f));
@@ -305,8 +326,10 @@ int main()
   TEST("a map saved and loaded should come back to the millimetre")
   {
     DeformationMap map;
+
     for (int x = -70; x < 70; ++x)
       map.set({x, x / 3}, -0.001f * (x % 37) - 0.004f);
+
     map.set({5, 200}, 0.012f); // a ridge
     const std::vector<uint8_t> bytes = map.save();
     DeformationMap back;
@@ -314,8 +337,10 @@ int main()
     CHECK(back.tileCount() == map.tileCount());
     CHECK(near(back.texel(), map.texel()));
     bool same = true;
+
     for (int x = -70; x < 70; ++x)
       same = same && near(back.at({x, x / 3}), map.at({x, x / 3}), 6e-4f);
+
     CHECK(same);
     CHECK(near(back.at({5, 200}), 0.012f, 6e-4f));
     // Small: far less than a float a texel of its tiles.
@@ -364,14 +389,16 @@ int main()
     CHECK(!under.empty());
     CHECK(under.size.x >= 10 && under.size.x <= 11);
     bool flat = true;
+
     for (float z : under.bottom)
       flat = flat && (std::isnan(z) || near(z, 0.1f));
+
     CHECK(flat);
     CHECK(
         underside(high.positions, high.indices, glm::mat4(1.0f), 0.5f).empty());
     const Underside both = merged(under, Underside{});
     CHECK(both.size == under.size);
-    (void)kNone;
+    (void)NONE;
   }
 
   TEST("a mesh made ready should give the same underside as the mesh itself")
@@ -381,17 +408,22 @@ int main()
     std::vector<glm::vec3> positions;
     std::vector<uint32_t> indices;
     const glm::vec3 low(-0.2f, -0.1f, 0.05f), high(0.2f, 0.1f, 0.3f);
+
     for (int k = 0; k < 8; ++k)
       positions.push_back({k & 1 ? high.x : low.x,
                            k & 2 ? high.y : low.y,
                            k & 4 ? high.z : low.z});
+
     for (const uint32_t i : {0u, 2u, 3u, 0u, 3u, 1u, 4u, 5u, 7u, 4u, 7u, 6u,
                              0u, 1u, 5u, 0u, 5u, 4u, 2u, 6u, 7u, 2u, 7u, 3u,
                              0u, 4u, 6u, 0u, 6u, 2u, 1u, 3u, 7u, 1u, 7u, 5u})
       indices.push_back(i);
+
     Square open = square(0.3f, 0.02f);
+
     for (const uint32_t i : open.indices)
       indices.push_back(i + 8);
+
     positions.insert(
         positions.end(), open.positions.begin(), open.positions.end());
     const glm::mat4 model = glm::rotate(
@@ -400,6 +432,7 @@ int main()
         glm::normalize(glm::vec3(0.1f, 0.05f, 1.0f)));
     const UndersideMesh ready(positions, indices);
     CHECK(!ready.empty());
+
     for (const float below : {0.5f, 0.1f})
     {
       const Underside a = underside(positions, indices, model, below, 0.03f);
@@ -407,20 +440,25 @@ int main()
       CHECK(!a.empty());
       CHECK(a.from == b.from && a.size == b.size);
       bool same = a.bottom.size() == b.bottom.size();
+
       for (std::size_t i = 0; same && i < a.bottom.size(); ++i)
         same = std::isnan(a.bottom[i]) == std::isnan(b.bottom[i]) &&
                (std::isnan(a.bottom[i]) || near(a.bottom[i], b.bottom[i])) &&
                near(a.coverage[i], b.coverage[i]);
+
       CHECK(same);
     }
+
     CHECK(underside(
               ready, glm::translate(glm::mat4(1.0f), glm::vec3(0, 0, 9)), 0.5f)
               .empty());
     // Its lowest point placed: exactly its lowest vertex's, however it's
     // turned (not its bounds' corners, which a turned wheel swings lower).
     float lowest = std::numeric_limits<float>::infinity();
+
     for (const glm::vec3& p : positions)
       lowest = std::min(lowest, glm::vec3(model * glm::vec4(p, 1.0f)).z);
+
     CHECK(near(lowestPoint(ready, model), lowest));
   }
 

@@ -1,6 +1,5 @@
 #pragma once
 
-#include "engine/core/ecs/entity.h"
 #include "engine/core/ecs/sceneData.h"
 #include "engine/core/util/typeKey.h"
 

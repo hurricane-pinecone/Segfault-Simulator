@@ -1,10 +1,17 @@
 #include "engine/runtime/console/devConsole.h"
 
 #include "engine/core/scripting/luaScripting.h"
+#include "engine/runtime/ui/ui.h"
 
-#include <SDL.h>
+#include <SDL_events.h>
+#include <SDL_keyboard.h>
+#include <SDL_keycode.h>
+#include <SDL_timer.h>
 
-#include <algorithm>
+#include <cstddef>
+#include <string>
+#include <utility>
+#include <vector>
 
 namespace sfs
 {
@@ -17,6 +24,7 @@ std::vector<std::string> toLines(const std::string& output)
 {
   std::vector<std::string> lines;
   std::string current;
+
   for (const char c : output)
   {
     if (c == '\n')
@@ -33,27 +41,13 @@ std::vector<std::string> toLines(const std::string& output)
       current.push_back(c);
     }
   }
+
   if (!current.empty())
     lines.push_back(current);
+
   return lines;
 }
 } // namespace
-
-void DevConsole::toggle()
-{
-  m_open = !m_open;
-  m_layer.visible = m_open;
-  if (m_open)
-  {
-    SDL_StartTextInput();
-  }
-  else
-  {
-    SDL_StopTextInput();
-    m_input.clear();
-    m_cursor = 0;
-  }
-}
 
 bool DevConsole::handleEvent(const SDL_Event& event)
 {
@@ -72,6 +66,7 @@ bool DevConsole::handleEvent(const SDL_Event& event)
     for (const char* c = event.text.text; *c != '\0'; ++c)
       if (*c != '`') // the toggle key never lands in the buffer
         m_input.insert(m_cursor++, 1, *c);
+
     m_historyPos = m_history.size(); // editing leaves history recall
     return true;
   }
@@ -83,20 +78,24 @@ bool DevConsole::handleEvent(const SDL_Event& event)
     case SDLK_BACKSPACE:
       if (m_cursor > 0)
         m_input.erase(--m_cursor, 1);
+
       m_historyPos = m_history.size();
       break;
     case SDLK_DELETE:
       if (m_cursor < m_input.size())
         m_input.erase(m_cursor, 1);
+
       m_historyPos = m_history.size();
       break;
     case SDLK_LEFT:
       if (m_cursor > 0)
         --m_cursor;
+
       break;
     case SDLK_RIGHT:
       if (m_cursor < m_input.size())
         ++m_cursor;
+
       break;
     case SDLK_HOME:
       m_cursor = 0;
@@ -120,37 +119,11 @@ bool DevConsole::handleEvent(const SDL_Event& event)
     default:
       break;
     }
+
     return true; // swallow every key while the console has focus
   }
 
   return false;
-}
-
-void DevConsole::submit()
-{
-  if (m_input.empty())
-    return;
-
-  // Keep it in history (skip a straight repeat of the last command).
-  if (m_history.empty() || m_history.back() != m_input)
-    m_history.push_back(m_input);
-  m_historyPos = m_history.size();
-
-  LuaScripting* lua = activeLua();
-  m_output = lua ? lua->evalRepl(m_input) : "error: no Lua VM";
-
-  m_input.clear();
-  m_cursor = 0;
-}
-
-void DevConsole::recallOlder()
-{
-  if (m_historyPos == 0)
-    return; // already at the oldest entry
-
-  --m_historyPos;
-  m_input = m_history[m_historyPos];
-  m_cursor = m_input.size();
 }
 
 void DevConsole::recallNewer()
@@ -164,6 +137,51 @@ void DevConsole::recallNewer()
   m_cursor = m_input.size();
 }
 
+void DevConsole::recallOlder()
+{
+  if (m_historyPos == 0)
+    return; // already at the oldest entry
+
+  --m_historyPos;
+  m_input = m_history[m_historyPos];
+  m_cursor = m_input.size();
+}
+
+void DevConsole::submit()
+{
+  if (m_input.empty())
+    return;
+
+  // Keep it in history (skip a straight repeat of the last command).
+  if (m_history.empty() || m_history.back() != m_input)
+    m_history.push_back(m_input);
+
+  m_historyPos = m_history.size();
+
+  LuaScripting* lua = activeLua();
+  m_output = lua ? lua->evalRepl(m_input) : "error: no Lua VM";
+
+  m_input.clear();
+  m_cursor = 0;
+}
+
+void DevConsole::toggle()
+{
+  m_open = !m_open;
+  m_layer.visible = m_open;
+
+  if (m_open)
+  {
+    SDL_StartTextInput();
+  }
+  else
+  {
+    SDL_StopTextInput();
+    m_input.clear();
+    m_cursor = 0;
+  }
+}
+
 ui::View DevConsole::view() const
 {
   using namespace ui;
@@ -171,17 +189,21 @@ ui::View DevConsole::view() const
   // table can't cover the screen; then the prompt with a blinking caret (one
   // cell either way, so the text past it doesn't jump).
   std::vector<std::string> lines = toLines(m_output);
-  constexpr std::size_t kMostLines = 24;
-  if (lines.size() > kMostLines)
+  constexpr std::size_t MOST_LINES = 24;
+
+  if (lines.size() > MOST_LINES)
   {
-    lines.resize(kMostLines);
+    lines.resize(MOST_LINES);
     lines.back() = "...";
   }
+
   const bool blink = (SDL_GetTicks() / 500) % 2 == 0;
   std::vector<View> rows;
+
   for (const std::string& line : lines)
     rows.push_back(
         Text(line.empty() ? " " : line).color(Color::rgb(200, 200, 200)));
+
   rows.push_back(Text("> " + m_input.substr(0, m_cursor) + (blink ? "|" : " ") +
                       m_input.substr(m_cursor)));
   return HStack{VStack(std::move(rows), Alignment::Leading), Spacer()}

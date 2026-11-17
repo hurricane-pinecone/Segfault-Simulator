@@ -1,6 +1,6 @@
 #pragma once
 
-#include "glm/glm/ext/vector_float4.hpp"
+#include <glm/glm/ext/vector_float4.hpp>
 
 #include <array>
 #include <cstddef>
@@ -17,12 +17,12 @@ namespace sfs
  */
 struct ShaderParameter
 {
+  bool operator==(const ShaderParameter&) const = default;
+
   /** Its name, as shaders and materials' Global Parameter nodes read it. */
   std::string name;
   /** Its value; a number is x. */
   glm::vec4 value{0.0f};
-
-  bool operator==(const ShaderParameter&) const = default;
 };
 
 /**

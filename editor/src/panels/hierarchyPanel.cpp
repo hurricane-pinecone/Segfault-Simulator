@@ -2,6 +2,14 @@
 
 #include "assets/assetDrop.h"
 #include "editorContext.h"
+#include "engine/core/assets/assetDatabase.h"
+#include "engine/core/components/nameComponent.h"
+#include "engine/core/components/pointLightComponent.h"
+#include "engine/core/ecs/ecs.h"
+#include "engine/core/hierarchy/hierarchy.h"
+#include "engine/core/util/string.h"
+#include "engine/runtime/rendering/renderSystem.h"
+#include "engine/runtime/serialization/prefabComponents.h"
 #include "history/editorHistory.h"
 #include "scene/editorScene.h"
 #include "scene/entityLabel.h"
@@ -9,23 +17,15 @@
 #include "widgets/theme.h"
 #include "widgets/widgets.h"
 
-#include "engine/core/ecs/ecs.h" // IWYU pragma: keep (Entity templates)
-#include "engine/core/components/nameComponent.h"
-#include "engine/core/components/pointLightComponent.h"
-#include "engine/core/hierarchy/hierarchy.h"
-#include "engine/core/util/string.h"
-#include "engine/runtime/rendering/renderSystem.h"
-#include "engine/runtime/serialization/prefabComponents.h"
-
-#include "imgui.h"
-#include "imgui_internal.h" // TreeNodeSetOpen
+#include <imgui.h>
+#include <imgui_internal.h> // TreeNodeSetOpen
 
 #include <algorithm>
-#include <cctype>
 #include <cstdint>
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace
 {
@@ -36,17 +36,23 @@ using assetDrop::kEntityPayload;
 std::string draggedPrefab(const EditorContext& context)
 {
   const sfs::AssetRecord* record =
-      context.assets ? assetDrop::draggedAsset(ImGui::GetDragDropPayload(), *context.assets) : nullptr;
-  return record && assetDrop::placeable(*record) ? prefabs::nameOf(record->id) : std::string();
+      context.assets ? assetDrop::draggedAsset(
+                           ImGui::GetDragDropPayload(), *context.assets)
+                     : nullptr;
+  return record && assetDrop::placeable(*record) ? prefabs::nameOf(record->id)
+                                                 : std::string();
 }
 
 // The entity being dragged, if the drag is one of ours.
 sfs::Entity draggedEntity(EditorContext& context)
 {
   const ImGuiPayload* payload = ImGui::GetDragDropPayload();
+
   if (!payload || !payload->IsDataType(kEntityPayload))
     return {};
-  return context.scene->getEntity(*static_cast<const sfs::Entity::EntityId*>(payload->Data));
+
+  return context.scene->getEntity(
+      *static_cast<const sfs::Entity::EntityId*>(payload->Data));
 }
 } // namespace
 
@@ -57,11 +63,13 @@ void HierarchyPanel::drawContents(EditorContext& context)
 
   if (ImGui::Button("+"))
     ImGui::OpenPopup("CreateEntity");
+
   if (ImGui::BeginPopup("CreateEntity"))
   {
     drawCreateMenu(context);
     ImGui::EndPopup();
   }
+
   ImGui::SameLine();
   widgets::searchInput("filter", m_filter, "Filter");
   ImGui::Separator();
@@ -72,25 +80,31 @@ void HierarchyPanel::drawContents(EditorContext& context)
   {
     m_shownSelections[m_shownScene] = m_shownSelection;
     const auto shown = m_shownSelections.find(context.scene);
-    m_shownSelection = shown != m_shownSelections.end() ? shown->second : UINT32_MAX;
+    m_shownSelection =
+        shown != m_shownSelections.end() ? shown->second : UINT32_MAX;
     m_shownScene = context.scene;
   }
+
   ImGui::PushID(context.scene);
   ImGui::BeginChild("entities");
 
   // Reveal a selection made elsewhere (the viewport), once: open its parents
   // and scroll to it.
-  const uint32_t selectedId = context.hasSelection() ? context.selection.getId() : UINT32_MAX;
+  const uint32_t selectedId =
+      context.hasSelection() ? context.selection.getId() : UINT32_MAX;
   m_scrollToSelection = selectedId != m_shownSelection;
   m_shownSelection = selectedId;
   m_reveal.clear();
+
   if (m_scrollToSelection && context.hasSelection())
-    for (sfs::Entity parent = sfs::hierarchy::parentOf(context.selection); parent.isValid();
+    for (sfs::Entity parent = sfs::hierarchy::parentOf(context.selection);
+         parent.isValid();
          parent = sfs::hierarchy::parentOf(parent))
       m_reveal.insert(parent.getId());
 
   m_lastRows = std::move(m_rows);
   m_rows.clear();
+
   if (m_filter.empty())
   {
     for (const sfs::Entity& root : context.scene->roots())
@@ -100,6 +114,7 @@ void HierarchyPanel::drawContents(EditorContext& context)
   {
     // Matches anywhere in the tree, as a flat list.
     const std::string filter = toLower(m_filter);
+
     for (const sfs::Entity& entity : context.scene->entities())
       if (toLower(entityLabel(entity)).find(filter) != std::string::npos)
         drawRow(context, entity, false);
@@ -111,307 +126,19 @@ void HierarchyPanel::drawContents(EditorContext& context)
   applyPendingEdit(context);
 }
 
-void HierarchyPanel::drawTree(EditorContext& context, const sfs::Entity& entity)
-{
-  if (!drawRow(context, entity, sfs::hierarchy::hasChildren(entity)))
-    return;
-  for (const sfs::Entity& child : sfs::hierarchy::childrenOf(entity))
-    drawTree(context, child);
-  ImGui::TreePop();
-}
-
-bool HierarchyPanel::drawRow(EditorContext& context, const sfs::Entity& entity, bool hasChildren)
-{
-  const std::string name = entityLabel(entity);
-  m_rows.push_back(entity);
-  // The one selected (clicked last), and whether it's among several.
-  const bool selected = context.hasSelection() && context.selection == entity;
-  const bool highlighted = selected || context.isSelected(entity);
-
-  // A click selects, the arrow opens, and a double-click frames the entity
-  // and opens or closes it (handled below); AllowOverlap lets the focus
-  // button on the row take clicks.
-  ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanFullWidth |
-                             ImGuiTreeNodeFlags_AllowOverlap;
-  if (!hasChildren)
-    flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
-  if (highlighted)
-    flags |= ImGuiTreeNodeFlags_Selected;
-  if (m_reveal.contains(entity.getId()))
-    ImGui::SetNextItemOpen(true);
-
-  // Prefab instances in sage (their parts a little softer), missing ones red.
-  std::optional<ImVec4> color;
-  if (entity.hasComponent<sfs::MissingPrefabComponent>())
-    color = ImVec4(1.0f, 0.55f, 0.45f, 1.0f);
-  else if (entity.hasComponent<sfs::PrefabInstanceComponent>())
-    color = ImGui::ColorConvertU32ToFloat4(theme::kAccent);
-  else if (entity.hasComponent<sfs::PrefabLinkComponent>())
-    color = ImVec4(0.67f, 0.84f, 0.63f, 0.75f);
-  // F2 renames the selection in place.
-  if (selected && m_renaming == UINT32_MAX && ImGui::IsKeyPressed(ImGuiKey_F2, false) &&
-      ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::GetIO().WantTextInput)
-    startRename(entity);
-  const bool renaming = m_renaming == entity.getId();
-
-  if (color)
-    ImGui::PushStyleColor(ImGuiCol_Text, *color);
-  // Its id from the entity's (not its text, so renaming keeps it open);
-  // renaming: the row without its text, a box for the name over it.
-  const void* rowId = reinterpret_cast<const void*>(static_cast<uintptr_t>(entity.getId()) + 1);
-  const bool open = ImGui::TreeNodeEx(rowId, flags, "%s", renaming ? "" : name.c_str());
-  if (color)
-    ImGui::PopStyleColor();
-  const ImVec2 rowMin = ImGui::GetItemRectMin(), rowMax = ImGui::GetItemRectMax();
-  const bool rowHovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenOverlappedByItem);
-  const ImGuiIO& io = ImGui::GetIO();
-  // A row is selected when the mouse is released on it, not pressed, as in
-  // Unity: a drag from it (into a reference slot, onto another row) leaves
-  // the selection as it is. A press on its arrow only opens it.
-  if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
-  {
-    m_pressToggled = ImGui::IsItemToggledOpen();
-    m_pressDouble = !m_pressToggled && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
-    if (m_pressDouble)
-    {
-      // Frames it, and opens (or closes) it to show what's inside.
-      m_slowClick = UINT32_MAX;
-      context.focusRequest = entity;
-      if (hasChildren)
-        ImGui::TreeNodeSetOpen(ImGui::GetItemID(), !open);
-    }
-  }
-  const bool clicked = !m_pressToggled && widgets::itemReleasedWithoutDrag();
-  if (clicked && (io.KeyCtrl || io.KeyShift))
-  {
-    // Ctrl: add it to the selection or take it out; Shift: every row from
-    // the one selected to it.
-    std::vector<sfs::Entity> group = context.selected();
-    if (io.KeyShift && context.hasSelection())
-    {
-      const auto from = std::find(m_lastRows.begin(), m_lastRows.end(), context.selection);
-      const auto to = std::find(m_lastRows.begin(), m_lastRows.end(), entity);
-      if (from != m_lastRows.end() && to != m_lastRows.end())
-        for (auto it = std::min(from, to); it <= std::max(from, to); ++it)
-          if (std::find(group.begin(), group.end(), *it) == group.end())
-            group.push_back(*it);
-      context.selection = entity;
-    }
-    else if (const auto it = std::find(group.begin(), group.end(), entity); it != group.end())
-    {
-      group.erase(it);
-      context.selection = group.empty() ? sfs::Entity() : group.back();
-    }
-    else
-    {
-      group.push_back(entity);
-      context.selection = entity;
-    }
-    context.selectionGroup = std::move(group);
-    m_shownSelection = context.hasSelection() ? context.selection.getId() : UINT32_MAX;
-    m_slowClick = UINT32_MAX;
-  }
-  else if (clicked)
-  {
-    const bool wasOnlySelected = selected && context.selected().size() == 1;
-    context.selection = entity;
-    context.selectionGroup.clear();
-    m_shownSelection = entity.getId(); // picked here: already in view
-    if (wasOnlySelected && !renaming && !m_pressDouble)
-    {
-      // A click on the selected row's name renames it, once it's clearly not
-      // the start of a double-click.
-      m_slowClick = entity.getId();
-      m_slowClickAt = ImGui::GetTime();
-    }
-  }
-  if (m_slowClick == entity.getId())
-  {
-    if (!selected || ImGui::IsMouseDragging(ImGuiMouseButton_Left))
-      m_slowClick = UINT32_MAX;
-    else if (ImGui::GetTime() - m_slowClickAt > ImGui::GetIO().MouseDoubleClickTime &&
-             !ImGui::IsMouseDown(ImGuiMouseButton_Left))
-    {
-      m_slowClick = UINT32_MAX;
-      startRename(entity);
-    }
-  }
-  else if (selected && m_scrollToSelection)
-    ImGui::SetScrollHereY(0.5f);
-
-  if (ImGui::BeginDragDropSource())
-  {
-    const sfs::Entity::EntityId id = entity.getId();
-    ImGui::SetDragDropPayload(kEntityPayload, &id, sizeof(id));
-    ImGui::TextUnformatted(name.c_str());
-    ImGui::EndDragDropSource();
-  }
-  if (ImGui::BeginDragDropTarget())
-  {
-    // Only highlight a drop that's allowed (not onto itself or its own child).
-    const sfs::Entity dragged = draggedEntity(context);
-    if (dragged.isValid() && sfs::hierarchy::canParent(dragged, entity) &&
-        sfs::hierarchy::parentOf(dragged) != entity &&
-        ImGui::AcceptDragDropPayload(kEntityPayload))
-      m_pending = {PendingEdit::Kind::Reparent, dragged, entity};
-    // A prefab from the Assets panel: placed as a child.
-    if (const std::string prefab = draggedPrefab(context);
-        !prefab.empty() && ImGui::AcceptDragDropPayload(assetDrop::kAssetPayload))
-      m_pending = {PendingEdit::Kind::Place, {}, entity, prefab};
-    ImGui::EndDragDropTarget();
-  }
-
-  if (ImGui::BeginPopupContextItem())
-  {
-    context.selection = entity;
-    if (ImGui::MenuItem("Focus", "F"))
-      context.focusRequest = entity;
-    if (ImGui::MenuItem("Rename", "F2"))
-      startRename(entity);
-    ImGui::Separator();
-    if (ImGui::BeginMenu("Create Child"))
-    {
-      drawCreateMenu(context, entity);
-      ImGui::EndMenu();
-    }
-    if (ImGui::MenuItem("Unparent", nullptr, false, sfs::hierarchy::parentOf(entity).isValid()))
-      m_pending = {PendingEdit::Kind::Reparent, entity, {}};
-    if (ImGui::MenuItem("Create Prefab", nullptr, false, context.assets != nullptr))
-      m_pending = {PendingEdit::Kind::MakePrefab, entity, {}};
-    ImGui::SetItemTooltip("Save it (and everything under it) as a prefab in prefabs/; "
-                          "or drag it into the Assets panel");
-    ImGui::Separator();
-    if (ImGui::MenuItem("Delete"))
-      m_pending = {PendingEdit::Kind::Delete, entity, {}};
-    ImGui::EndPopup();
-  }
-
-  if (renaming)
-    drawRenameBox(context, entity, rowMin, rowMax);
-  else if (rowHovered || selected)
-    drawFocusButton(context, entity);
-
-  return open && hasChildren;
-}
-
-void HierarchyPanel::startRename(const sfs::Entity& entity)
-{
-  m_renaming = entity.getId();
-  const sfs::NameComponent* name = entity.getComponent<sfs::NameComponent>();
-  m_renameText = name ? name->name : "";
-  m_renameFocus = true;
-}
-
-void HierarchyPanel::drawRenameBox(EditorContext& context, const sfs::Entity& entity, ImVec2 rowMin, ImVec2 rowMax)
-{
-  // Over the row, from where its name starts to its end, its height.
-  const ImVec2 cursor = ImGui::GetCursorScreenPos();
-  const float textX = rowMin.x + ImGui::GetTreeNodeToLabelSpacing() - ImGui::GetStyle().FramePadding.x;
-  ImGui::SetCursorScreenPos(ImVec2(textX, rowMin.y));
-  ImGui::SetNextItemWidth(rowMax.x - textX);
-  ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
-                      ImVec2(ImGui::GetStyle().FramePadding.x, (rowMax.y - rowMin.y - ImGui::GetFontSize()) * 0.5f));
-  ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
-  ImGui::PushStyleColor(ImGuiCol_Border, theme::kAccent);
-  if (m_renameFocus)
-    ImGui::SetKeyboardFocusHere();
-  ImGui::PushID(static_cast<int>(entity.getId()));
-  const bool entered = widgets::inputText(
-      "##rename", m_renameText, ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
-  ImGui::PopID();
-  ImGui::PopStyleColor();
-  ImGui::PopStyleVar(2);
-  const bool active = ImGui::IsItemActive();
-  ImGui::SetCursorScreenPos(cursor);
-  if (ImGui::IsKeyPressed(ImGuiKey_Escape))
-    m_renaming = UINT32_MAX; // as it was
-  else if (entered || (!active && !m_renameFocus))
-    finishRename(context, entity); // Enter, or clicked away
-  m_renameFocus = false;
-}
-
-void HierarchyPanel::finishRename(EditorContext& context, const sfs::Entity& entity)
-{
-  m_renaming = UINT32_MAX;
-  const sfs::NameComponent* name = entity.getComponent<sfs::NameComponent>();
-  const std::string current = name ? name->name : "";
-  if (m_renameText == current || !entity.isValid())
-    return;
-  context.history->change(
-      [&]
-      {
-        sfs::Entity named = entity;
-        if (!named.hasComponent<sfs::NameComponent>())
-          named.addComponent<sfs::NameComponent>();
-        named.getComponent<sfs::NameComponent>()->name = m_renameText;
-      });
-}
-
-void HierarchyPanel::drawFocusButton(EditorContext& context, const sfs::Entity& entity)
-{
-  // A small crosshair at the row's right end.
-  const float size = ImGui::GetFrameHeight() * 0.8f;
-  const ImVec2 rowMin = ImGui::GetItemRectMin(), rowMax = ImGui::GetItemRectMax();
-  const ImVec2 at(rowMax.x - size - ImGui::GetStyle().FramePadding.x,
-                  rowMin.y + (rowMax.y - rowMin.y - size) * 0.5f);
-  const ImVec2 cursor = ImGui::GetCursorScreenPos();
-  ImGui::SetCursorScreenPos(at);
-  // Its own id: rows without children don't push one, so siblings' buttons
-  // would share it.
-  ImGui::PushID(static_cast<int>(entity.getId()));
-  const bool clicked = ImGui::InvisibleButton("focus", ImVec2(size, size));
-  ImGui::PopID();
-  if (clicked)
-    context.focusRequest = entity;
-  const bool hovered = ImGui::IsItemHovered();
-  ImGui::SetItemTooltip("Focus: frame it in the viewport (F, or double-click)");
-  ImGui::SetCursorScreenPos(cursor);
-
-  ImDrawList* draw = ImGui::GetWindowDrawList();
-  const ImVec2 centre(at.x + size * 0.5f, at.y + size * 0.5f);
-  const ImU32 color = hovered ? theme::kAccent : ImGui::GetColorU32(ImGuiCol_TextDisabled);
-  if (hovered)
-    draw->AddCircleFilled(centre, size * 0.5f, theme::kAccentSoft);
-  widgets::drawTarget(draw, centre, size, color);
-}
-
-void HierarchyPanel::drawDropBelow(EditorContext& context)
-{
-  // The space under the list: drop here to make an entity a root, right-click
-  // to create one.
-  const ImVec2 available = ImGui::GetContentRegionAvail();
-  ImGui::InvisibleButton("##below",
-                         ImVec2(std::max(available.x, 1.0f),
-                                std::max(available.y, ImGui::GetFrameHeight())));
-
-  if (ImGui::BeginDragDropTarget())
-  {
-    const sfs::Entity dragged = draggedEntity(context);
-    if (dragged.isValid() && sfs::hierarchy::parentOf(dragged).isValid() &&
-        ImGui::AcceptDragDropPayload(kEntityPayload))
-      m_pending = {PendingEdit::Kind::Reparent, dragged, {}};
-    if (const std::string prefab = draggedPrefab(context);
-        !prefab.empty() && ImGui::AcceptDragDropPayload(assetDrop::kAssetPayload))
-      m_pending = {PendingEdit::Kind::Place, {}, {}, prefab};
-    ImGui::EndDragDropTarget();
-  }
-
-  if (ImGui::BeginPopupContextItem("HierarchyBackground"))
-  {
-    drawCreateMenu(context);
-    ImGui::EndPopup();
-  }
-}
-
 void HierarchyPanel::applyPendingEdit(EditorContext& context)
 {
   const PendingEdit edit = std::exchange(m_pending, {});
+
   if (edit.kind == PendingEdit::Kind::Place)
   {
-    prefabs::place(context, edit.prefab, edit.parent.isValid() ? edit.parent : sfs::Entity());
+    prefabs::place(context,
+                   edit.prefab,
+                   edit.parent.isValid() ? edit.parent : sfs::Entity());
     m_shownSelection = UINT32_MAX; // reveal it
     return;
   }
+
   if (!edit.entity.isValid())
     return;
 
@@ -434,19 +161,24 @@ void HierarchyPanel::applyPendingEdit(EditorContext& context)
         {
           // One of several selected: all of them.
           const std::vector<sfs::Entity> doomed =
-              context.isSelected(edit.entity) ? context.selected() : std::vector<sfs::Entity>{edit.entity};
+              context.isSelected(edit.entity)
+                  ? context.selected()
+                  : std::vector<sfs::Entity>{edit.entity};
+
           if (context.hasSelection() &&
               std::any_of(doomed.begin(),
                           doomed.end(),
                           [&](const sfs::Entity& entity)
                           {
                             return context.selection == entity ||
-                                   sfs::hierarchy::isAncestor(entity, context.selection);
+                                   sfs::hierarchy::isAncestor(
+                                       entity, context.selection);
                           }))
           {
             context.selection = {};
             context.selectionGroup.clear();
           }
+
           for (const sfs::Entity& entity : doomed)
             if (entity.isValid())
               context.scene->destroyBranch(entity);
@@ -460,7 +192,8 @@ void HierarchyPanel::applyPendingEdit(EditorContext& context)
   }
 }
 
-void HierarchyPanel::drawCreateMenu(EditorContext& context, const sfs::Entity& parent)
+void HierarchyPanel::drawCreateMenu(EditorContext& context,
+                                    const sfs::Entity& parent)
 {
   using Primitive = EditorScene::Primitive;
   EditorScene& scene = *context.scene;
@@ -474,13 +207,16 @@ void HierarchyPanel::drawCreateMenu(EditorContext& context, const sfs::Entity& p
         [&]
         {
           sfs::Entity entity = make();
+
           if (parent.isValid() && placedInWorld)
             sfs::hierarchy::setParentKeepWorld(entity, parent);
           else if (parent.isValid())
             sfs::hierarchy::setParent(entity, parent);
+
           context.selection = entity;
           scene.flushEntities();
         });
+
     // Named straight away, as a new file is.
     if (context.selection.isValid())
       startRename(context.selection);
@@ -488,26 +224,39 @@ void HierarchyPanel::drawCreateMenu(EditorContext& context, const sfs::Entity& p
 
   if (ImGui::MenuItem("Empty"))
     create([&] { return scene.createEmpty("Empty"); });
+
   ImGui::Separator();
+
   // Primitives are meshes: a 3D scene's (a 2D game draws sprites).
   if (!context.render->space2D())
   {
     if (ImGui::MenuItem("Cube"))
       create([&] { return scene.createPrimitive(Primitive::Cube, "Cube"); });
+
     if (ImGui::MenuItem("Sphere"))
-      create([&] { return scene.createPrimitive(Primitive::Sphere, "Sphere"); });
+      create([&]
+             { return scene.createPrimitive(Primitive::Sphere, "Sphere"); });
+
     if (ImGui::MenuItem("Cylinder"))
-      create([&] { return scene.createPrimitive(Primitive::Cylinder, "Cylinder"); });
+      create(
+          [&]
+          { return scene.createPrimitive(Primitive::Cylinder, "Cylinder"); });
+
     if (ImGui::MenuItem("Plane"))
       create([&] { return scene.createPrimitive(Primitive::Plane, "Plane"); });
+
     ImGui::Separator();
   }
+
   if (ImGui::MenuItem("Sprite"))
     create([&] { return scene.createSprite("Sprite"); });
+
   ImGui::SetItemTooltip("Pick its image (a texture) in the Inspector");
   ImGui::Separator();
+
   if (ImGui::MenuItem("Point Light"))
     create([&] { return scene.createPointLight("Point Light"); });
+
   if (ImGui::MenuItem("Spot Light"))
     create(
         [&]
@@ -516,14 +265,394 @@ void HierarchyPanel::drawCreateMenu(EditorContext& context, const sfs::Entity& p
           light.getComponent<sfs::PointLightComponent>()->spot = true;
           return light;
         });
+
   ImGui::SetItemTooltip("Shines along its +x: turn it to aim it");
+
   if (ImGui::MenuItem("Camera"))
     create(
         [&]
         {
           const auto& space = context.render->space2D();
-          return scene.createCamera("Camera", context.render->camera(), space ? &*space : nullptr);
+          return scene.createCamera(
+              "Camera", context.render->camera(), space ? &*space : nullptr);
         },
         true);
+
   ImGui::SetItemTooltip("A game camera, looking the way the viewport does");
+}
+
+void HierarchyPanel::drawDropBelow(EditorContext& context)
+{
+  // The space under the list: drop here to make an entity a root, right-click
+  // to create one.
+  const ImVec2 available = ImGui::GetContentRegionAvail();
+  ImGui::InvisibleButton(
+      "##below",
+      ImVec2(std::max(available.x, 1.0f),
+             std::max(available.y, ImGui::GetFrameHeight())));
+
+  if (ImGui::BeginDragDropTarget())
+  {
+    const sfs::Entity dragged = draggedEntity(context);
+
+    if (dragged.isValid() && sfs::hierarchy::parentOf(dragged).isValid() &&
+        ImGui::AcceptDragDropPayload(kEntityPayload))
+      m_pending = {PendingEdit::Kind::Reparent, dragged, {}};
+
+    if (const std::string prefab = draggedPrefab(context);
+        !prefab.empty() &&
+        ImGui::AcceptDragDropPayload(assetDrop::kAssetPayload))
+      m_pending = {PendingEdit::Kind::Place, {}, {}, prefab};
+
+    ImGui::EndDragDropTarget();
+  }
+
+  if (ImGui::BeginPopupContextItem("HierarchyBackground"))
+  {
+    drawCreateMenu(context);
+    ImGui::EndPopup();
+  }
+}
+
+void HierarchyPanel::drawFocusButton(EditorContext& context,
+                                     const sfs::Entity& entity)
+{
+  // A small crosshair at the row's right end.
+  const float size = ImGui::GetFrameHeight() * 0.8f;
+  const ImVec2 rowMin = ImGui::GetItemRectMin(),
+               rowMax = ImGui::GetItemRectMax();
+  const ImVec2 at(rowMax.x - size - ImGui::GetStyle().FramePadding.x,
+                  rowMin.y + (rowMax.y - rowMin.y - size) * 0.5f);
+  const ImVec2 cursor = ImGui::GetCursorScreenPos();
+  ImGui::SetCursorScreenPos(at);
+  // Its own id: rows without children don't push one, so siblings' buttons
+  // would share it.
+  ImGui::PushID(static_cast<int>(entity.getId()));
+  const bool clicked = ImGui::InvisibleButton("focus", ImVec2(size, size));
+  ImGui::PopID();
+
+  if (clicked)
+    context.focusRequest = entity;
+
+  const bool hovered = ImGui::IsItemHovered();
+  ImGui::SetItemTooltip("Focus: frame it in the viewport (F, or double-click)");
+  ImGui::SetCursorScreenPos(cursor);
+
+  ImDrawList* draw = ImGui::GetWindowDrawList();
+  const ImVec2 centre(at.x + size * 0.5f, at.y + size * 0.5f);
+  const ImU32 color =
+      hovered ? theme::kAccent : ImGui::GetColorU32(ImGuiCol_TextDisabled);
+
+  if (hovered)
+    draw->AddCircleFilled(centre, size * 0.5f, theme::kAccentSoft);
+
+  widgets::drawTarget(draw, centre, size, color);
+}
+
+void HierarchyPanel::drawRenameBox(EditorContext& context,
+                                   const sfs::Entity& entity,
+                                   ImVec2 rowMin,
+                                   ImVec2 rowMax)
+{
+  // Over the row, from where its name starts to its end, its height.
+  const ImVec2 cursor = ImGui::GetCursorScreenPos();
+  const float textX = rowMin.x + ImGui::GetTreeNodeToLabelSpacing() -
+                      ImGui::GetStyle().FramePadding.x;
+  ImGui::SetCursorScreenPos(ImVec2(textX, rowMin.y));
+  ImGui::SetNextItemWidth(rowMax.x - textX);
+  ImGui::PushStyleVar(
+      ImGuiStyleVar_FramePadding,
+      ImVec2(ImGui::GetStyle().FramePadding.x,
+             (rowMax.y - rowMin.y - ImGui::GetFontSize()) * 0.5f));
+  ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
+  ImGui::PushStyleColor(ImGuiCol_Border, theme::kAccent);
+
+  if (m_renameFocus)
+    ImGui::SetKeyboardFocusHere();
+
+  ImGui::PushID(static_cast<int>(entity.getId()));
+  const bool entered = widgets::inputText(
+      "##rename",
+      m_renameText,
+      ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
+  ImGui::PopID();
+  ImGui::PopStyleColor();
+  ImGui::PopStyleVar(2);
+  const bool active = ImGui::IsItemActive();
+  ImGui::SetCursorScreenPos(cursor);
+
+  if (ImGui::IsKeyPressed(ImGuiKey_Escape))
+    m_renaming = UINT32_MAX; // as it was
+  else if (entered || (!active && !m_renameFocus))
+    finishRename(context, entity); // Enter, or clicked away
+
+  m_renameFocus = false;
+}
+
+bool HierarchyPanel::drawRow(EditorContext& context,
+                             const sfs::Entity& entity,
+                             bool hasChildren)
+{
+  const std::string name = entityLabel(entity);
+  m_rows.push_back(entity);
+  // The one selected (clicked last), and whether it's among several.
+  const bool selected = context.hasSelection() && context.selection == entity;
+  const bool highlighted = selected || context.isSelected(entity);
+
+  // A click selects, the arrow opens, and a double-click frames the entity
+  // and opens or closes it (handled below); AllowOverlap lets the focus
+  // button on the row take clicks.
+  ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow |
+                             ImGuiTreeNodeFlags_SpanFullWidth |
+                             ImGuiTreeNodeFlags_AllowOverlap;
+
+  if (!hasChildren)
+    flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+
+  if (highlighted)
+    flags |= ImGuiTreeNodeFlags_Selected;
+
+  if (m_reveal.contains(entity.getId()))
+    ImGui::SetNextItemOpen(true);
+
+  // Prefab instances in sage (their parts a little softer), missing ones red.
+  std::optional<ImVec4> color;
+
+  if (entity.hasComponent<sfs::MissingPrefabComponent>())
+    color = ImVec4(1.0f, 0.55f, 0.45f, 1.0f);
+  else if (entity.hasComponent<sfs::PrefabInstanceComponent>())
+    color = ImGui::ColorConvertU32ToFloat4(theme::kAccent);
+  else if (entity.hasComponent<sfs::PrefabLinkComponent>())
+    color = ImVec4(0.67f, 0.84f, 0.63f, 0.75f);
+
+  // F2 renames the selection in place.
+  if (selected && m_renaming == UINT32_MAX &&
+      ImGui::IsKeyPressed(ImGuiKey_F2, false) &&
+      ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
+      !ImGui::GetIO().WantTextInput)
+    startRename(entity);
+
+  const bool renaming = m_renaming == entity.getId();
+
+  if (color)
+    ImGui::PushStyleColor(ImGuiCol_Text, *color);
+
+  // Its id from the entity's (not its text, so renaming keeps it open);
+  // renaming: the row without its text, a box for the name over it.
+  const void* rowId =
+      reinterpret_cast<const void*>(static_cast<uintptr_t>(entity.getId()) + 1);
+  const bool open =
+      ImGui::TreeNodeEx(rowId, flags, "%s", renaming ? "" : name.c_str());
+
+  if (color)
+    ImGui::PopStyleColor();
+
+  const ImVec2 rowMin = ImGui::GetItemRectMin(),
+               rowMax = ImGui::GetItemRectMax();
+  const bool rowHovered =
+      ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenOverlappedByItem);
+  const ImGuiIO& io = ImGui::GetIO();
+
+  // A row is selected when the mouse is released on it, not pressed, as in
+  // Unity: a drag from it (into a reference slot, onto another row) leaves
+  // the selection as it is. A press on its arrow only opens it.
+  if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
+  {
+    m_pressToggled = ImGui::IsItemToggledOpen();
+    m_pressDouble =
+        !m_pressToggled && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
+
+    if (m_pressDouble)
+    {
+      // Frames it, and opens (or closes) it to show what's inside.
+      m_slowClick = UINT32_MAX;
+      context.focusRequest = entity;
+
+      if (hasChildren)
+        ImGui::TreeNodeSetOpen(ImGui::GetItemID(), !open);
+    }
+  }
+
+  const bool clicked = !m_pressToggled && widgets::itemReleasedWithoutDrag();
+
+  if (clicked && (io.KeyCtrl || io.KeyShift))
+  {
+    // Ctrl: add it to the selection or take it out; Shift: every row from
+    // the one selected to it.
+    std::vector<sfs::Entity> group = context.selected();
+
+    if (io.KeyShift && context.hasSelection())
+    {
+      const auto from =
+          std::find(m_lastRows.begin(), m_lastRows.end(), context.selection);
+      const auto to = std::find(m_lastRows.begin(), m_lastRows.end(), entity);
+
+      if (from != m_lastRows.end() && to != m_lastRows.end())
+        for (auto it = std::min(from, to); it <= std::max(from, to); ++it)
+          if (std::find(group.begin(), group.end(), *it) == group.end())
+            group.push_back(*it);
+
+      context.selection = entity;
+    }
+    else if (const auto it = std::find(group.begin(), group.end(), entity);
+             it != group.end())
+    {
+      group.erase(it);
+      context.selection = group.empty() ? sfs::Entity() : group.back();
+    }
+    else
+    {
+      group.push_back(entity);
+      context.selection = entity;
+    }
+
+    context.selectionGroup = std::move(group);
+    m_shownSelection =
+        context.hasSelection() ? context.selection.getId() : UINT32_MAX;
+    m_slowClick = UINT32_MAX;
+  }
+  else if (clicked)
+  {
+    const bool wasOnlySelected = selected && context.selected().size() == 1;
+    context.selection = entity;
+    context.selectionGroup.clear();
+    m_shownSelection = entity.getId(); // picked here: already in view
+
+    if (wasOnlySelected && !renaming && !m_pressDouble)
+    {
+      // A click on the selected row's name renames it, once it's clearly not
+      // the start of a double-click.
+      m_slowClick = entity.getId();
+      m_slowClickAt = ImGui::GetTime();
+    }
+  }
+
+  if (m_slowClick == entity.getId())
+  {
+    if (!selected || ImGui::IsMouseDragging(ImGuiMouseButton_Left))
+      m_slowClick = UINT32_MAX;
+    else if (ImGui::GetTime() - m_slowClickAt >
+                 ImGui::GetIO().MouseDoubleClickTime &&
+             !ImGui::IsMouseDown(ImGuiMouseButton_Left))
+    {
+      m_slowClick = UINT32_MAX;
+      startRename(entity);
+    }
+  }
+  else if (selected && m_scrollToSelection)
+    ImGui::SetScrollHereY(0.5f);
+
+  if (ImGui::BeginDragDropSource())
+  {
+    const sfs::Entity::EntityId id = entity.getId();
+    ImGui::SetDragDropPayload(kEntityPayload, &id, sizeof(id));
+    ImGui::TextUnformatted(name.c_str());
+    ImGui::EndDragDropSource();
+  }
+
+  if (ImGui::BeginDragDropTarget())
+  {
+    // Only highlight a drop that's allowed (not onto itself or its own child).
+    const sfs::Entity dragged = draggedEntity(context);
+
+    if (dragged.isValid() && sfs::hierarchy::canParent(dragged, entity) &&
+        sfs::hierarchy::parentOf(dragged) != entity &&
+        ImGui::AcceptDragDropPayload(kEntityPayload))
+      m_pending = {PendingEdit::Kind::Reparent, dragged, entity};
+
+    // A prefab from the Assets panel: placed as a child.
+    if (const std::string prefab = draggedPrefab(context);
+        !prefab.empty() &&
+        ImGui::AcceptDragDropPayload(assetDrop::kAssetPayload))
+      m_pending = {PendingEdit::Kind::Place, {}, entity, prefab};
+
+    ImGui::EndDragDropTarget();
+  }
+
+  if (ImGui::BeginPopupContextItem())
+  {
+    context.selection = entity;
+
+    if (ImGui::MenuItem("Focus", "F"))
+      context.focusRequest = entity;
+
+    if (ImGui::MenuItem("Rename", "F2"))
+      startRename(entity);
+
+    ImGui::Separator();
+
+    if (ImGui::BeginMenu("Create Child"))
+    {
+      drawCreateMenu(context, entity);
+      ImGui::EndMenu();
+    }
+
+    if (ImGui::MenuItem("Unparent",
+                        nullptr,
+                        false,
+                        sfs::hierarchy::parentOf(entity).isValid()))
+      m_pending = {PendingEdit::Kind::Reparent, entity, {}};
+
+    if (ImGui::MenuItem(
+            "Create Prefab", nullptr, false, context.assets != nullptr))
+      m_pending = {PendingEdit::Kind::MakePrefab, entity, {}};
+
+    ImGui::SetItemTooltip(
+        "Save it (and everything under it) as a prefab in prefabs/; "
+        "or drag it into the Assets panel");
+    ImGui::Separator();
+
+    if (ImGui::MenuItem("Delete"))
+      m_pending = {PendingEdit::Kind::Delete, entity, {}};
+
+    ImGui::EndPopup();
+  }
+
+  if (renaming)
+    drawRenameBox(context, entity, rowMin, rowMax);
+  else if (rowHovered || selected)
+    drawFocusButton(context, entity);
+
+  return open && hasChildren;
+}
+
+void HierarchyPanel::drawTree(EditorContext& context, const sfs::Entity& entity)
+{
+  if (!drawRow(context, entity, sfs::hierarchy::hasChildren(entity)))
+    return;
+
+  for (const sfs::Entity& child : sfs::hierarchy::childrenOf(entity))
+    drawTree(context, child);
+
+  ImGui::TreePop();
+}
+
+void HierarchyPanel::finishRename(EditorContext& context,
+                                  const sfs::Entity& entity)
+{
+  m_renaming = UINT32_MAX;
+  const sfs::NameComponent* name = entity.getComponent<sfs::NameComponent>();
+  const std::string current = name ? name->name : "";
+
+  if (m_renameText == current || !entity.isValid())
+    return;
+
+  context.history->change(
+      [&]
+      {
+        sfs::Entity named = entity;
+
+        if (!named.hasComponent<sfs::NameComponent>())
+          named.addComponent<sfs::NameComponent>();
+
+        named.getComponent<sfs::NameComponent>()->name = m_renameText;
+      });
+}
+
+void HierarchyPanel::startRename(const sfs::Entity& entity)
+{
+  m_renaming = entity.getId();
+  const sfs::NameComponent* name = entity.getComponent<sfs::NameComponent>();
+  m_renameText = name ? name->name : "";
+  m_renameFocus = true;
 }

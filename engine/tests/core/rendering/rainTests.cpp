@@ -1,6 +1,10 @@
 #include "../../testHarness.h"
+#include "engine/core/rendering/rain.h"
 
-#include <engine/core/rendering/rain.h>
+#include <glm/glm/ext/vector_float3.hpp>
+#include <glm/glm/ext/vector_float4.hpp>
+#include <glm/glm/geometric.hpp>
+#include <nlohmann/json.hpp>
 
 #include <cmath>
 #include <limits>
@@ -113,12 +117,16 @@ int main()
     CHECK(drift.wind.x > 8.0f);
     CHECK(drift.wind.y > 0.0f);
     CHECK(drift.wind.y < 2.0f);
+
     for (int i = 0; i < 100; ++i)
       drift.advance({0.0f, 10.0f}, 0.1f);
+
     CHECK(std::abs(drift.wind.y - 10.0f) < 0.01f);
+
     // Wrapped into its period, never negative.
     for (int i = 0; i < 200; ++i)
       drift.advance({-30.0f, 0.0f}, 1.0f);
+
     CHECK(drift.drift.x >= 0.0f);
     CHECK(drift.drift.x < kRainDriftPeriod);
     // Nonsense changes nothing.

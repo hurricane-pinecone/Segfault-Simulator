@@ -3,6 +3,8 @@
 #include "engine/runtime/navigation/geometry.h"
 #include "engine/runtime/navigation/space.h"
 
+#include <glm/glm/ext/vector_float2.hpp>
+
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -46,7 +48,22 @@ public:
     float openCost = 0.1f;      // how much more, at the solid (a factor)
     float rasterInflate = 0.0f; // m more round solids (besides a cell)
   };
+  /**
+   * A game's own edge (a worn track): routing along it, within `width` of
+   * its middle line (the cells whose middles are), costs `factor` (< 1) a
+   * metre; where edges cross, the least.
+   */
+  struct Edge
+  {
+    bool operator==(const Edge&) const = default;
 
+    glm::vec2 a{0.0f}, b{0.0f};
+    float factor = 0.85f;
+    float width = 3.0f;
+  };
+
+  void addEdge(glm::vec2 a, glm::vec2 b, float factor, float width = 3.0f);
+  Rect area() const { return m_area; }
   /** The clearance grid of `area` of `space` (worker-safe, a few ms). */
   static std::shared_ptr<CoarseGraph>
   build(const Space& space, Rect area, Options options);
@@ -54,7 +71,10 @@ public:
   {
     return build(space, area, Options());
   }
-
+  float cell() const { return m_options.cell; }
+  /** How far `p` is from the nearest solid (m; 0 inside one). */
+  float clearance(glm::vec2 p) const;
+  const std::vector<Edge>& edges() const { return m_edges; }
   /**
    * A corridor from `from` to `to` for an agent `halfWidth` either side of
    * its middle line: the cells it passes keep at least that from every
@@ -70,20 +90,6 @@ public:
                                float halfWidth,
                                std::vector<Pose2>* narrows = nullptr,
                                float tight = 0.6f) const;
-
-  /**
-   * A game's own edge (a worn track): routing along it, within `width` of
-   * its middle line (the cells whose middles are), costs `factor` (< 1) a
-   * metre; where edges cross, the least.
-   */
-  struct Edge
-  {
-    glm::vec2 a{0.0f}, b{0.0f};
-    float factor = 0.85f;
-    float width = 3.0f;
-    bool operator==(const Edge&) const = default;
-  };
-  void addEdge(glm::vec2 a, glm::vec2 b, float factor, float width = 3.0f);
   /**
    * This graph with `edges` as its game's edges instead of those it has: a
    * new graph sharing this one's clearance grid, only the cells round the
@@ -91,20 +97,15 @@ public:
    * using it go on). Worker-safe.
    */
   std::shared_ptr<CoarseGraph> withEdges(const std::vector<Edge>& edges) const;
-  const std::vector<Edge>& edges() const { return m_edges; }
-
-  /** How far `p` is from the nearest solid (m; 0 inside one). */
-  float clearance(glm::vec2 p) const;
-  Rect area() const { return m_area; }
-  float cell() const { return m_options.cell; }
 
 private:
-  int index(glm::vec2 p) const;
-  void paint(const Edge& e);
   void findNarrows(const std::vector<int>& cells,
                    float halfWidth,
                    float tight,
                    std::vector<Pose2>& out) const;
+  int index(glm::vec2 p) const;
+  void paint(const Edge& e);
+
   Options m_options;
   Rect m_area;
   int m_w = 0, m_h = 0;

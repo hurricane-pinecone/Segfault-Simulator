@@ -1,25 +1,28 @@
 #include "../testHarness.h"
+#include "document.h"
 #include "lspFeatures.h"
 #include "lspTestSupport.h"
+#include "sfs/codegen/attributes.h"
+#include "sfs/codegen/rules.h"
+#include "sfs/lsp/protocol.h"
 
-#include <sfs/codegen/attributes.h>
-#include <sfs/codegen/rules.h>
+#include <nlohmann/json.hpp>
 
-#include <set>
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <filesystem>
+#include <memory>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
 
 using namespace sfs::lsp;
 using nlohmann::json;
 
 namespace
 {
-
-ClientSettings snippets()
-{
-  ClientSettings settings;
-  settings.encoding = PositionEncoding::Utf8;
-  settings.snippets = true;
-  return settings;
-}
 
 // The text with `|` marking the cursor: the document without it, and where it
 // was.
@@ -29,14 +32,24 @@ struct Marked
   Position cursor;
 };
 
+ClientSettings snippets()
+{
+  ClientSettings settings;
+  settings.encoding = PositionEncoding::Utf8;
+  settings.snippets = true;
+  return settings;
+}
+
 Marked marked(std::string text, std::filesystem::path path = "/t/Thing.h")
 {
   const std::size_t at = text.find('|');
   text.erase(at, 1);
   const std::vector<uint32_t> starts = countLines(text);
   uint32_t line = 0;
+
   while (line + 1 < starts.size() && starts[line + 1] <= at)
     ++line;
+
   return {lspTest::analysed(std::move(text), std::move(path)),
           {line, static_cast<uint32_t>(at - starts[line])}};
 }
@@ -44,8 +57,10 @@ Marked marked(std::string text, std::filesystem::path path = "/t/Thing.h")
 std::vector<std::string> labels(const json& list)
 {
   std::vector<std::string> out;
+
   for (const json& item : list["items"])
     out.push_back(item["label"]);
+
   return out;
 }
 
@@ -123,10 +138,12 @@ int main()
   {
     const auto items = complete("struct Thing\n{\n  [[sfs::|\n};\n");
     std::size_t fieldAttributes = 0;
+
     for (const auto& info : sfs::codegen::attributes())
       if (info.target == sfs::codegen::AttributeTarget::Field &&
           info.id != sfs::codegen::AttributeId::Show)
         ++fieldAttributes;
+
     CHECK(items.size() == fieldAttributes);
   }
 
@@ -145,6 +162,7 @@ int main()
     ClientSettings plain = snippets();
     plain.snippets = false;
     const json plainList = completion(*at.document, at.cursor, false, plain);
+
     for (const json& item : list["items"])
       if (item["label"] == "range")
       {
@@ -154,6 +172,7 @@ int main()
                   "```cpp\n[[sfs::range(10, 120)]] float fieldOfView") !=
               std::string::npos);
       }
+
     for (const json& item : plainList["items"])
       if (item["label"] == "range")
       {
@@ -186,13 +205,16 @@ int main()
     CHECK(!has(items, "renamed-engine-type")); // reserved: not reported yet
     std::string firstSort;
     std::string singleSort;
+
     for (const json& item : list["items"])
     {
       if (firstSort.empty() || item["sortText"].get<std::string>() < firstSort)
         firstSort = item["sortText"];
+
       if (item["label"] == "single-any")
         singleSort = item["sortText"];
     }
+
     CHECK(singleSort == firstSort);
 
     const auto afterComma =
@@ -215,6 +237,7 @@ int main()
   TEST("hover should document every attribute and every rule id in a directive")
   {
     const ClientSettings settings = snippets();
+
     for (const auto& info : sfs::codegen::attributes())
     {
       const std::string name(info.name);
@@ -233,10 +256,12 @@ int main()
                 "```cpp\n" + std::string(info.example) + "\n```") !=
                 std::string::npos);
     }
+
     for (const auto& rule : sfs::codegen::rules())
     {
       if (rule.reserved)
         continue;
+
       const std::string text =
           "int a; // sfs-ignore(x, " + std::string(rule.name) + ")\n";
       auto doc = lspTest::document(text);
@@ -246,6 +271,7 @@ int main()
             answer["contents"]["value"].get<std::string>().find(
                 std::string(rule.summary)) != std::string::npos);
     }
+
     auto plain = lspTest::document("int value = 3; // nothing here\n");
     CHECK(hover(*plain, {0, 5}, settings).is_null());
     CHECK(hover(*plain, {0, 20}, settings).is_null());

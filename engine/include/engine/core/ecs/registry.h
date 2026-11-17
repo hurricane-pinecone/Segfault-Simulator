@@ -15,18 +15,18 @@
 // instantiate over their own types, so the definition must be visible wherever
 // those instantiations happen.
 
-#include "engine/core/ecs/entity.h"
+#include "engine/core/ecs/component.h"
+#include "engine/core/ecs/entityDeclaration.h"
 #include "engine/core/ecs/hierarchyLinks.h"
-#include "engine/core/ecs/sceneData.h"
 #include "engine/core/events/events.h"
 #include "pool.h"
 #include "query.h"
 #include "service.h"
 #include "system.h"
-#include <engine/core/logger/logger.h>
 
 #include <array>
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <deque>
 #include <memory>
@@ -68,6 +68,7 @@ public:
   {
     if (id >= m_generations.size() || !alive(id))
       return {};
+
     Entity entity{id, m_generations[id], entityDebugIds[id]};
     entity.setRegistry(this);
     return entity;
@@ -130,6 +131,14 @@ public:
     }
 
     /**
+     * The TComponent of the living entity `id`, which is known to have one
+     * (a query row's required term): its slot, with no test.
+     * @param id a living entity's id that holds a TComponent
+     * @return its component
+     */
+    TComponent& held(Entity::EntityId id) const { return m_pool->get(id); }
+
+    /**
      * The TComponent of the living entity `id`, as find() gives it.
      * @param id a living entity's id
      * @return its component, or null if it has none
@@ -146,19 +155,13 @@ public:
       // Bounded, so even a wrong id gives null rather than a stray read.
       const std::vector<Signature>& signatures =
           m_registry->entityComponentSignatures;
+
       if (!m_pool || id >= signatures.size() ||
           !signatures[id].test(m_componentId))
         return nullptr;
+
       return &m_pool->get(id);
     }
-
-    /**
-     * The TComponent of the living entity `id`, which is known to have one
-     * (a query row's required term): its slot, with no test.
-     * @param id a living entity's id that holds a TComponent
-     * @return its component
-     */
-    TComponent& held(Entity::EntityId id) const { return m_pool->get(id); }
 
   private:
     const Registry* m_registry = nullptr;
@@ -634,7 +637,7 @@ private:
 
 } // namespace sfs
 
-#include "entity.inl"   // IWYU pragma: keep
-#include "queryView.h"  // IWYU pragma: keep
-#include "registry.inl" // IWYU pragma: keep
-#include "service.inl"  // IWYU pragma: keep
+#include "entity.inl"   // IWYU pragma: export
+#include "queryView.h"  // IWYU pragma: export
+#include "registry.inl" // IWYU pragma: export
+#include "service.inl"  // IWYU pragma: export

@@ -1,7 +1,6 @@
 #include "../../testHarness.h"
-
-#include <engine/core/scripting/luaSchema.h>
-#include <engine/core/scripting/particleSchema.h>
+#include "engine/core/scripting/luaSchema.h"
+#include "engine/core/scripting/particleSchema.h"
 
 #include <cstddef>
 #include <string>
@@ -15,6 +14,7 @@ const LuaField* find(const LuaSchema& schema, const std::string& name)
   for (const LuaField& f : schema)
     if (f.name == name)
       return &f;
+
   return nullptr;
 }
 } // namespace
@@ -47,10 +47,12 @@ int main()
   TEST("field names should be unique")
   {
     bool unique = true;
+
     for (std::size_t i = 0; i < schema.size(); ++i)
       for (std::size_t j = i + 1; j < schema.size(); ++j)
         if (schema[i].name == schema[j].name)
           unique = false;
+
     CHECK(unique);
   }
 

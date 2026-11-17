@@ -1,8 +1,9 @@
 #pragma once
 
 #include "engine/core/rendering/mesh.h"
-#include "glm/glm/ext/vector_int2.hpp"
-#include "nlohmann/json.hpp"
+
+#include <glm/glm/ext/vector_int2.hpp>
+#include <nlohmann/json.hpp>
 
 #include <cstddef>
 #include <filesystem>
@@ -18,6 +19,8 @@ namespace sfs
  * "settings". */
 struct TextureImportSettings
 {
+  static TextureImportSettings fromJson(const nlohmann::json& settings);
+
   bool nearest =
       false; // "filter": "nearest" draws texels with hard edges (pixel art)
   // "spriteCell": [w, h] -- as a sprite sheet, a grid of frames this many
@@ -27,8 +30,6 @@ struct TextureImportSettings
   // "pixelsPerUnit": drawn as a sprite, its pixels per world unit (a 64 pixel
   // sprite at 32 is 2 units tall); 0: the scene's (a 2D game's Space2D's).
   float pixelsPerUnit = 0.0f;
-
-  static TextureImportSettings fromJson(const nlohmann::json& settings);
 };
 
 /**

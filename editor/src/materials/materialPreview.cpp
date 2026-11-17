@@ -2,62 +2,96 @@
 
 #include "engine/core/logger/logger.h"
 #include "engine/core/rendering/camera.h"
+#include "engine/core/rendering/mesh.h"
 #include "engine/core/rendering/meshPrimitives.h"
+#include "engine/runtime/rendering/backend/iRenderBackend.h"
+#include "engine/runtime/rendering/frame.h"
 
-#include "glm/glm/geometric.hpp"
-
-#include "imgui.h"
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
+#include <glm/glm/geometric.hpp>
+#include <imgui.h>
 
 #include <algorithm>
 #include <cmath>
-#include <cstdint>
+#include <cstddef>
 
 MaterialPreview::MaterialPreview(sfs::IRenderBackend& backend)
     : m_backend(backend)
 {
 }
 
+void MaterialPreview::draw(float size, float time)
+{
+  const ImVec2 extent(size, size);
+
+  if (!ensureReady() || !m_material.valid() || size < 8.0f)
+  {
+    ImGui::Dummy(extent);
+    return;
+  }
+
+  // Pixels, not points, on a high-DPI display.
+  const float scale = ImGui::GetWindowDpiScale();
+  const auto pixels =
+      static_cast<int>(std::lround(size * std::max(scale, 1.0f)));
+  render({pixels, pixels}, time);
+
+  // A button under the image, so dragging it turns the shape.
+  ImGui::InvisibleButton("##preview", extent);
+  const ImVec2 min = ImGui::GetItemRectMin();
+  ImGui::GetWindowDrawList()->AddImage(
+      static_cast<ImTextureID>(m_target->imguiTexture()),
+      min,
+      ImVec2(min.x + size, min.y + size));
+  ImGui::SetItemTooltip("Drag to turn it");
+
+  if (ImGui::IsItemActive())
+  {
+    const ImVec2 delta = ImGui::GetIO().MouseDelta;
+    m_yaw -= delta.x * 0.01f;
+    m_pitch = std::clamp(m_pitch + delta.y * 0.01f, -1.4f, 1.4f);
+  }
+}
+
 bool MaterialPreview::ensureReady()
 {
   if (m_initialized || m_failed)
     return m_initialized;
+
   m_renderer = m_backend.createRenderer(256);
   m_target = m_backend.createRenderTarget();
+
   if (!m_renderer || !m_target)
   {
     LOG_ERROR("The material preview can't draw");
     m_failed = true;
     return false;
   }
+
   // Each shape around the origin's up axis, about 2 across.
   const sfs::MeshData shapes[] = {sfs::meshes::sphere(1.0f, 48, 24),
                                   sfs::meshes::box(glm::vec3(1.6f)),
                                   sfs::meshes::plane(glm::vec2(2.4f))};
+
   for (std::size_t i = 0; i < m_meshes.size(); ++i)
   {
     m_meshes[i] = m_renderer->createMesh(shapes[i]);
     m_centres[i] = shapes[i].bounds().center();
+
     for (const sfs::MeshVertex& vertex : shapes[i].vertices)
       m_radii[i] =
           std::max(m_radii[i], glm::length(vertex.position - m_centres[i]));
   }
+
   m_initialized = true;
   return true;
-}
-
-void MaterialPreview::setMaterial(const sfs::MeshMaterial& material)
-{
-  if (!ensureReady())
-    return;
-  if (m_material.valid())
-    m_renderer->updateMaterial(m_material, material);
-  else
-    m_material = m_renderer->createMaterial(material);
 }
 
 void MaterialPreview::render(glm::ivec2 size, float time)
 {
   m_target->resize(size);
+
   if (!m_target->valid())
     return;
 
@@ -100,32 +134,13 @@ void MaterialPreview::render(glm::ivec2 size, float time)
                      });
 }
 
-void MaterialPreview::draw(float size, float time)
+void MaterialPreview::setMaterial(const sfs::MeshMaterial& material)
 {
-  const ImVec2 extent(size, size);
-  if (!ensureReady() || !m_material.valid() || size < 8.0f)
-  {
-    ImGui::Dummy(extent);
+  if (!ensureReady())
     return;
-  }
-  // Pixels, not points, on a high-DPI display.
-  const float scale = ImGui::GetWindowDpiScale();
-  const auto pixels =
-      static_cast<int>(std::lround(size * std::max(scale, 1.0f)));
-  render({pixels, pixels}, time);
 
-  // A button under the image, so dragging it turns the shape.
-  ImGui::InvisibleButton("##preview", extent);
-  const ImVec2 min = ImGui::GetItemRectMin();
-  ImGui::GetWindowDrawList()->AddImage(
-      static_cast<ImTextureID>(m_target->imguiTexture()),
-      min,
-      ImVec2(min.x + size, min.y + size));
-  ImGui::SetItemTooltip("Drag to turn it");
-  if (ImGui::IsItemActive())
-  {
-    const ImVec2 delta = ImGui::GetIO().MouseDelta;
-    m_yaw -= delta.x * 0.01f;
-    m_pitch = std::clamp(m_pitch + delta.y * 0.01f, -1.4f, 1.4f);
-  }
+  if (m_material.valid())
+    m_renderer->updateMaterial(m_material, material);
+  else
+    m_material = m_renderer->createMaterial(material);
 }

@@ -1,13 +1,19 @@
 #include "../../testHarness.h"
+#include "engine/core/rendering/material.h"
+#include "engine/core/rendering/materialGraph.h"
+#include "engine/core/rendering/materialGraphCompiler.h"
+#include "engine/core/rendering/materialNodes.h"
+#include "engine/core/rendering/mesh.h"
 
-#include <engine/core/rendering/material.h>
-#include <engine/core/rendering/materialGraph.h>
-#include <engine/core/rendering/materialGraphCompiler.h>
-#include <engine/core/rendering/mesh.h>
+#include <glm/glm/ext/vector_float3.hpp>
+#include <glm/glm/geometric.hpp>
 
+#include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <memory>
+#include <vector>
 
 using namespace sfs;
 using namespace sfs::materialGraph;
@@ -27,6 +33,7 @@ bool hasError(const CompiledGraph& compiled, NodeId node)
   for (const CompileError& error : compiled.errors)
     if (error.node == node)
       return true;
+
   return false;
 }
 
@@ -49,8 +56,10 @@ int main()
     const CompiledGraph compiled = compile(graph);
     CHECK(compiled.errors.empty());
     CHECK(compiled.shader != nullptr);
+
     if (!compiled.shader)
       return testing::report("materialGraphTests");
+
     CHECK(compiled.shader->wgsl().find(
               "fn surface(in: SurfaceIn) -> Surface") != std::string::npos);
     CHECK(compiled.textures.empty());
@@ -79,6 +88,7 @@ int main()
 
     const auto loaded = Graph::fromJson(graph.toJson());
     CHECK(loaded.has_value());
+
     if (loaded)
       CHECK(*loaded == graph);
 
@@ -87,12 +97,14 @@ int main()
     material.alphaMode = AlphaMode::Blend;
     const auto asset = MaterialAsset::fromJson(material.toJson());
     CHECK(asset.has_value());
+
     if (asset)
     {
       CHECK(asset->graph.has_value());
       CHECK(asset->alphaMode == AlphaMode::Blend);
       CHECK(*asset == material);
     }
+
     CHECK(material.toJson()["formatVersion"] == 2);
     CHECK(!material.toJson().contains("baseColor"));
   }
@@ -147,6 +159,7 @@ int main()
     CHECK(compiled.dynamicTypes.at(multiply) == ValueType::Vec3);
     CHECK(compiled.dynamicTypes.at(color) ==
           ValueType::Float); // no dynamic inputs
+
     if (compiled.shader)
       CHECK(near(evaluate(compiled).baseColor, {1.0f, 2.0f, 0.5f}));
   }
@@ -155,9 +168,11 @@ int main()
   {
     Graph graph = Graph::makeDefault();
     const CompiledGraph before = compile(graph);
+
     for (Node& node : graph.nodes)
       if (node.type == "color")
         node.value = {0.1f, 0.2f, 0.3f, 1.0f};
+
     graph.find(graph.output())->inputs[kRoughness].x = 0.2f;
     const CompiledGraph valuesChanged = compile(graph);
     CHECK(before.shader->wgsl() == valuesChanged.shader->wgsl());
@@ -185,6 +200,7 @@ int main()
         {{"id", 50}, {"type", "sparkles"}, {"position", {0, 0}}});
     const auto withUnknown = Graph::fromJson(json);
     CHECK(withUnknown.has_value());
+
     if (withUnknown)
     {
       CHECK(withUnknown->find(50) != nullptr);
@@ -218,8 +234,10 @@ int main()
           {{"from", {2, "Out"}}, {"to", 7}}}}};
     const auto graph = Graph::fromJson(json);
     CHECK(graph.has_value());
+
     if (!graph)
       return testing::report("materialGraphTests");
+
     CHECK(graph->nodes.size() == 3);
     CHECK(graph->links.size() == 2);
     CHECK(graph->nextId == 4);
@@ -236,8 +254,10 @@ int main()
       Graph graph;
       const NodeId out = graph.add(std::string(kOutputType), {});
       const NodeId node = graph.add(type, {});
+
       for (std::size_t i = 0; i < inputs.size(); ++i)
         graph.find(node)->inputs[i] = glm::vec4(inputs[i]);
+
       graph.connect(node, output, out, kAlpha);
       const CompiledGraph compiled = compile(graph);
       return compiled.shader ? evaluate(compiled).alpha : NAN;
@@ -274,6 +294,7 @@ int main()
     graph.connect(split, 2, out, kMetallic); // B
     const CompiledGraph compiled = compile(graph);
     CHECK(compiled.errors.empty());
+
     if (compiled.shader)
     {
       CHECK(near(evaluate(compiled).alpha, 13.0f));
@@ -302,8 +323,10 @@ int main()
     point.toView = {0.0f, 0.0f, 1.0f}; // looking straight at it: no rim
     const CompiledGraph compiled = compile(graph);
     CHECK(compiled.errors.empty());
+
     if (!compiled.shader)
       return testing::report("materialGraphTests");
+
     SurfaceValues surface = evaluate(compiled, point);
     CHECK(near(surface.alpha, 1.0f));    // 0.25 x 2 + 0.5
     CHECK(near(surface.metallic, 1.5f)); // 0.5 x 3
@@ -324,8 +347,10 @@ int main()
     graph.connect(grass, 6, out, kBloom);     // data 2
     const CompiledGraph compiled = compile(graph);
     CHECK(compiled.errors.empty());
+
     if (!compiled.shader)
       return testing::report("materialGraphTests");
+
     CHECK(any(compiled.shader->reads(kAlpha) & PointInputs::Grass));
 
     const SurfaceValues plain = evaluate(compiled);
@@ -351,8 +376,10 @@ int main()
     const CompiledGraph compiled = compile(graph);
     CHECK(compiled.textures.size() == 1);
     CHECK(compiled.shader && compiled.shader->textureCount() == 1);
+
     if (!compiled.shader)
       return testing::report("materialGraphTests");
+
     CHECK(compiled.shader->wgsl().find("var graphTexture0: texture_2d<f32>") !=
           std::string::npos);
     CHECK(near(evaluate(compiled).baseColor, glm::vec3(1.0f)));
@@ -382,12 +409,15 @@ int main()
     graph.connect(noise, 0, out, kAlpha);
     const CompiledGraph compiled = compile(graph);
     CHECK(compiled.errors.empty());
+
     if (!compiled.shader)
       return testing::report("materialGraphTests");
+
     CHECK(compiled.shader->wgsl().find("fn noiseGradientNoise") !=
           std::string::npos);
     float low = 1.0f, high = 0.0f;
     bool repeats = true;
+
     for (int i = 0; i < 400; ++i)
     {
       SurfacePoint point;
@@ -397,6 +427,7 @@ int main()
       low = std::min(low, value);
       high = std::max(high, value);
     }
+
     CHECK(repeats);
     CHECK(low >= 0.0f);
     CHECK(high <= 1.0f);
@@ -443,6 +474,7 @@ int main()
       standard.alphaCutoff = 0.3f;
       standard.tiling = {2.0f, 3.0f};
       standard.offset = {0.25f, 0.5f};
+
       if (textured)
       {
         standard.baseTexture = "asset:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -451,19 +483,25 @@ int main()
         standard.normalTexture = "asset:cccccccccccccccccccccccccccccccc";
         standard.normalScale = 0.7f;
       }
+
       const CompiledGraph compiled = compile(standard.toGraph());
       CHECK(compiled.errors.empty());
+
       if (!compiled.shader)
         continue;
+
       // The graph's textures, in its order.
       std::vector<std::shared_ptr<const TextureData>> textures;
+
       for (const TextureSlot& slot : compiled.textures)
         textures.push_back(slot.texture == standard.baseTexture     ? base
                            : slot.texture == standard.normalTexture ? bumps
                                                                     : data);
+
       CHECK(textures.size() == (textured ? 3u : 0u));
 
       bool same = true;
+
       for (int i = 0; i < 50; ++i)
       {
         SurfacePoint point;
@@ -477,6 +515,7 @@ int main()
             glm::vec4(point.vertexColor, 1.0f) * standard.baseColor;
         float metallic = standard.metallic, roughness = standard.roughness;
         glm::vec3 normal(0.0f, 0.0f, 1.0f);
+
         if (textured)
         {
           albedo *= sampleTexture(base.get(), uv);
@@ -489,6 +528,7 @@ int main()
               glm::normalize(glm::vec3(glm::vec2(bump) * standard.normalScale,
                                        std::max(bump.z, 0.0001f)));
         }
+
         same = same && near(graph.baseColor, glm::vec3(albedo)) &&
                near(graph.alpha, albedo.a) && near(graph.metallic, metallic) &&
                near(graph.roughness, roughness) &&
@@ -496,6 +536,7 @@ int main()
                near(graph.emission, glm::vec3(0.0f)) &&
                near(graph.normal, normal);
       }
+
       CHECK(same);
     }
   }
@@ -557,8 +598,10 @@ int main()
     graph.connect(bumps, 0, out, kNormal);
     const CompiledGraph compiled = compile(graph);
     CHECK(compiled.errors.empty());
+
     if (!compiled.shader)
       return testing::report("materialGraphTests");
+
     CHECK(compiled.textures.size() == 1 && compiled.textures[0].data);
 
     SurfacePoint ground; // facing up, frame +x, +y
@@ -596,8 +639,10 @@ int main()
     graph.connect(normalMap, 0, out, kNormal);
     const CompiledGraph compiled = compile(graph);
     CHECK(compiled.errors.empty());
+
     if (!compiled.shader)
       return testing::report("materialGraphTests");
+
     CHECK(compiled.textures.size() == 1 &&
           compiled.textures[0].data); // always data
     CHECK(compiled.shader->missingTexture(0) == kFlatNormal);
@@ -625,8 +670,10 @@ int main()
       Graph graph;
       const NodeId out = graph.add(kOutputType, {});
       const NodeId node = graph.add(type, {});
+
       for (std::size_t i = 0; i < inputs.size(); ++i)
         graph.find(node)->inputs[i + 1] = glm::vec4(inputs[i]); // after UV
+
       graph.connect(node, output, out, kBaseColor);
       const CompiledGraph compiled = compile(graph);
       return compiled.shader ? evaluate(compiled, point).baseColor
@@ -640,6 +687,7 @@ int main()
     CHECK(near(run("checkerboard", 0, b), glm::vec3(0.85f)));
 
     bool inRange = true, repeats = true;
+
     for (int i = 0; i < 200; ++i)
     {
       SurfacePoint point;
@@ -650,6 +698,7 @@ int main()
       inRange = inRange && distance >= 0.0f && distance < 1.5f &&
                 cell >= 0.0f && cell < 1.0f;
     }
+
     CHECK(inRange);
     CHECK(repeats);
     // Randomness 0: a grid, each point at its square's middle.
@@ -666,8 +715,10 @@ int main()
     graph.connect(triplanar, 1, out, kBaseColor);
     const CompiledGraph compiled = compile(graph);
     CHECK(compiled.errors.empty());
+
     if (!compiled.shader)
       return testing::report("materialGraphTests");
+
     // 2x1: black left half, white right half.
     auto image = std::make_shared<TextureData>();
     image->width = 2;
@@ -726,10 +777,12 @@ int main()
     {
       if (type.id == kOutputType)
         continue;
+
       Graph graph;
       const NodeId out = graph.add(std::string(kOutputType), {});
       const NodeId node = graph.add(type.id, {});
       CHECK(node != 0);
+
       for (uint32_t i = 0; i < type.outputs.size(); ++i)
       {
         Graph copy = graph;
@@ -784,10 +837,12 @@ int main()
          }},
         {PointInputs::Time, [](SurfacePoint& p) { p.time = 4.9f; }},
     };
+
     for (const NodeType& type : nodeTypes())
     {
       if (type.id == kOutputType)
         continue;
+
       for (uint32_t i = 0; i < type.outputs.size(); ++i)
       {
         Graph graph;
@@ -795,14 +850,18 @@ int main()
         const NodeId node = graph.add(type.id, {});
         graph.connect(node, i, out, kEmission);
         const CompiledGraph compiled = compile(graph);
+
         if (!compiled.shader)
           continue;
+
         const PointInputs reads = compiled.shader->reads(kEmission);
         const glm::vec3 before = evaluate(compiled, base).emission;
+
         for (const Change& change : changes)
         {
           SurfacePoint changed = base;
           change.apply(changed);
+
           if (!near(evaluate(compiled, changed).emission, before) &&
               !any(reads & change.part))
           {
@@ -849,6 +908,7 @@ int main()
     Graph shared;
     const NodeId sharedOut = shared.add(std::string(kOutputType), {});
     NodeId last = shared.add("uv", {});
+
     for (int i = 0; i < 40; ++i)
     {
       const NodeId next = shared.add("add", {});
@@ -856,6 +916,7 @@ int main()
       shared.connect(last, 0, next, 1);
       last = next;
     }
+
     shared.connect(last, 0, sharedOut, kEmission);
     const CompiledGraph sharedCompiled = compile(shared);
     CHECK(sharedCompiled.shader &&

@@ -1,7 +1,7 @@
 #include "../../testHarness.h"
-
-#include <engine/core/ecs/ecs.h>
-#include <engine/core/logger/logger.h>
+#include "engine/core/ecs/ecs.h"
+#include "engine/core/ecs/sceneData.h"
+#include "engine/core/logger/logger.h"
 
 #include <memory>
 #include <string>
@@ -80,8 +80,10 @@ struct Errors
   {
     Logger::flush();
     int found = 0;
+
     for (const std::string& line : lines)
       found += line.find(part) != std::string::npos ? 1 : 0;
+
     return found;
   }
 };
@@ -114,8 +116,10 @@ int main()
   {
     Registry reg;
     Scoreboard& board = reg.addSceneData<Scoreboard>();
+
     for (int i = 0; i < 100; ++i)
       reg.createEntity().addComponent<Health>(Health{i});
+
     reg.flushEntities();
     reg.addSceneData<MatchRules>();
     CHECK(reg.sceneData<Scoreboard>() == &board);

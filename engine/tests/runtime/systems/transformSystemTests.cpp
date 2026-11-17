@@ -1,16 +1,18 @@
 #include "../../testHarness.h"
+#include "engine/core/components/transformComponent.h"
+#include "engine/core/components/worldTransformComponent.h"
+#include "engine/core/ecs/ecs.h"
+#include "engine/core/ecs/hierarchyLinks.h"
+#include "engine/core/hierarchy/hierarchy.h"
+#include "engine/core/logger/logger.h"
+#include "engine/core/util/debugFeatures.h"
+#include "engine/runtime/assetStore/assetStore.h"
+#include "engine/runtime/sceneManager/scene.h"
+#include "engine/runtime/systems/transformSystem.h"
 
-#include <engine/core/components/transformComponent.h>
-#include <engine/core/components/worldTransformComponent.h>
-#include <engine/core/ecs/ecs.h>
-#include <engine/core/hierarchy/hierarchy.h>
-#include <engine/core/logger/logger.h>
-#include <engine/core/util/debugFeatures.h>
-#include <engine/runtime/assetStore/assetStore.h>
-#include <engine/runtime/sceneManager/scene.h>
-#include <engine/runtime/systems/transformSystem.h>
-
-#include <glm/glm/gtc/quaternion.hpp>
+#include <glm/glm/ext/matrix_float4x3.hpp>
+#include <glm/glm/ext/matrix_float4x4.hpp>
+#include <glm/glm/ext/quaternion_geometric.hpp>
 
 #include <cstdint>
 #include <cstring>
@@ -37,8 +39,10 @@ struct World
         glm::vec3(at, 0.3f * at, -0.7f),
         glm::normalize(glm::quat(0.9f, 0.1f * at, -0.2f, 0.3f)),
         glm::vec3(1.1f, 0.9f, 1.3f));
+
     if (parent.isValid())
       hierarchy::setParent(entity, parent);
+
     return entity;
   }
 
@@ -56,30 +60,6 @@ const WorldTransformComponent& cacheOf(const Entity& entity)
   return *entity.getComponent<WorldTransformComponent>();
 }
 
-uint32_t versionOf(const Entity& entity) { return cacheOf(entity).version; }
-
-// Bit-for-bit equality, which == on floats isn't (0 and -0, NaN).
-bool same(const glm::mat4& a, const glm::mat4& b)
-{
-  return std::memcmp(&a, &b, sizeof(a)) == 0;
-}
-
-// The entity's world matrix composed from the top with composeWorld(), from
-// the transforms alone: the reference every read must equal.
-glm::mat4 reference(const Entity& entity)
-{
-  std::vector<const TransformComponent*> chain;
-  for (Entity at = entity; at.isValid(); at = hierarchy::parentOf(at))
-    if (TransformComponent* transform = at.getComponent<TransformComponent>())
-      chain.push_back(transform);
-  if (chain.empty())
-    return glm::mat4(1.0f);
-  glm::mat4x3 world = hierarchy::composeWorld(nullptr, *chain.back());
-  for (auto it = chain.rbegin() + 1; it != chain.rend(); ++it)
-    world = hierarchy::composeWorld(&world, **it);
-  return glm::mat4(world);
-}
-
 // A system whose render() notes whether the entity's cache was made by then.
 class CacheProbe : public System
 {
@@ -95,6 +75,35 @@ protected:
   }
 };
 
+uint32_t versionOf(const Entity& entity) { return cacheOf(entity).version; }
+
+// Bit-for-bit equality, which == on floats isn't (0 and -0, NaN).
+bool same(const glm::mat4& a, const glm::mat4& b)
+{
+  return std::memcmp(&a, &b, sizeof(a)) == 0;
+}
+
+// The entity's world matrix composed from the top with composeWorld(), from
+// the transforms alone: the reference every read must equal.
+glm::mat4 reference(const Entity& entity)
+{
+  std::vector<const TransformComponent*> chain;
+
+  for (Entity at = entity; at.isValid(); at = hierarchy::parentOf(at))
+    if (TransformComponent* transform = at.getComponent<TransformComponent>())
+      chain.push_back(transform);
+
+  if (chain.empty())
+    return glm::mat4(1.0f);
+
+  glm::mat4x3 world = hierarchy::composeWorld(nullptr, *chain.back());
+
+  for (auto it = chain.rbegin() + 1; it != chain.rend(); ++it)
+    world = hierarchy::composeWorld(&world, **it);
+
+  return glm::mat4(world);
+}
+
 } // namespace
 
 int main()
@@ -106,6 +115,7 @@ int main()
     Entity mid = w.placed(root, 3.0f);
     Entity leaf = w.placed(mid, 5.0f);
     w.frame();
+
     for (const Entity& entity : {root, mid, leaf})
     {
       CHECK(versionOf(entity) != 0);
@@ -114,6 +124,7 @@ int main()
                  hierarchy::worldMatrix(entity)));
       CHECK(same(cacheOf(entity).matrix(), reference(entity)));
     }
+
     CHECK(cacheOf(leaf).parent == mid.getId());
     CHECK(cacheOf(root).parent == HierarchyLinks::kNone);
     CHECK(cacheOf(leaf).position() ==
@@ -221,21 +232,27 @@ int main()
     World w;
     std::vector<Entity> chain;
     Entity parent;
+
     for (int level = 0; level < 5; ++level)
       chain.push_back(parent = w.placed(parent, 1.0f + level));
+
     w.frame();
     // The write, then the read: exactly what a pass would make.
     const auto freshAfterWrite = [&](int level)
     {
       chain[level].getComponent<TransformComponent>()->position.y += 0.25f;
       std::vector<glm::mat4> read;
+
       for (const Entity& entity : chain)
         read.push_back(hierarchy::worldMatrix(entity));
+
       w.frame();
       bool same = true;
+
       for (std::size_t i = 0; i < chain.size(); ++i)
         same = same && ::same(read[i], cacheOf(chain[i]).matrix()) &&
                ::same(read[i], reference(chain[i]));
+
       return same;
     };
     CHECK(freshAfterWrite(0)); // the root
@@ -320,9 +337,12 @@ int main()
     World w;
     std::vector<Entity> chain;
     Entity parent;
+
     for (int level = 0; level < 75; ++level)
       chain.push_back(parent = w.placed(parent, 0.1f * level));
+
     w.frame();
+
     for (int level : {0, 5, 31, 32, 33, 42, 63, 64, 74})
     {
       // Clean: straight from the caches.

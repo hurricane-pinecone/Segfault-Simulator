@@ -1,16 +1,24 @@
 #include "../../testHarness.h"
-
-#include <engine/core/ecs/ecs.h>
-#include <engine/core/events/events.h>
-#include <engine/core/events/responder.h>
-#include <engine/core/logger/logger.h>
-#include <engine/core/util/debugFeatures.h>
+#include "engine/core/ecs/ecs.h"
+#include "engine/core/events/eventBroadcast.h"
+#include "engine/core/events/eventQueue.h"
+#include "engine/core/events/eventRows.h"
+#include "engine/core/events/eventRules.h"
+#include "engine/core/events/events.h"
+#include "engine/core/events/eventTraits.h"
+#include "engine/core/events/responder.h"
+#include "engine/core/logger/logger.h"
+#include "engine/core/util/debugFeatures.h"
+#include "engine/core/util/typeList.h"
 
 #include <algorithm>
 #include <atomic>
+#include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <iterator>
 #include <optional>
+#include <ranges>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -27,7 +35,7 @@ namespace
 {
 
 // A response handler that does nothing, for requesters that only ask.
-constexpr auto ignored = [](const Entity&, const auto&) {};
+constexpr auto IGNORED = [](const Entity&, const auto&) {};
 
 struct [[sfs::event_entity_news]] MovedEvent
 {
@@ -241,9 +249,11 @@ struct LogCapture
   int count(Logger::Level level, std::string_view part) const
   {
     int found = 0;
+
     for (const auto& [at, line] : lines)
       if (at == level && line.find(part) != std::string::npos)
         ++found;
+
     return found;
   }
 };
@@ -666,9 +676,11 @@ int main()
     std::vector<EventStats> stats;
     registry.events().stats(stats);
     uint64_t dropped = 0;
+
     for (const EventStats& type : stats)
       if (type.type.find("RouteDoneResponse (response to") != std::string::npos)
         dropped = type.dropped;
+
     CHECK(dropped == 1u);
   }
 
@@ -682,7 +694,7 @@ int main()
         {
           plans = self.consumer<PlanRequest>();
           // Ignored: nothing makes the response type's queue yet.
-          asker = self.requester<PlanRequest>().onResponse(ignored);
+          asker = self.requester<PlanRequest>().onResponse(IGNORED);
         });
     const Entity vehicle = registry.createEntity();
     asker.request(vehicle, PlanRequest{1});
@@ -704,9 +716,11 @@ int main()
     std::vector<EventStats> stats;
     registry.events().stats(stats);
     bool made = false;
+
     for (const EventStats& type : stats)
       made = made || type.type.find("PlannedResponse (response to") !=
                          std::string::npos;
+
     CHECK(made);
   }
 
@@ -723,7 +737,7 @@ int main()
           [&](Probe& self)
           {
             asked = self.consumer<RouteRequest>();
-            asker = self.requester<RouteRequest>().onResponse(ignored);
+            asker = self.requester<RouteRequest>().onResponse(IGNORED);
           });
       const Entity vehicle = registry.createEntity();
       asker.request(vehicle, RouteRequest{1});
@@ -757,7 +771,7 @@ int main()
           [&](Probe& self)
           {
             asked = self.consumer<RouteRequest>();
-            asker = self.requester<RouteRequest>().onResponse(ignored);
+            asker = self.requester<RouteRequest>().onResponse(IGNORED);
           });
       const Entity vehicle = registry.createEntity();
       asker.request(vehicle, RouteRequest{1});
@@ -812,6 +826,7 @@ int main()
         [&](Probe&)
         {
           count = all.read().size();
+
           for (const FoundEvent& found : latest.readLatest())
             newest.push_back(found.value);
         });
@@ -851,25 +866,31 @@ int main()
         registry.events().broadcast<FoundEvent>();
     std::atomic<bool> go{false};
     std::vector<std::thread> workers;
+
     for (int t = 0; t < 4; ++t)
       workers.emplace_back(
           [&]
           {
             while (!go.load())
               std::this_thread::yield();
+
             for (int i = 0; i < 500; ++i)
               broadcast.send(key, FoundEvent{i});
           });
+
     go.store(true);
     std::size_t all = 0;
+
     for (int round = 0; round < 50; ++round)
     {
       registry.events().takeIn();
       frame(registry);
       run(registry, probe, [&](Probe&) { all += found.read().size(); });
     }
+
     for (std::thread& worker : workers)
       worker.join();
+
     frame(registry);
     run(registry, probe, [&](Probe&) { all += found.read().size(); });
     CHECK(all == 2000u);
@@ -888,14 +909,17 @@ int main()
     Probe& asker = registry.addSystem<Probe>(
         [&](Probe& self)
         {
-          busy = self.requester<BusyRequest>().onResponse(ignored).onProgress(
+          busy = self.requester<BusyRequest>().onResponse(IGNORED).onProgress(
               [&](const Entity& entity, const BusyStepResponse&)
               { stale += entity == keys[0] ? 1 : 0; });
         });
+
     for (int i = 0; i < 4; ++i)
       keys.push_back(registry.createEntity());
+
     for (const Entity& key : keys)
       busy.request(key, BusyRequest{0});
+
     std::vector<Responder<BusyRequest>> responders;
     run(registry,
         planner,
@@ -907,32 +931,41 @@ int main()
     run(registry, asker);
     std::atomic<bool> go{false};
     std::vector<std::thread> workers;
+
     for (int t = 0; t < 4; ++t)
       workers.emplace_back(
           [&, t]
           {
             while (!go.load())
               std::this_thread::yield();
+
             for (int i = 0; i < 2000 && !responders[t].superseded(); ++i)
               responders[t].progress(BusyStepResponse{t});
           });
+
     go.store(true);
+
     for (int round = 0; round < 50; ++round)
     {
       registry.events().takeIn();
+
       if (round == 10)
         busy.request(keys[0], BusyRequest{1});
     }
+
     for (std::thread& worker : workers)
       worker.join();
+
     // Only responses taken in after the newer request count as stale.
     stale = 0;
     frame(registry);
+
     for (int f = 0; f < 2; ++f)
     {
       run(registry, asker);
       frame(registry);
     }
+
     CHECK(stale == 0);
   }
 
@@ -946,7 +979,7 @@ int main()
         [&](Probe& self)
         {
           asked = self.consumer<StaleRequest>();
-          stale = self.requester<StaleRequest>().onResponse(ignored);
+          stale = self.requester<StaleRequest>().onResponse(IGNORED);
         });
     LogCapture log;
     const Entity old = registry.createEntity();
@@ -1027,6 +1060,7 @@ int main()
             responder.progress(RouteLegResponse{1});
             responder.respond(RouteDoneResponse{1});
           }
+
           for (auto [entity, detour, responder] : detours.read())
             responder.respond(RouteDoneResponse{2});
         });
@@ -1065,8 +1099,10 @@ int main()
         {
           for (const DamageEvent& event : damage.read())
             damages.push_back(event.amount);
+
           for (const FireDamageEvent& event : fire.read())
             burns.push_back(event.burn);
+
           infernos = inferno.read().size();
         });
     CHECK((damages == std::vector<int>{1, 2, 3, 4}));
@@ -1089,11 +1125,14 @@ int main()
                 if (event.amount < 10)
                   for (int i = 0; i < 64; ++i)
                     self.send(FireDamageEvent{{event.amount + 10}, 1});
+
                 seen.push_back(event.amount);
               });
         });
+
     for (int i = 0; i < 3; ++i)
       registry.events().send(DamageEvent{i});
+
     run(registry, probe);
     CHECK((seen == std::vector<int>{0, 1, 2}));
     run(registry, probe);
@@ -1112,9 +1151,11 @@ int main()
     std::vector<EventStats> stats;
     registry.events().stats(stats);
     std::size_t baseKept = 1;
+
     for (const EventStats& type : stats)
       if (type.type.ends_with("::DamageEvent"))
         baseKept = type.kept;
+
     CHECK(baseKept == 0u);
   }
 
@@ -1141,6 +1182,7 @@ int main()
         {
           for (auto [entity, hit] : hits.read())
             seen.emplace_back(entity, hit.amount);
+
           for (auto [entity, hit] : latest.readLatest())
             newest.push_back(hit.amount);
         });
@@ -1234,8 +1276,8 @@ int main()
         [&](Probe& self)
         {
           looks = self.consumer<LookRequest>();
-          first = self.requester<LookRequest>().onResponse(ignored);
-          second = self.requester<LookRequest>().onResponse(ignored);
+          first = self.requester<LookRequest>().onResponse(IGNORED);
+          second = self.requester<LookRequest>().onResponse(IGNORED);
         });
     const Entity a = registry.createEntity();
     first.request(a, LookRequest{1});
@@ -1265,8 +1307,8 @@ int main()
         [&](Probe& self)
         {
           looks = self.consumer<LookRequest>();
-          doomed = self.requester<LookRequest>().onResponse(ignored);
-          kept = self.requester<LookRequest>().onResponse(ignored);
+          doomed = self.requester<LookRequest>().onResponse(IGNORED);
+          kept = self.requester<LookRequest>().onResponse(IGNORED);
         });
     registry.flushEntities();
     const Entity a = registry.createEntity();
@@ -1427,12 +1469,13 @@ int main()
                       responder.respond(LookFoundResponse{look.value}) ? 1 : 0;
                   return;
                 }
+
                 // The asking object goes in the middle of the loop.
                 asker.reset();
                 supersededAfter = responder.superseded();
                 respondedAfter = responder.respond(LookFoundResponse{2});
               });
-          asker = self.requester<LookRequest>().onResponse(ignored);
+          asker = self.requester<LookRequest>().onResponse(IGNORED);
         });
     asker->request(registry.createEntity(), LookRequest{1});
     run(registry, server);
@@ -1451,7 +1494,7 @@ int main()
       Registry registry;
       registry.addSystem<Probe>(
           [&](Probe& self)
-          { outlived = self.requester<LookRequest>().onResponse(ignored); });
+          { outlived = self.requester<LookRequest>().onResponse(IGNORED); });
       outlived.request(registry.createEntity(), LookRequest{1});
     }
     outlived.request(a, LookRequest{2});
@@ -1468,7 +1511,7 @@ int main()
     EventRequester<LookRequest> asker;
     registry.addSystem<Probe>(
         [&](Probe& self)
-        { asker = self.requester<LookRequest>().onResponse(ignored); });
+        { asker = self.requester<LookRequest>().onResponse(IGNORED); });
     LogCapture log;
     asker.request(Entity{}, LookRequest{1});
     CHECK(log.count(Logger::Level::ERROR, "an invalid entity handle") == 1);
@@ -1495,7 +1538,7 @@ int main()
         [&](Probe& self)
         {
           looks = self.consumer<LookRequest>();
-          first = self.requester<LookRequest>().onResponse(ignored);
+          first = self.requester<LookRequest>().onResponse(IGNORED);
         });
     const Entity a = registry.createEntity();
     first->request(a, LookRequest{1});
@@ -1558,12 +1601,14 @@ int main()
           kept = self.requester<LookRequest>().onResponse(
               [&](const Entity&, const LookFoundResponse&) { ++keptGot; });
         });
+
     for (int i = 0; i < 3; ++i)
     {
       const Entity key = registry.createEntity();
       doomed->request(key, LookRequest{i});
       kept.request(key, LookRequest{i});
     }
+
     run(registry,
         server,
         [&](Probe&)
@@ -1595,11 +1640,11 @@ int main()
                        .onProgresses(
                            [&](ResponseRange<TravelRequest, StepResponse> steps)
                            { keptRange.emplace(steps); })
-                       .onResponse(ignored);
+                       .onResponse(IGNORED);
           other = self.requester<TravelRequest>()
                       .onProgress([&](const Entity&, const StepResponse&)
                                   { ++otherSteps; })
-                      .onResponse(ignored);
+                      .onResponse(IGNORED);
         });
     const Entity a = registry.createEntity();
     holder.request(a, TravelRequest{1});
@@ -1616,11 +1661,13 @@ int main()
     responders[0].progress(StepResponse{0});
     run(registry, askers);
     LogCapture log;
+
     for (int i = 0; i < 100; ++i)
     {
       responders[0].progress(StepResponse{i});
       responders[1].progress(StepResponse{i});
     }
+
     frame(registry);
     CHECK(log.count(Logger::Level::ERROR, "behind a range kept past") == 1);
     keptRange.reset();
@@ -1641,8 +1688,8 @@ int main()
     Probe& asker = registry.addSystem<Probe>(
         [&](Probe& self)
         {
-          idle = self.requester<TravelRequest>().onProgress(ignored).onResponse(
-              ignored);
+          idle = self.requester<TravelRequest>().onProgress(IGNORED).onResponse(
+              IGNORED);
         });
     asker.setEnabled(false);
     idle.request(registry.createEntity(), TravelRequest{1});
@@ -1655,12 +1702,15 @@ int main()
             streaming = responder;
         });
     LogCapture log;
+
     for (int frame = 0; frame < 70; ++frame)
     {
       for (int i = 0; i < 1000; ++i)
         streaming.progress(StepResponse{i});
+
       registry.events().update();
     }
+
     CHECK(log.count(Logger::Level::WARN, "responses it hasn't read") == 0);
   }
 
@@ -1689,11 +1739,13 @@ int main()
     // The server reads it once and keeps no Responder.
     run(registry, server, [&](Probe&) { travels.read(); });
     CHECK(travels.open(unit));
+
     for (int frames = 0; frames < 30; ++frames)
     {
       frame(registry);
       run(registry, asker);
     }
+
     CHECK(traveller.waiting(unit));
     CHECK(travels.progress(unit, StepResponse{1}));
     CHECK(travels.respond(unit, ArrivedResponse{9}));
@@ -1756,7 +1808,7 @@ int main()
         [&](Probe& self)
         {
           looks = self.consumer<LookRequest>();
-          asker = self.requester<LookRequest>().onResponse(ignored);
+          asker = self.requester<LookRequest>().onResponse(IGNORED);
         });
     registry.flushEntities();
     const Entity cancelled = registry.createEntity();
@@ -1798,8 +1850,10 @@ int main()
                 { ++got[static_cast<std::size_t>(i)]; }));
         });
     const Entity a = registry.createEntity();
+
     for (int i = 0; i < 5; ++i)
       askers[static_cast<std::size_t>(i)].request(a, LookRequest{i});
+
     std::vector<Responder<LookRequest>> responders;
     run(registry,
         server,
@@ -1810,8 +1864,10 @@ int main()
         });
     // Close the first, a middle and the last asked; two stay open.
     CHECK(responders.size() == 5u);
+
     for (const std::size_t closed : {0u, 2u, 4u})
       CHECK(responders[closed].respond(LookFoundResponse{1}));
+
     CHECK(looks.open(a));
     CHECK(looks.respond(a, LookFoundResponse{2}));
     CHECK(!looks.open(a));
@@ -1825,6 +1881,7 @@ int main()
     CHECK(!looks.open(a));
     run(registry, asking);
     CHECK((got == std::vector<int>{1, 1, 2, 1, 1}));
+
     for (EventRequester<LookRequest>& asker : askers)
       CHECK(!asker.waiting(a));
   }
@@ -1839,7 +1896,7 @@ int main()
         [&](Probe& self)
         {
           fars = self.consumer<FarRequest>();
-          asker = self.requester<FarRequest>().onResponse(ignored);
+          asker = self.requester<FarRequest>().onResponse(IGNORED);
         });
     const Entity a = registry.createEntity();
     asker.request(a, FarRequest{1});
@@ -1983,7 +2040,7 @@ int main()
           news = self.consumer<NewsEvent>();
           moved = self.consumer<MovedEvent>();
           route = self.consumer<RouteRequest>();
-          asker = self.requester<RouteRequest>().onResponse(ignored);
+          asker = self.requester<RouteRequest>().onResponse(IGNORED);
         });
     const Entity a = registry.createEntity();
     registry.events().send(NewsEvent{1});
@@ -2004,6 +2061,7 @@ int main()
       for (const EventStats& type : stats)
         if (type.type.ends_with(name))
           return &type;
+
       return nullptr;
     };
     const EventStats* newsStats = find("::NewsEvent");
@@ -2024,6 +2082,7 @@ int main()
     registry.events().send(a, LoggedKeyedEvent{1});
     registry.events().cancel<LoggedKeyedEvent>(a);
     debugFeatures::setLogEvents("");
+
     if (debugFeatures::enabled())
     {
       CHECK(log.count(Logger::Level::INFO, "[entity news] #0 for entity") == 1);

@@ -1,16 +1,25 @@
 #include "formatOrder.h"
 
 #include "formatLines.h"
+#include "lints.h"
 #include "lintSupport.h"
+
+#include <tree_sitter/api.h>
 
 #include <algorithm>
 #include <array>
 #include <cctype>
-#include <map>
-#include <memory>
+#include <cstddef>
+#include <cstdint>
+#include <filesystem>
+#include <initializer_list>
 #include <set>
+#include <string>
+#include <string_view>
 #include <system_error>
 #include <unordered_set>
+#include <utility>
+#include <vector>
 
 namespace sfs::lsp
 {

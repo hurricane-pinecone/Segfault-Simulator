@@ -1,14 +1,19 @@
 #include "../../testHarness.h"
+#include "engine/core/rendering/camera.h"
+#include "engine/core/rendering/lightClusters.h"
+#include "engine/core/rendering/lighting.h"
 
-#include <engine/core/rendering/camera.h>
-#include <engine/core/rendering/lightClusters.h>
-
-#include "glm/glm/common.hpp"
-#include "glm/glm/geometric.hpp"
+#include <glm/glm/common.hpp>
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_float4.hpp>
+#include <glm/glm/ext/vector_uint2.hpp>
+#include <glm/glm/geometric.hpp>
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <random>
+#include <vector>
 
 using namespace sfs;
 
@@ -52,20 +57,27 @@ bool everyReachedPointFindsItsLight(const Setup& s,
   std::mt19937 random(seed);
   std::uniform_real_distribution<float> unit(-1.0f, 1.0f);
   int checked = 0;
+
   for (uint32_t i = 0; i < lights.size(); ++i)
     for (int sample = 0; sample < 40; ++sample)
     {
       glm::vec3 offset(unit(random), unit(random), unit(random));
+
       if (glm::length(offset) > 1.0f)
         continue;
+
       const glm::vec3 point = lights[i].position + offset * lights[i].radius;
       const glm::vec4 clip = s.view.viewProjection * glm::vec4(point, 1.0f);
+
       if (clip.w <= 0.0f)
         continue;
+
       const glm::vec3 ndc = glm::vec3(clip) / clip.w;
+
       if (std::abs(ndc.x) > 1.0f || std::abs(ndc.y) > 1.0f || ndc.z < 0.0f ||
           ndc.z > 1.0f)
         continue; // not on screen
+
       const glm::vec2 pixel((ndc.x * 0.5f + 0.5f) * s.view.viewport.x,
                             (0.5f - ndc.y * 0.5f) * s.view.viewport.y);
       const float depth =
@@ -73,9 +85,11 @@ bool everyReachedPointFindsItsLight(const Setup& s,
       const uint32_t cluster =
           s.grid.index(s.grid.tileOf(pixel), s.grid.sliceOf(depth));
       ++checked;
+
       if (!listed(lists, cluster, i))
         return false;
     }
+
   return checked > 100;
 }
 
@@ -85,12 +99,14 @@ std::vector<PointLight> scatter(uint32_t count, float spread, uint32_t seed)
   std::uniform_real_distribution<float> place(-spread, spread);
   std::uniform_real_distribution<float> reach(0.5f, 6.0f);
   std::vector<PointLight> lights(count);
+
   for (PointLight& light : lights)
   {
     light.position = {
         place(random), place(random), place(random) * 0.2f + 2.0f};
     light.radius = reach(random);
   }
+
   return lights;
 }
 
@@ -175,21 +191,26 @@ int main()
     camera.distance = 20.0f;
     const Setup s = setup(camera, {256.0f, 256.0f});
     std::vector<PointLight> lights(40);
+
     for (PointLight& light : lights)
     {
       light.position = camera.target;
       light.radius = 1.0f;
     }
+
     ClusterLights lists;
     assignLights(s.grid, s.view, lights, lists, 16);
     CHECK(lists.overfull > 0u);
     bool capped = true, firstOnes = true;
+
     for (const glm::uvec2& range : lists.ranges)
     {
       capped = capped && range.y <= 16u;
+
       for (uint32_t k = 0; k < range.y; ++k)
         firstOnes = firstOnes && lists.indices[range.x + k] == k;
     }
+
     CHECK(capped);
     CHECK(firstOnes);
   }
@@ -199,6 +220,7 @@ int main()
   {
     std::mt19937 random(7);
     std::uniform_real_distribution<float> unit(-1.0f, 1.0f);
+
     for (const float outer : {5.0f, 30.0f, 44.0f, 46.0f, 70.0f, 89.0f})
     {
       PointLight light;
@@ -208,18 +230,23 @@ int main()
       const glm::vec4 bounds = lightBounds(light);
       CHECK(bounds.w < light.radius);
       bool inside = true;
+
       for (int sample = 0; sample < 2000; ++sample)
       {
         const glm::vec3 offset(unit(random), unit(random), unit(random));
+
         if (glm::length(offset) > 1.0f || glm::length(offset) < 1e-3f)
           continue;
+
         if (glm::dot(glm::normalize(offset), light.spotDirection) <
             light.spotCosOuter)
           continue; // outside the cone
+
         const glm::vec3 point = light.position + offset * light.radius;
         inside = inside &&
                  glm::distance(point, glm::vec3(bounds)) <= bounds.w * 1.001f;
       }
+
       CHECK(inside);
     }
   }
@@ -252,17 +279,21 @@ int main()
     std::mt19937 random(3);
     std::uniform_real_distribution<float> unit(-1.0f, 1.0f);
     bool reached = true;
+
     for (int sample = 0; sample < 2000; ++sample)
     {
       const glm::vec3 point =
           glm::vec3(unit(random), unit(random), unit(random)) * light.radius;
       const float d = glm::length(point);
+
       if (d > light.radius || d < 1e-3f || point.x / d < light.spotCosOuter)
         continue;
+
       const glm::vec3 center =
           point + glm::vec3(unit(random), unit(random), unit(random));
       reached = reached && lightReaches(light, center, 1.8f);
     }
+
     CHECK(reached);
   }
 
@@ -279,18 +310,22 @@ int main()
     std::mt19937 random(5);
     std::uniform_real_distribution<float> unit(-1.0f, 1.0f);
     bool covered = true;
+
     for (int sample = 0; sample < 4000; ++sample)
     {
       const glm::vec3 direction(unit(random), unit(random), unit(random));
+
       if (glm::length(direction) < 1e-3f ||
           glm::dot(glm::normalize(direction), light.spotDirection) <
               light.spotCosOuter)
         continue;
+
       const glm::vec3 a = glm::abs(direction);
       const int axis = a.x >= a.y && a.x >= a.z ? 0 : (a.y >= a.z ? 1 : 2);
       const int face = axis * 2 + (direction[axis] >= 0.0f ? 0 : 1);
       covered = covered && lightReachesFace(light, face);
     }
+
     CHECK(covered);
   }
 

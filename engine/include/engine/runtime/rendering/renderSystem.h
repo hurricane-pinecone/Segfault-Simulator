@@ -1,25 +1,36 @@
 #pragma once
 
-#include "engine/core/ecs/ecs.h" // IWYU pragma: keep
+#include "engine/core/ecs/ecs.h"
+#include "engine/core/ecs/moduleSettings.h"
+#include "engine/core/rendering/ambientOcclusion.h"
 #include "engine/core/rendering/camera.h"
+#include "engine/core/rendering/colorGrading.h"
+#include "engine/core/rendering/contactShadows.h"
 #include "engine/core/rendering/debugLines.h"
+#include "engine/core/rendering/emissionLights.h"
+#include "engine/core/rendering/fog.h"
 #include "engine/core/rendering/lighting.h"
-#include "engine/core/rendering/lightning.h"
+#include "engine/core/rendering/mesh.h"
 #include "engine/core/rendering/rain.h"
 #include "engine/core/rendering/sky.h"
+#include "engine/core/rendering/sunShadow.h"
 #include "engine/core/rendering/visualStyle.h"
-#include "engine/core/sceneData/ambientLighting.h"
-#include "engine/core/sceneData/celestialBodies.h"
 #include "engine/core/sceneData/clouds.h"
-#include "engine/core/sceneData/directionalLighting.h"
 #include "engine/core/sceneData/rain.h"
 #include "engine/core/sceneData/wind.h"
 #include "engine/runtime/rendering/commands.h"
+#include "engine/runtime/rendering/frame.h"
 #include "engine/runtime/rendering/meshLibrary.h"
+#include "engine/runtime/rendering/modules/renderModule.h"
 #include "engine/runtime/rendering/modules/renderModuleHost.h"
 #include "engine/runtime/rendering/renderContext.h"
 #include "engine/runtime/rendering/renderTexture.h"
 #include "engine/runtime/rendering/space2D.h"
+
+#include <glm/glm/ext/matrix_float4x4.hpp>
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
+#include <glm/glm/ext/vector_int2.hpp>
 
 #include <cstddef>
 #include <functional>
@@ -30,6 +41,7 @@
 #include <string_view>
 #include <typeindex>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace sfs
@@ -463,9 +475,10 @@ private:
   // by every object using the pair), so each is worked out once a frame.
   struct SampleKey
   {
+    bool operator==(const SampleKey&) const = default;
+
     const SurfaceSample* samples;
     const MeshMaterial* material;
-    bool operator==(const SampleKey&) const = default;
   };
   struct SampleKeyHash
   {

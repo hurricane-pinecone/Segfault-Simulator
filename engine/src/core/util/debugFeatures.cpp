@@ -5,6 +5,7 @@
 #include <cstring>
 #include <mutex>
 #include <string>
+#include <string_view>
 
 namespace sfs::debugFeatures
 {
@@ -70,27 +71,34 @@ bool logEvents(std::string_view typeName)
 {
   if (!enabled())
     return false;
+
   EventLogList& list = eventLogList();
   const std::lock_guard lock(list.mutex);
   std::string_view rest = list.types;
+
   while (!rest.empty())
   {
     const std::size_t comma = rest.find(',');
     std::string_view item = rest.substr(0, comma);
     rest = comma == std::string_view::npos ? std::string_view()
                                            : rest.substr(comma + 1);
+
     while (!item.empty() && item.front() == ' ')
       item.remove_prefix(1);
+
     while (!item.empty() && item.back() == ' ')
       item.remove_suffix(1);
+
     if (item.empty())
       continue;
+
     // A name without namespaces matches the end of a qualified one.
     if (item == "*" || item == typeName ||
         (typeName.ends_with(item) &&
          typeName.substr(0, typeName.size() - item.size()).ends_with("::")))
       return true;
   }
+
   return false;
 }
 

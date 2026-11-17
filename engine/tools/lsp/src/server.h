@@ -4,13 +4,17 @@
 #include "lints.h"
 #include "lspFeatures.h"
 #include "projectIndex.h"
+#include "sfs/codegen/model.h"
+#include "sfs/codegen/rules.h"
 
 #include <nlohmann/json.hpp>
 
 #include <chrono>
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 struct TSParser;
@@ -27,8 +31,10 @@ namespace sfs::lsp
 class Server
 {
 public:
-  /** How long a document must be still before it's analysed again. */
-  static constexpr std::chrono::milliseconds kSettle{100};
+  /**
+   * The messages the reader thread has cut from stdin, waiting to be handled.
+   */
+  struct Input;
 
   /** @param logTiming log each change's and analysis's cost to stderr */
   explicit Server(bool logTiming);
@@ -40,36 +46,33 @@ public:
    */
   int run();
 
-  /**
-   * The messages the reader thread has cut from stdin, waiting to be handled.
-   */
-  struct Input;
+  /** How long a document must be still before it's analysed again. */
+  static constexpr std::chrono::milliseconds kSettle{100};
 
 private:
+  void analyseAndPublish(Document& document,
+                         codegen::ParseResult* parsed = nullptr);
+  void change(const nlohmann::json& params);
+  void close(const nlohmann::json& params);
+  Document* find(const nlohmann::json& textDocument);
+  nlohmann::json
+  format(const Document& document, const nlohmann::json& params, bool ranged);
   void handle(const std::string& body);
+  void handleNotification(const std::string& method,
+                          const nlohmann::json& params);
   void handleRequest(const nlohmann::json& id,
                      const std::string& method,
                      const nlohmann::json& params);
-  void handleNotification(const std::string& method,
-                          const nlohmann::json& params);
-  nlohmann::json initialize(const nlohmann::json& params);
-  void send(const nlohmann::json& message);
-  nlohmann::json
-  format(const Document& document, const nlohmann::json& params, bool ranged);
-  void showMessage(int type, const std::string& message);
-
-  Document* find(const nlohmann::json& textDocument);
-  const Document* openDocument(const std::filesystem::path& path) const;
-  void open(const nlohmann::json& params);
-  void change(const nlohmann::json& params);
-  void save(const nlohmann::json& params);
-  void close(const nlohmann::json& params);
-  void analyseAndPublish(Document& document,
-                         codegen::ParseResult* parsed = nullptr);
-  void publish(const Document& document);
-  void settle();
-  std::optional<std::chrono::steady_clock::time_point> nextSettle() const;
   void indexIdle();
+  nlohmann::json initialize(const nlohmann::json& params);
+  std::optional<std::chrono::steady_clock::time_point> nextSettle() const;
+  void open(const nlohmann::json& params);
+  const Document* openDocument(const std::filesystem::path& path) const;
+  void publish(const Document& document);
+  void save(const nlohmann::json& params);
+  void send(const nlohmann::json& message);
+  void settle();
+  void showMessage(int type, const std::string& message);
 
   std::shared_ptr<Input> m_input; // shared with the reader thread
   bool m_logTiming = false;

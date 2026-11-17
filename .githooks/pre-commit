@@ -1,63 +1,140 @@
 #!/usr/bin/env bash
-# Format the C++ being committed with clang-format, so the CI `format` check
-# passes. Only staged files in the folders CI checks, and only what's staged: a
-# partly staged file has its staged version formatted, leaving unstaged changes
-# out of the commit.
+# Fix and format the C++ being committed with sfs-lsp: clang-format and the
+# house passes (`sfs-lsp --format`) and the house lints' fixes (`sfs-lsp --fix`).
+# Only what's staged is touched: the staged versions are fixed and formatted in
+# a scratch copy of the index, so a partly staged file has its staged part
+# formatted and its unstaged changes left out of the commit. A fully staged
+# file gets the same changes in the working copy.
+#
+# The same hook serves SFS and every SFS project: it covers the C++ under the
+# repo's .sfs-format, minus that file's `exclude` folders, and does nothing in a
+# repo without one.
 #
 # Turned on by `git config core.hooksPath .githooks`. Skip once with
-# `git commit --no-verify`.
+# `git commit --no-verify`. SFS_LSP names the sfs-lsp to use (else the one on
+# the PATH).
 set -euo pipefail
 
-# The version CI pins (.github/workflows/deploy-web.yml): others format a little
-# differently, and CI would still fail.
-VERSION="17.0.6"
-# The folders CI checks (and engine/lib, which it doesn't: vendored code).
-INCLUDE='^(engine/src|engine/include|engine/tests)/.*\.(cpp|h|hpp|inl)$'
-EXCLUDE='^engine/lib/'
+# The rules whose fixes are applied, in this order.
+FIX_RULES="constexpr-name,else-after-return"
+# The clang-format SFS's CI pins (.github/workflows/deploy-web.yml): other
+# versions lay code out a little differently.
+CLANG_FORMAT_VERSION="17.0.6"
+CPP='\.(cpp|cc|cxx|h|hh|hpp|hxx|inl)$'
+HEADERS='\.(h|hh|hpp|hxx|inl)$'
+CONFIGS='(^|/)\.(clang-format|sfs-format|sfs-lint)$'
 
-files="$(git diff --cached --name-only --diff-filter=ACMR | grep -E "$INCLUDE" | grep -vE "$EXCLUDE" || true)"
+top="$(git rev-parse --show-toplevel)"
+cd "$top"
+[ -f .sfs-format ] || exit 0
+
+# The .sfs-format's `exclude` folders, as one regex of path prefixes.
+exclude="$(sed -n 's/^exclude:[[:space:]]*//p' .sfs-format | tr ',' '\n' |
+  sed 's/^[[:space:]]*//; s/[[:space:]]*$//; s:/*$::; /^$/d; s/[.[\*^$+?(){}|]/\\&/g; s:$:/:' |
+  paste -sd'|' -)"
+included() {
+  if [ -n "$exclude" ]; then
+    grep -E "$1" | grep -vE "^($exclude)" || true
+  else
+    grep -E "$1" || true
+  fi
+}
+
+files="$(git diff --cached --name-only --diff-filter=ACMR | included "$CPP")"
 [ -z "$files" ] && exit 0
 
-# clang-format $VERSION: on the PATH, or installed once into .git/.
+# sfs-lsp: SFS_LSP, else on the PATH, else the newest one built in this repo
+# (the SFS tree).
+sfs_lsp="${SFS_LSP:-$(command -v sfs-lsp || ls -t build*/*/bin/sfs-lsp 2>/dev/null | head -1 || true)}"
+if [ -z "$sfs_lsp" ] || ! command -v "$sfs_lsp" >/dev/null; then
+  echo "pre-commit: no sfs-lsp: put it on the PATH or name it in SFS_LSP; commit with --no-verify to skip fixing and formatting." >&2
+  exit 1
+fi
+
+# clang-format $CLANG_FORMAT_VERSION: on the PATH, or installed once into .git/.
 formatter=""
 for candidate in clang-format clang-format-17; do
-  if command -v "$candidate" >/dev/null && "$candidate" --version | grep -q "version $VERSION"; then
-    formatter="$candidate"
+  if command -v "$candidate" >/dev/null && "$candidate" --version | grep -q "version $CLANG_FORMAT_VERSION"; then
+    formatter="$(command -v "$candidate")"
     break
   fi
 done
 if [ -z "$formatter" ]; then
-  venv="$(git rev-parse --git-dir)/clang-format-$VERSION"
+  venv="$(cd "$(git rev-parse --git-common-dir)" && pwd)/clang-format-$CLANG_FORMAT_VERSION"
   if [ ! -x "$venv/bin/clang-format" ]; then
-    echo "pre-commit: installing clang-format $VERSION (once) into $venv"
-    python3 -m venv "$venv" >/dev/null && "$venv/bin/pip" install -q "clang-format==$VERSION" || {
-      echo "pre-commit: couldn't install clang-format $VERSION; commit with --no-verify to skip formatting." >&2
+    echo "pre-commit: installing clang-format $CLANG_FORMAT_VERSION (once) into $venv"
+    python3 -m venv "$venv" >/dev/null && "$venv/bin/pip" install -q "clang-format==$CLANG_FORMAT_VERSION" || {
+      echo "pre-commit: couldn't install clang-format $CLANG_FORMAT_VERSION; commit with --no-verify to skip formatting." >&2
       exit 1
     }
   fi
   formatter="$venv/bin/clang-format"
 fi
 
-formatted=()
-while IFS= read -r file; do
-  # The staged version, formatted (the repo's .clang-format applies by path).
+# The staged versions, with the headers the order pass reads and the format and
+# lint settings, in a scratch tree laid out like the repo.
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+scratch="$work/tree"
+{
+  printf '%s\n' "$files"
+  git ls-files | included "$HEADERS"
+  git ls-files | grep -E "$CONFIGS" || true
+} | sort -u | git checkout-index --prefix="$scratch/" --stdin
+
+# sfs-lsp names files in the scratch tree: show them as the repo's.
+relative() { sed "s:$scratch/::g"; }
+mapfile -t paths <<< "$files"
+
+# Formats the scratch tree; the reasons a class kept its order go to the log.
+format() {
+  if ! "$sfs_lsp" --format --clang-format "$formatter" --root "$scratch" "${paths[@]}" > /dev/null 2> "$work/format.log"; then
+    relative < "$work/format.log" >&2
+    echo "pre-commit: sfs-lsp --format failed; commit with --no-verify to skip." >&2
+    exit 1
+  fi
+}
+
+# Formatted first, since some fixes only apply to code laid out on its own
+# lines, and again after, for the lines the fixes made.
+format
+
+# Exit 1 only means a file has errors (or its fixes couldn't be written, which
+# formatting then trips on too): the compiler judges errors, so the commit goes on.
+status=0
+"$sfs_lsp" --fix "$FIX_RULES" --root "$scratch" "${paths[@]}" > "$work/fix.log" 2>&1 || status=$?
+if [ "$status" -ge 2 ]; then
+  relative < "$work/fix.log" >&2
+  echo "pre-commit: sfs-lsp --fix failed; commit with --no-verify to skip." >&2
+  exit 1
+fi
+grep -E ': fixed \[' "$work/fix.log" | relative | sed 's/^/pre-commit: /' || true
+
+format
+relative < "$work/format.log" | sed 's/^/pre-commit: /' >&2
+
+changed=()
+for file in "${paths[@]}"; do
   staged="$(git rev-parse ":$file")"
-  mode="$(git ls-files --stage -- "$file" | cut -d' ' -f1)"
-  new="$(git cat-file blob "$staged" | "$formatter" --assume-filename="$file" | git hash-object -w --stdin)"
+  new="$(git hash-object -w --path="$file" --stdin < "$scratch/$file")"
   [ "$new" = "$staged" ] && continue
-  # Fully staged (the working copy is what's staged): it gets the same formatting.
+
+  # Fully staged (the working copy is what's staged): it gets the same changes.
   fully=false
   git diff --quiet -- "$file" && fully=true
+  mode="$(git ls-files --stage -- "$file" | cut -d' ' -f1)"
   git update-index --cacheinfo "$mode,$new,$file"
-  if $fully; then
-    git cat-file blob "$new" > "$file"
-  else
-    echo "pre-commit: formatted the staged part of $file (its unstaged changes aren't formatted yet)"
-  fi
-  formatted+=("$file")
-done <<< "$files"
 
-if [ ${#formatted[@]} -gt 0 ]; then
-  echo "pre-commit: formatted ${#formatted[@]} file(s):"
-  printf '  %s\n' "${formatted[@]}"
+  if $fully; then
+    cp -- "$scratch/$file" "$file"
+  else
+    echo "pre-commit: fixed and formatted the staged part of $file (its unstaged changes aren't yet)"
+  fi
+
+  changed+=("$file")
+done
+
+if [ ${#changed[@]} -gt 0 ]; then
+  echo "pre-commit: fixed and formatted ${#changed[@]} file(s):"
+  printf '  %s\n' "${changed[@]}"
 fi

@@ -3,12 +3,22 @@
 #include "engine/core/components/boxCollider2D.h"
 #include "engine/core/components/rigidBody2DComponent.h"
 #include "engine/core/components/transformComponent.h"
+#include "engine/core/ecs/entity.h"
 #include "engine/core/ecs/registry.h"
 #include "engine/core/hierarchy/hierarchy.h"
 #include "engine/runtime/sceneManager/scene.h"
-#include "glm/glm/common.hpp"
+#include "engine/runtime/systems/collision2D.h"
 
+#include <glm/glm/common.hpp>
+#include <glm/glm/ext/vector_float2.hpp>
+
+#include <algorithm>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 
 namespace sfs
 {
@@ -54,8 +64,10 @@ glm::vec2 separation(const Box& a, const Box& b)
   const float x = std::min(a.max.x, b.max.x) - std::max(a.min.x, b.min.x);
   const float y = std::min(a.max.y, b.max.y) - std::max(a.min.y, b.min.y);
   const glm::vec2 apart = (a.min + a.max) - (b.min + b.max);
+
   if (x < y)
     return {apart.x < 0.0f ? -1.0f : 1.0f, 0.0f};
+
   return {0.0f, apart.y < 0.0f ? -1.0f : 1.0f};
 }
 
@@ -68,17 +80,20 @@ float sweep(const Box& moving,
             float skin)
 {
   const int other = 1 - axis;
+
   for (const Box& solid : solids)
   {
     if (solid.level != moving.level ||
         moving.min[other] >= solid.max[other] - skin ||
         moving.max[other] <= solid.min[other] + skin)
       continue;
+
     if (step > 0.0f && moving.max[axis] <= solid.min[axis] + skin)
       step = std::min(step, std::max(solid.min[axis] - moving.max[axis], 0.0f));
     else if (step < 0.0f && moving.min[axis] >= solid.max[axis] - skin)
       step = std::max(step, std::min(solid.max[axis] - moving.min[axis], 0.0f));
   }
+
   return step;
 }
 
@@ -102,12 +117,15 @@ void PhysicsSystem2D::update(double deltaTime)
 {
   m_begun.clear();
   m_ended.clear();
+
   if (!registry)
     return;
+
   const float dt = static_cast<float>(deltaTime);
 
   // The statics that stop bodies: their solid boxes, as they are now.
   std::vector<Box> solids;
+
   for (auto [entity, boxCollider2D, transform] :
        registry->query<BoxCollider2D, TransformComponent>())
     if (!entity.hasComponent<RigidBody2DComponent>() && !boxCollider2D.trigger)
@@ -120,6 +138,7 @@ void PhysicsSystem2D::update(double deltaTime)
     body.previousPosition = world.position2D();
     body.velocity += body.gravity * dt;
     glm::vec2 step = body.velocity * dt;
+
     if (step == glm::vec2(0.0f))
       continue;
 
@@ -128,16 +147,19 @@ void PhysicsSystem2D::update(double deltaTime)
         boxCollider2D && !boxCollider2D->trigger)
     {
       Box box = boxOf(entity, *boxCollider2D, world);
+
       for (int axis = 0; axis < 2; ++axis)
       {
         const float wanted = step[axis];
         step[axis] = sweep(box, axis, wanted, solids, kSkin);
         box.min[axis] += step[axis];
         box.max[axis] += step[axis];
+
         if (step[axis] != wanted)
           body.velocity[axis] = 0.0f;
       }
     }
+
     world.setPosition2D(world.position2D() + step);
     hierarchy::setWorldTransform(entity, world);
   }
@@ -145,22 +167,29 @@ void PhysicsSystem2D::update(double deltaTime)
   // What touches what now: every collider against the others, bodies first
   // (two statics never meet).
   std::vector<Box> boxes;
+
   for (auto [entity, collider, transform] :
        registry->query<BoxCollider2D, TransformComponent>())
     boxes.push_back(boxOf(entity, collider, hierarchy::worldTransform(entity)));
+
   std::unordered_map<uint64_t, Contact2D> touching;
+
   for (std::size_t i = 0; i < boxes.size(); ++i)
     for (std::size_t j = 0; j < boxes.size(); ++j)
     {
       const Box& a = boxes[i];
       const Box& b = boxes[j];
+
       // Each pair once: a body with any static, or two bodies in order.
       if (!a.body || (b.body && j <= i) || a.level != b.level)
         continue;
+
       const bool trigger = a.trigger || b.trigger;
+
       // A trigger: overlapping it. A solid: touching (within the skin).
       if (!overlaps(a, b, trigger ? kSkin : -kSkin))
         continue;
+
       touching.emplace(pairKey(a.entity, b.entity),
                        Contact2D{a.entity,
                                  b.entity,
@@ -171,18 +200,23 @@ void PhysicsSystem2D::update(double deltaTime)
   for (const auto& [key, contact] : touching)
     if (!m_touching.contains(key))
       m_begun.push_back(contact);
+
   for (const auto& [key, contact] : m_touching)
     if (!touching.contains(key))
       m_ended.push_back(contact);
+
   m_touching = std::move(touching);
 
   if (!m_scene)
     return;
+
   // Copied: a handler may destroy entities or switch scenes.
   const std::vector<Contact2D> begun = m_begun;
   const std::vector<Contact2D> ended = m_ended;
+
   for (const Contact2D& contact : begun)
     m_scene->notifyContact(contact, true);
+
   for (const Contact2D& contact : ended)
     m_scene->notifyContact(contact, false);
 }

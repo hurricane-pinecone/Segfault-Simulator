@@ -1,6 +1,8 @@
 #include "sfs/codegen/parser.h"
 
 #include "sfs/codegen/attributes.h"
+#include "sfs/codegen/model.h"
+#include "sfs/codegen/rules.h"
 #include "sfs/codegen/suppressions.h"
 
 #include <tree_sitter/api.h>
@@ -8,13 +10,20 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
+#include <functional>
+#include <ios>
 #include <map>
 #include <memory>
+#include <optional>
 #include <sstream>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 namespace sfs::codegen
@@ -27,16 +36,26 @@ namespace
 const std::map<std::string, std::string, std::less<>>& fieldKinds()
 {
   static const std::map<std::string, std::string, std::less<>> kinds = {
-      {"bool", "Bool"},           {"int", "Int"},
-      {"int32_t", "Int"},         {"std::int32_t", "Int"},
-      {"unsigned", "UInt"},       {"unsigned int", "UInt"},
-      {"uint32_t", "UInt"},       {"std::uint32_t", "UInt"},
-      {"float", "Float"},         {"std::string", "String"},
-      {"glm::vec2", "Vec2"},      {"glm::vec3", "Vec3"},
-      {"glm::vec4", "Vec4"},      {"glm::quat", "Quat"},
-      {"MeshHandle", "Mesh"},     {"sfs::MeshHandle", "Mesh"},
-      {"nlohmann::json", "Json"}, {"std::vector<std::string>", "StringList"},
-      {"sfs::Entity", "Entity"},  {"std::vector<sfs::Entity>", "EntityList"},
+      {"bool", "Bool"},
+      {"int", "Int"},
+      {"int32_t", "Int"},
+      {"std::int32_t", "Int"},
+      {"unsigned", "UInt"},
+      {"unsigned int", "UInt"},
+      {"uint32_t", "UInt"},
+      {"std::uint32_t", "UInt"},
+      {"float", "Float"},
+      {"std::string", "String"},
+      {"glm::vec2", "Vec2"},
+      {"glm::vec3", "Vec3"},
+      {"glm::vec4", "Vec4"},
+      {"glm::quat", "Quat"},
+      {"MeshHandle", "Mesh"},
+      {"sfs::MeshHandle", "Mesh"},
+      {"nlohmann::json", "Json"},
+      {"std::vector<std::string>", "StringList"},
+      {"sfs::Entity", "Entity"},
+      {"std::vector<sfs::Entity>", "EntityList"},
       {"std::vector<sfs::ShaderParameter>", "ShaderParameters"},
   };
   return kinds;
@@ -78,17 +97,24 @@ std::optional<std::string> assetRefType(std::string_view type,
 {
   if (type.starts_with("sfs::"))
     type.remove_prefix(5);
+
   if (!type.starts_with(wrapper))
     return std::nullopt;
+
   type.remove_prefix(wrapper.size());
-  constexpr std::string_view open = "<";
-  if (!type.starts_with(open) || !type.ends_with('>'))
+  constexpr std::string_view OPEN = "<";
+
+  if (!type.starts_with(OPEN) || !type.ends_with('>'))
     return std::nullopt;
-  std::string inner(type.substr(open.size(), type.size() - open.size() - 1));
+
+  std::string inner(type.substr(OPEN.size(), type.size() - OPEN.size() - 1));
+
   while (!inner.empty() && inner.front() == ' ')
     inner.erase(inner.begin());
+
   while (!inner.empty() && inner.back() == ' ')
     inner.pop_back();
+
   return inner.empty() ? std::nullopt : std::optional(inner);
 }
 
@@ -98,6 +124,7 @@ std::string normaliseType(std::string_view text)
 {
   std::string out;
   bool pendingSpace = false;
+
   for (const char c : text)
   {
     if (std::isspace(static_cast<unsigned char>(c)))
@@ -105,11 +132,14 @@ std::string normaliseType(std::string_view text)
       pendingSpace = !out.empty();
       continue;
     }
+
     if (pendingSpace && c != ':' && (out.empty() || out.back() != ':'))
       out += ' ';
+
     pendingSpace = false;
     out += c;
   }
+
   return out;
 }
 
@@ -123,6 +153,7 @@ void readUsingName(TSNode node,
       ts_node_is_null(node) ? std::string_view{} : ts_node_type(node);
   UsingName found{
       file, {}, {}, false, std::move(scopes), ts_node_start_byte(node)};
+
   if (kind == "alias_declaration" || kind == "type_definition")
   {
     found.name = nodeText(
@@ -133,21 +164,25 @@ void readUsingName(TSNode node,
   else if (kind == "namespace_alias_definition")
   {
     const uint32_t count = ts_node_named_child_count(node);
+
     if (count < 2)
       return;
+
     found.name = nodeText(source, childField(node, "name"));
-    found.target = normaliseType(
-        nodeText(source, ts_node_named_child(node, count - 1)));
+    found.target =
+        normaliseType(nodeText(source, ts_node_named_child(node, count - 1)));
     found.isNamespace = true;
   }
   else if (kind == "using_declaration")
   {
     if (ts_node_named_child_count(node) != 1)
       return;
+
     found.target =
         normaliseType(nodeText(source, ts_node_named_child(node, 0)));
     found.isNamespace =
         normaliseType(nodeText(source, node)).starts_with("using namespace");
+
     if (!found.isNamespace)
     {
       const std::size_t colons = found.target.rfind("::");
@@ -158,8 +193,10 @@ void readUsingName(TSNode node,
   }
   else
     return;
+
   if (found.target.empty() || (found.name.empty() && !found.isNamespace))
     return;
+
   // In a block (a function body), it's seen only to the block's end.
   for (TSNode at = ts_node_parent(node); !ts_node_is_null(at);
        at = ts_node_parent(at))
@@ -168,6 +205,7 @@ void readUsingName(TSNode node,
       found.end = ts_node_end_byte(at);
       break;
     }
+
   out.push_back(std::move(found));
 }
 
@@ -194,9 +232,11 @@ public:
                      "skipped\n",
                      path.string().c_str(),
                      kMaxDepth);
+
       m_logged = true;
       return false;
     }
+
     ++m_depth;
     return true;
   }
@@ -302,8 +342,10 @@ private:
     {
       const TSNode name = field(node, "name");
       const std::size_t depth = m_namespaces.size();
+
       if (!ts_node_is_null(name))
         m_namespaces.push_back(text(name)); // "a" or nested "a::b"
+
       m_scopes.push_back(ts_node_is_null(name) ? std::string() : text(name));
       const bool inlined = isInlineNamespace(node);
       m_inlineDepth += inlined ? 1 : 0;
@@ -323,6 +365,7 @@ private:
                node,
                "An event attribute goes on a struct, not a union. Make the "
                "event a struct.");
+
       visitChildren(node);
       return;
     }
@@ -333,11 +376,13 @@ private:
       const TSNode name = field(node, "name");
       const TypeMarks marks = typeMarks(node);
       const bool marked = marks.component || marks.sceneData;
+
       if (marks.events != 0)
       {
         // An event is sent and read, never registered: no component, no
         // reflection, and it may be named after its header.
         m_events = true;
+
         if (marks.component)
           report(RuleId::EventAndComponent,
                  node,
@@ -345,6 +390,7 @@ private:
                      " can't be a component too, since a component is state "
                      "and an event is what one system tells another. Remove "
                      "[[sfs::component]] or the event attribute.");
+
         if (marks.sceneData)
           report(RuleId::SceneDataDeclaration,
                  node,
@@ -353,6 +399,7 @@ private:
                      "state the scene holds and an event is what one system "
                      "tells another. Remove [[sfs::scene_data]] or the event "
                      "attribute.");
+
         parseEvent(node, marks);
       }
       else if (m_classDepth == 0 && !ts_node_is_null(name) &&
@@ -391,6 +438,7 @@ private:
                    "it as a plain type at namespace scope.");
       else if (marked)
         parseType(node, kind == "struct_specifier", marks);
+
       if (marks.events == 0 && !ts_node_is_null(name) && m_classDepth == 0 &&
           m_localDepth == 0)
         m_result.plainTypes.push_back(qualified(text(name)));
@@ -405,9 +453,11 @@ private:
     if (kind == "using_declaration" || kind == "alias_declaration" ||
         kind == "type_definition" || kind == "namespace_alias_definition")
       readUsingName(node, m_source, m_path, m_scopes, m_usings);
+
     if (kind == "using_declaration")
     {
       const std::string written = normaliseType(text(node));
+
       if (written.starts_with("using namespace sfs;"))
         m_usingSfs = true;
       else if (written.starts_with("using sfs::"))
@@ -418,6 +468,7 @@ private:
     {
       const TSNode name =
           field(node, kind == "alias_declaration" ? "name" : "declarator");
+
       if (!ts_node_is_null(name) &&
           holdsEventHandle(normaliseType(text(field(node, "type")))))
         m_handleAliases.push_back(text(name));
@@ -455,37 +506,49 @@ private:
   {
     TypeMarks marks;
     const uint32_t count = ts_node_named_child_count(node);
+
     for (uint32_t i = 0; i < count; ++i)
     {
       const TSNode declaration = ts_node_named_child(node, i);
+
       if (type(declaration) != "attribute_declaration")
         continue;
+
       const uint32_t attributes = ts_node_named_child_count(declaration);
+
       for (uint32_t a = 0; a < attributes; ++a)
       {
         const TSNode attribute = ts_node_named_child(declaration, a);
         const AttributeInfo* info = sfsAttribute(attribute);
+
         if (!info)
           continue;
+
         if (info->target != AttributeTarget::Type)
         {
           wrongTarget(*info, attribute);
           continue;
         }
+
         AttributeValue value;
+
         if (!attributeArguments(*info, attribute, value))
           continue;
+
         if (info->id == AttributeId::Component)
         {
           marks.component = true;
           continue;
         }
+
         if (info->id == AttributeId::SceneData)
         {
           marks.sceneData = true;
           continue;
         }
+
         EventKind event = EventKind::News;
+
         if (info->id == AttributeId::EventEntityNews)
           event = EventKind::EntityNews;
         else if (info->id == AttributeId::EventRequest)
@@ -494,11 +557,13 @@ private:
           event = EventKind::Response;
         else if (info->id != AttributeId::EventNews)
           continue;
+
         if (++marks.events == 2)
           report(RuleId::EventDeclaration,
                  attribute,
                  "A type takes one event attribute, so this one is a second. "
                  "Keep the one that says what the event is.");
+
         if (marks.events == 1)
         {
           marks.event = event;
@@ -508,6 +573,7 @@ private:
         }
       }
     }
+
     return marks;
   }
 
@@ -516,14 +582,18 @@ private:
   const AttributeInfo* sfsAttribute(TSNode attribute)
   {
     const TSNode prefix = field(attribute, "prefix");
+
     if (ts_node_is_null(prefix) || text(prefix) != "sfs")
       return nullptr;
+
     const TSNode nameNode = field(attribute, "name");
     const std::string name = text(nameNode);
+
     if (const AttributeInfo* info = findAttribute(name))
       return info;
 
     std::string message = "There is no attribute [[sfs::" + name + "]].";
+
     if (const AttributeInfo* closest = closestAttribute(name))
     {
       const std::string fixed = "[[sfs::" + std::string(closest->name) + "]]";
@@ -536,6 +606,7 @@ private:
     }
     else
       report(RuleId::UnknownSfsAttribute, attribute, std::move(message));
+
     return nullptr;
   }
 
@@ -549,6 +620,7 @@ private:
                  "]] goes on a struct, not a field. Move it to the struct.");
       return;
     }
+
     const bool onType = info.target == AttributeTarget::Type;
     report(RuleId::AttributeTarget,
            attribute,
@@ -582,18 +654,22 @@ private:
     };
     const uint32_t count =
         ts_node_is_null(arguments) ? 0 : ts_node_named_child_count(arguments);
+
     if (count == 0)
       return fail(attribute, "A request names its success response first.");
+
     // A stray comma, colon or missing type leaves the list broken: say so
     // rather than describe the pieces the parser recovered.
     if (ts_node_has_error(arguments))
       return fail(arguments,
                   "A request's arguments are its success response type, then "
-                  "roles written role = Type, but " + text(arguments) +
-                      " isn't that.");
+                  "roles written role = Type, but " +
+                      text(arguments) + " isn't that.");
+
     for (uint32_t i = 0; i < count; ++i)
     {
       const TSNode argument = ts_node_named_child(arguments, i);
+
       if (isTypeName(argument))
       {
         if (i > 0)
@@ -601,11 +677,14 @@ private:
                       "A request has one success response, named first; " +
                           text(argument) +
                           " needs a role (progress = or failure =).");
+
         value.success = normaliseType(text(argument));
         continue;
       }
+
       const TSNode left = field(argument, "left");
       const TSNode right = field(argument, "right");
+
       if (type(argument) != "assignment_expression" ||
           type(left) != "identifier" || !isTypeName(right) ||
           text(field(argument, "operator")) != "=")
@@ -613,45 +692,57 @@ private:
                     "A request's arguments are its success response type, "
                     "then roles written role = Type, but " +
                         text(argument) + " is neither.");
+
       const std::string role = text(left);
+
       if (role == "success")
         return fail(argument,
                     "A request's success response is written bare, first: (" +
                         text(right) + ", ...), not " + text(argument) + ".");
+
       if (i == 0)
         return fail(argument,
                     "A request names its success response first, before " +
                         text(argument) + ".");
+
       std::string* slot = role == "progress"  ? &value.progress
                           : role == "failure" ? &value.failure
                                               : nullptr;
+
       if (!slot)
       {
         std::string message = "A request has no role " + role +
                               "; its roles are progress and failure.";
+
         // "fail" is the server's word for the failure role.
         for (const std::string_view known : {"progress", "failure"})
           if (editDistance(role, known) <= 2 ||
               (role.size() >= 4 && known.starts_with(role)))
-            message += " Use " + std::string(known) +
-                       " if that's what you meant.";
+            message +=
+                " Use " + std::string(known) + " if that's what you meant.";
+
         return fail(left, message);
       }
+
       if (!slot->empty())
         return fail(argument,
                     "The request names its " + role +
                         " response twice. Name each role once.");
+
       *slot = normaliseType(text(right));
     }
+
     return true;
   }
 
   static TSNode argumentList(TSNode attribute)
   {
     const uint32_t count = ts_node_named_child_count(attribute);
+
     for (uint32_t i = 0; i < count; ++i)
       if (type(ts_node_named_child(attribute, i)) == "argument_list")
         return ts_node_named_child(attribute, i);
+
     return TSNode{};
   }
 
@@ -667,6 +758,7 @@ private:
     const TSNode argument =
         count == 1 ? ts_node_named_child(arguments, 0) : TSNode{};
     const std::string written = "[[sfs::" + std::string(info.name) + "]]";
+
     switch (info.args)
     {
     case AttributeArgs::None:
@@ -676,10 +768,12 @@ private:
                attribute,
                "The attribute " + written +
                    " takes no arguments. Remove the parentheses.");
+
       return true;
     case AttributeArgs::MinMax:
       if (count != 2)
         break;
+
       value.first = text(ts_node_named_child(arguments, 0));
       value.second = text(ts_node_named_child(arguments, 1));
       return true;
@@ -691,6 +785,7 @@ private:
           ts_node_named_child_count(argument) == 1 &&
           text(argument).starts_with("!") &&
           type(ts_node_named_child(argument, 0)) == "identifier";
+
       if (ts_node_is_null(argument) ||
           (type(argument) != "identifier" && !negated))
       {
@@ -702,6 +797,7 @@ private:
                 "for while it's off.");
         return false;
       }
+
       value.first = negated ? "!" + text(ts_node_named_child(argument, 0))
                             : text(argument);
       return true;
@@ -714,6 +810,7 @@ private:
           ts_node_is_null(argument) || type(argument) != "string_literal"
               ? std::string()
               : text(argument);
+
       if (literal.size() < 3 || literal.front() != '"' || literal.back() != '"')
       {
         report(RuleId::AttributeArguments,
@@ -723,17 +820,22 @@ private:
                    std::string(info.arguments) + ".");
         return false;
       }
+
       value.first.clear();
+
       for (std::size_t i = 1; i + 1 < literal.size(); ++i)
       {
         if (literal[i] == '\\' && i + 2 < literal.size() &&
             (literal[i + 1] == '"' || literal[i + 1] == '\\'))
           ++i;
+
         value.first += literal[i];
       }
+
       return true;
     }
     }
+
     report(RuleId::AttributeArguments,
            attribute,
            "The attribute " + written + " needs two arguments. Write " +
@@ -745,9 +847,12 @@ private:
   {
     if (!m_depth.enter(m_path))
       return;
+
     const uint32_t count = ts_node_named_child_count(node);
+
     for (uint32_t i = 0; i < count; ++i)
       visit(ts_node_named_child(node, i));
+
     m_depth.leave();
   }
 
@@ -761,14 +866,17 @@ private:
     model.nameRange = rangeOf(field(node, "name"));
     model.header = m_path;
     model.line = ts_node_start_point(node).row + 1;
+
     for (const std::string& ns : m_namespaces)
       model.qualifiedName += ns + "::";
+
     model.qualifiedName += model.name;
     model.scopes = m_scopes;
     model.classKey = isStruct ? "struct" : "class";
     model.kind = classify(node, model);
 
     const bool fileType = lowercase(model.name) == m_target;
+
     if (marks.sceneData)
     {
       if (marks.component)
@@ -780,16 +888,19 @@ private:
                             "scene, a component by an entity. Remove one.");
         return;
       }
+
       if (model.kind != TypeKind::Component)
       {
         report(RuleId::SceneDataDeclaration,
                node,
                model.name + " derives from " + baseOf(node) +
                    ", but scene data is a plain type with no base. Give " +
-                   model.name + " the fields itself, or remove "
-                                "[[sfs::scene_data]].");
+                   model.name +
+                   " the fields itself, or remove "
+                   "[[sfs::scene_data]].");
         return;
       }
+
       model.kind = TypeKind::SceneData;
     }
     else if (marked && model.kind != TypeKind::Component)
@@ -802,6 +913,7 @@ private:
                  "of its own.");
       return;
     }
+
     if (!fileType && registered(model.name))
     {
       report(RuleId::DuplicateType,
@@ -816,15 +928,18 @@ private:
     bool isPublic = isStruct;
     const TSNode body = field(node, "body");
     const uint32_t count = ts_node_named_child_count(body);
+
     for (uint32_t i = 0; i < count; ++i)
     {
       const TSNode member = ts_node_named_child(body, i);
       const std::string memberKind = type(member);
+
       if (memberKind == "access_specifier")
         isPublic = text(member) == "public";
       else if (memberKind == "field_declaration")
         parseField(member, isPublic, model);
     }
+
     checkShowIfs(model);
 
     // A class with no engine base and nothing to edit (e.g. FieldMap, a
@@ -836,6 +951,7 @@ private:
       m_helper = true;
       return;
     }
+
     if (fileType)
       m_result.type = std::move(model);
     else
@@ -847,6 +963,7 @@ private:
   {
     if (m_result.type && m_result.type->name == name)
       return true;
+
     return std::any_of(m_result.components.begin(),
                        m_result.components.end(),
                        [&](const TypeModel& type)
@@ -858,18 +975,23 @@ private:
   {
     std::vector<EventBase> bases;
     const uint32_t count = ts_node_named_child_count(node);
+
     for (uint32_t i = 0; i < count; ++i)
     {
       const TSNode clause = ts_node_named_child(node, i);
+
       if (type(clause) != "base_class_clause")
         continue;
+
       // `virtual` is an unnamed token before its base, up to the next comma.
       bool isVirtual = false;
       const uint32_t children = ts_node_child_count(clause);
+
       for (uint32_t c = 0; c < children; ++c)
       {
         const TSNode base = ts_node_child(clause, c);
         const std::string kind = type(base);
+
         if (kind == "virtual")
           isVirtual = true;
         else if (kind == ",")
@@ -878,6 +1000,7 @@ private:
           bases.push_back({normaliseType(text(base)), isVirtual});
       }
     }
+
     return bases;
   }
 
@@ -892,8 +1015,10 @@ private:
   std::string qualified(const std::string& name) const
   {
     std::string out;
+
     for (const std::string& ns : m_namespaces)
       out += ns + "::";
+
     return out + name;
   }
 
@@ -902,8 +1027,10 @@ private:
   bool isInlineNamespace(TSNode node) const
   {
     const TSNode first = ts_node_child(node, 0);
+
     if (!ts_node_is_null(first) && type(first) == "inline")
       return true;
+
     const TSNode name = field(node, "name");
     return !ts_node_is_null(name) &&
            type(name) == "nested_namespace_specifier" &&
@@ -914,6 +1041,7 @@ private:
   void parseEvent(TSNode node, const TypeMarks& marks)
   {
     const TSNode name = field(node, "name");
+
     if (ts_node_is_null(name) || m_classDepth > 0 || m_localDepth > 0)
     {
       report(RuleId::EventDeclaration,
@@ -923,6 +1051,7 @@ private:
              "what it is. Move it out and name it.");
       return;
     }
+
     // The traits header declares each event before naming it, and a
     // declaration outside the inline namespace would be another type.
     if (m_inlineDepth > 0)
@@ -934,6 +1063,7 @@ private:
                  "Declare it in a plain namespace.");
       return;
     }
+
     EventModel event;
     event.name = text(name);
     event.qualifiedName = qualified(event.name);
@@ -947,10 +1077,12 @@ private:
     event.header = m_path;
     event.nameRange = rangeOf(name);
     event.offset = ts_node_start_byte(name);
+
     // Those written before it; lookUpName() tells which it sees.
     for (const UsingName& using_ : m_usings)
       if (using_.offset < event.offset)
         event.usings.push_back(using_);
+
     m_result.events.push_back(std::move(event));
   }
 
@@ -959,19 +1091,25 @@ private:
     TypeKind kind = TypeKind::Component;
     int bases = 0;
     const uint32_t count = ts_node_named_child_count(node);
+
     for (uint32_t i = 0; i < count; ++i)
     {
       const TSNode child = ts_node_named_child(node, i);
+
       if (type(child) != "base_class_clause")
         continue;
 
       const uint32_t baseCount = ts_node_named_child_count(child);
+
       for (uint32_t b = 0; b < baseCount; ++b)
       {
         const TSNode base = ts_node_named_child(child, b);
+
         if (type(base) == "access_specifier" || type(base) == "virtual")
           continue;
+
         const std::string name = normaliseType(text(base));
+
         if (++bases > 1)
         {
           report(RuleId::ScriptBase,
@@ -981,6 +1119,7 @@ private:
                      "reflected type.");
           continue;
         }
+
         // A UI layer is a game object (drawn as UI).
         if (name == "GameObject" || name == "sfs::GameObject")
           kind = TypeKind::GameObject;
@@ -1016,6 +1155,7 @@ private:
                         "from nothing for a component.");
       }
     }
+
     return kind;
   }
 
@@ -1028,6 +1168,7 @@ private:
     m_fieldAttributes.clear();
 
     const uint32_t count = ts_node_named_child_count(node);
+
     for (uint32_t i = 0; i < count; ++i)
     {
       const TSNode child = ts_node_named_child(node, i);
@@ -1035,8 +1176,10 @@ private:
 
       if (childKind == "storage_class_specifier" && text(child) == "static")
         return; // static members aren't per-object state
+
       if (childKind == "type_qualifier" && text(child) == "const")
         return; // nothing to edit
+
       if (childKind == "attribute_declaration")
         parseAttributes(child, hide, show);
     }
@@ -1045,6 +1188,7 @@ private:
     // function declarator inside any pointer or reference to what they
     // return (`Thing* find();`).
     TSNode declarator = field(node, "declarator");
+
     while (!ts_node_is_null(declarator) &&
            (type(declarator) == "pointer_declarator" ||
             type(declarator) == "reference_declarator"))
@@ -1056,6 +1200,7 @@ private:
                     declarator, ts_node_named_child_count(declarator) - 1)
               : inner;
     }
+
     if (ts_node_is_null(declarator) ||
         type(declarator) == "function_declarator")
       return;
@@ -1065,14 +1210,18 @@ private:
 
     const TSNode typeNode = field(node, "type");
     base.type = normaliseType(text(typeNode));
+
     // A system's or object's event handles are kept as members on purpose:
     // they're never edited, and not worth a warning.
     if (holdsEventHandle(base.type))
       return;
+
     const std::string kindName = fieldKindOf(base.type, insideSfs());
     std::optional<std::string> kind;
+
     if (!kindName.empty())
       kind = kindName;
+
     if (kindName == "AssetRef" || kindName == "AssetRefList")
       base.assetType = *assetRefType(base.type, kindName);
 
@@ -1080,6 +1229,7 @@ private:
     if (kind)
       for (const FieldAttribute& attribute : m_fieldAttributes)
         applyAttribute(attribute, *kind, base);
+
     // Shared assets can't point at entities, and script fields can't yet.
     if (kind && isEntityKind(*kind) && model.kind != TypeKind::Component)
     {
@@ -1097,6 +1247,7 @@ private:
     {
       const TSNode child = ts_node_named_child(node, i);
       const char* fieldName = ts_node_field_name_for_named_child(node, i);
+
       if (!fieldName || std::string_view(fieldName) != "declarator")
         continue;
 
@@ -1111,6 +1262,7 @@ private:
                    "sfs::Entity or an asset reference.");
         continue;
       }
+
       if (!kind)
       {
         report(RuleId::FieldType,
@@ -1134,20 +1286,26 @@ private:
   void parseAttributes(TSNode declaration, bool& hide, bool& show)
   {
     const uint32_t count = ts_node_named_child_count(declaration);
+
     for (uint32_t i = 0; i < count; ++i)
     {
       const TSNode attribute = ts_node_named_child(declaration, i);
       const AttributeInfo* info = sfsAttribute(attribute);
+
       if (!info)
         continue;
+
       if (info->target != AttributeTarget::Field)
       {
         wrongTarget(*info, attribute);
         continue;
       }
+
       AttributeValue value;
+
       if (!attributeArguments(*info, attribute, value))
         continue;
+
       if (info->id == AttributeId::Hide)
         hide = true;
       else if (info->id == AttributeId::Show)
@@ -1164,6 +1322,7 @@ private:
                       FieldModel& fieldModel)
   {
     const AttributeInfo& info = *attribute.info;
+
     if (!appliesTo(info, kind))
     {
       report(RuleId::AttributeFieldType,
@@ -1174,7 +1333,9 @@ private:
                  "field's type.");
       return;
     }
+
     const AttributeValue& value = attribute.value;
+
     switch (info.id)
     {
     case AttributeId::Range:
@@ -1223,6 +1384,7 @@ private:
   {
     if (model.kind == TypeKind::Derived)
       return;
+
     for (const auto& [node, written] : m_showIfs)
     {
       const std::string_view target =
@@ -1232,6 +1394,7 @@ private:
                       model.fields.end(),
                       [&](const FieldModel& field)
                       { return field.name == target && field.kind == "Bool"; });
+
       if (!found)
         report(RuleId::ShowIfTarget,
                node,
@@ -1254,30 +1417,38 @@ private:
     {
       const auto part = [](char c)
       { return std::isalnum(static_cast<unsigned char>(c)) || c == '_'; };
+
       if (at + size < type.size() && part(type[at + size]))
         return false;
+
       const std::string_view before = type.substr(0, at);
+
       if (before.ends_with("sfs::"))
         return before.size() == 5 || !part(before[before.size() - 6]);
-      return visible && (before.empty() || (!part(before.back()) &&
-                                            before.back() != ':'));
+
+      return visible &&
+             (before.empty() || (!part(before.back()) && before.back() != ':'));
     };
+
     for (const std::string_view handle : kEventHandleTypes)
     {
       const bool visible =
           insideSfs() || m_usingSfs ||
           std::find(m_usingSfsNames.begin(), m_usingSfsNames.end(), handle) !=
               m_usingSfsNames.end();
+
       for (std::size_t at = type.find(handle); at != std::string_view::npos;
            at = type.find(handle, at + 1))
         if (alone(at, handle.size(), visible))
           return true;
     }
+
     for (const std::string& alias : m_handleAliases)
       for (std::size_t at = type.find(alias); at != std::string_view::npos;
            at = type.find(alias, at + 1))
         if (alone(at, alias.size(), true))
           return true;
+
     return false;
   }
 
@@ -1292,9 +1463,9 @@ private:
   std::string m_target;
   std::vector<std::string> m_namespaces;
   ParseResult m_result;
-  bool m_helper = false; // the file's class is a helper (no type, no warning)
-  bool m_events = false; // the header declares event types
-  int m_inlineDepth = 0; // how many inline namespaces the walk is in
+  bool m_helper = false;   // the file's class is a helper (no type, no warning)
+  bool m_events = false;   // the header declares event types
+  int m_inlineDepth = 0;   // how many inline namespaces the walk is in
   bool m_usingSfs = false; // the header says `using namespace sfs;`
   std::vector<std::string> m_handleAliases; // its aliases of handle types
   std::vector<std::string> m_usingSfsNames; // `using sfs::X;`'s X
@@ -1351,27 +1522,34 @@ private:
   void visit(TSNode node)
   {
     const std::string kind = type(node);
+
     if (kind == "namespace_definition")
     {
       const TSNode name = field(node, "name");
       const std::size_t depth = m_namespaces.size();
+
       if (!ts_node_is_null(name))
         m_namespaces.push_back(text(name));
+
       visitChildren(node);
       m_namespaces.resize(depth);
       return;
     }
+
     // Templates can't be made without arguments; nothing inside a function
     // is the header's.
     if (kind == "template_declaration" || kind == "function_definition")
       return;
+
     if ((kind == "class_specifier" || kind == "struct_specifier") &&
         !ts_node_is_null(field(node, "body")))
     {
       if (!ts_node_is_null(field(node, "name")))
         parseType(node, kind == "struct_specifier");
+
       return; // nested types are left out
     }
+
     visitChildren(node);
   }
 
@@ -1379,9 +1557,12 @@ private:
   {
     if (!m_depth.enter(m_path))
       return;
+
     const uint32_t count = ts_node_named_child_count(node);
+
     for (uint32_t i = 0; i < count; ++i)
       visit(ts_node_named_child(node, i));
+
     m_depth.leave();
   }
 
@@ -1390,23 +1571,28 @@ private:
     UiTypeModel model;
     model.name = text(field(node, "name"));
     model.header = m_path;
+
     for (const std::string& ns : m_namespaces)
       model.qualifiedName += ns + "::";
+
     model.qualifiedName += model.name;
 
     bool isPublic = isStruct;
     const TSNode body = field(node, "body");
     const uint32_t count = ts_node_named_child_count(body);
+
     for (uint32_t i = 0; i < count; ++i)
     {
       const TSNode member = ts_node_named_child(body, i);
       const std::string memberKind = type(member);
+
       if (memberKind == "access_specifier")
         isPublic = text(member) == "public";
       else if (memberKind == "field_declaration" ||
                memberKind == "function_definition")
         parseMember(member, isPublic, model);
     }
+
     m_result.types.push_back(std::move(model));
   }
 
@@ -1414,12 +1600,15 @@ private:
   void parseMember(TSNode node, bool isPublic, UiTypeModel& model)
   {
     const uint32_t count = ts_node_named_child_count(node);
+
     for (uint32_t i = 0; i < count; ++i)
     {
       const TSNode child = ts_node_named_child(node, i);
       const std::string childKind = type(child);
+
       if (childKind == "storage_class_specifier" && text(child) == "static")
         return;
+
       if (childKind == "type_qualifier" && text(child) == "const")
         return; // can't be filled in
     }
@@ -1427,13 +1616,17 @@ private:
     for (uint32_t i = 0; i < count; ++i)
     {
       const char* fieldName = ts_node_field_name_for_named_child(node, i);
+
       if (!fieldName || std::string_view(fieldName) != "declarator")
         continue;
+
       const TSNode declarator = ts_node_named_child(node, i);
       const std::string declaratorKind = type(declarator);
+
       if (declaratorKind == "function_declarator")
       {
         const TSNode name = field(declarator, "declarator");
+
         if (!ts_node_is_null(name) && text(name) == "body")
           model.view = true;
       }
@@ -1463,6 +1656,7 @@ std::string_view nodeText(std::string_view source, TSNode node)
 {
   if (ts_node_is_null(node))
     return {};
+
   const uint32_t start = ts_node_start_byte(node);
   return source.substr(start, ts_node_end_byte(node) - start);
 }
@@ -1481,17 +1675,22 @@ bool isSfsNamespace(std::string_view name)
 std::string fieldKindOf(std::string_view type, bool insideSfs)
 {
   const std::string normal = normaliseType(type);
+
   // A reference to a scriptable object, sfs::AssetRef<T>; otherwise a fixed
   // type.
   if (assetRefType(normal, "AssetRef"))
     return "AssetRef";
+
   if (assetRefType(normal, "AssetRefList"))
     return "AssetRefList";
+
   if (const auto known = fieldKinds().find(normal); known != fieldKinds().end())
     return known->second;
+
   if (const auto inSfs = sfsFieldKinds().find(normal);
       inSfs != sfsFieldKinds().end() && insideSfs)
     return inSfs->second;
+
   return {};
 }
 
@@ -1510,6 +1709,7 @@ ParseResult parseHeader(std::string_view source,
   // or a component.
   if (path.filename().string().ends_with(".ui.h") || !tree)
     return {};
+
   return HeaderParser(source, path).run(tree);
 }
 
@@ -1518,6 +1718,7 @@ ParseResult parseHeader(std::string_view source,
 {
   if (path.filename().string().ends_with(".ui.h"))
     return {};
+
   const std::unique_ptr<TSParser, decltype(&ts_parser_delete)> parser(
       ts_parser_new(), &ts_parser_delete);
   ts_parser_set_language(parser.get(), tree_sitter_cpp());
@@ -1540,11 +1741,14 @@ std::vector<Diagnostic> checkNames(const std::vector<TypeModel>& types)
 {
   std::vector<Diagnostic> diagnostics;
   std::map<std::string_view, const TypeModel*, std::less<>> first;
+
   for (const TypeModel& type : types)
   {
     const auto [it, added] = first.emplace(type.name, &type);
+
     if (added)
       continue;
+
     const unsigned row = type.line > 0 ? type.line - 1 : 0;
     diagnostics.push_back({RuleId::DuplicateType,
                            type.header,
@@ -1553,6 +1757,7 @@ std::vector<Diagnostic> checkNames(const std::vector<TypeModel>& types)
                                ", here and in " + it->second->header.string() +
                                ". Give each type a name of its own."});
   }
+
   return diagnostics;
 }
 

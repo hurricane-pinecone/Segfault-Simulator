@@ -1,10 +1,14 @@
 #pragma once
 
 #include "engine/core/ecs/entity.h"
+#include "engine/core/rendering/mesh.h"
+#include "engine/runtime/rendering/commands.h"
 #include "engine/runtime/rendering/modules/renderModule.h"
 #include "engine/runtime/rendering/renderContext.h"
-#include "engine/runtime/rendering/space2D.h"
 
+#include <glm/glm/ext/matrix_float4x4.hpp>
+
+#include <cstdint>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -38,15 +42,11 @@ public:
 
   explicit SpriteModule(AssetStore& assets, Facing facing = Facing::Auto);
 
-  /**
-   * In 3D, the pixels per world unit of sprites whose image doesn't set its
-   * own (TextureImportSettings::pixelsPerUnit); default 1. A 2D game's are its
-   * Space2D's.
-   */
-  void setPixelsPerUnit(float pixels) { m_pixelsPerUnit = pixels; }
+  void computeCommands(const RenderContext& context) override;
 
-  void setFacing(Facing facing) { m_facing = facing; }
   Facing facing() const { return m_facing; }
+
+  void init(const ModuleInit& init) override { m_registry = init.registry; }
 
   /**
    * Where each sprite was drawn last frame: its quad's model matrix (a unit
@@ -57,13 +57,25 @@ public:
     return m_placed;
   }
 
-  void init(const ModuleInit& init) override { m_registry = init.registry; }
-  void computeCommands(const RenderContext& context) override;
+  void setFacing(Facing facing) { m_facing = facing; }
+
+  /**
+   * In 3D, the pixels per world unit of sprites whose image doesn't set its
+   * own (TextureImportSettings::pixelsPerUnit); default 1. A 2D game's are its
+   * Space2D's.
+   */
+  void setPixelsPerUnit(float pixels) { m_pixelsPerUnit = pixels; }
 
 protected:
   bool rebuildsEveryFrame() const override { return true; }
 
 private:
+  struct SheetMaterial
+  {
+    MaterialHandle handle;
+    const TextureData* image = nullptr; // what it was made from
+  };
+
   // A sheet (and its normal map) as a material: made once.
   MaterialHandle material(MeshLibrary& meshes,
                           const std::string& sheet,
@@ -74,11 +86,6 @@ private:
   Facing m_facing;
   float m_pixelsPerUnit = 1.0f;
   MeshHandle m_quad;
-  struct SheetMaterial
-  {
-    MaterialHandle handle;
-    const TextureData* image = nullptr; // what it was made from
-  };
   std::unordered_map<std::string, SheetMaterial> m_materials;
   std::unordered_set<uint32_t> m_softMaterials; // drawn see-through, together
   std::unordered_map<Entity::EntityId, glm::mat4> m_placed;

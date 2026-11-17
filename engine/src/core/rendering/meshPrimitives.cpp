@@ -1,12 +1,18 @@
 #include "engine/core/rendering/meshPrimitives.h"
 
-#include "glm/glm/ext/scalar_constants.hpp"
-#include "glm/glm/geometric.hpp"
-#include "glm/glm/matrix.hpp"
-#include "glm/glm/trigonometric.hpp"
+#include "engine/core/rendering/mesh.h"
+
+#include <glm/glm/ext/matrix_float3x3.hpp>
+#include <glm/glm/ext/matrix_float4x4.hpp>
+#include <glm/glm/ext/scalar_constants.hpp>
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
+#include <glm/glm/geometric.hpp>
+#include <glm/glm/matrix.hpp>
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 
 namespace sfs::meshes
 {
@@ -14,7 +20,7 @@ namespace sfs::meshes
 namespace
 {
 
-constexpr float kTwoPi = 2.0f * glm::pi<float>();
+constexpr float TWO_PI = 2.0f * glm::pi<float>();
 
 // Append a flat quad (a, b, c, d counter-clockwise seen from the front).
 void addQuad(MeshData& mesh,
@@ -31,6 +37,7 @@ void addQuad(MeshData& mesh,
   // on each face.
   const glm::vec2 uvs[4] = {{0, 1}, {1, 1}, {1, 0}, {0, 0}};
   const glm::vec3 corners[4] = {a, b, c, d};
+
   for (int i = 0; i < 4; ++i)
     mesh.vertices.push_back({corners[i], normal, color, uvs[i]});
 
@@ -72,9 +79,10 @@ void addCap(MeshData& mesh,
   // the image from above; mirrored in Y from below, so it isn't mirrored
   // there).
   const float up = facingUp ? -0.5f : 0.5f;
+
   for (int i = 0; i < segments; ++i)
   {
-    const float angle = kTwoPi * static_cast<float>(i) / segments;
+    const float angle = TWO_PI * static_cast<float>(i) / segments;
     const float c = std::cos(angle), s = std::sin(angle);
     mesh.vertices.push_back({{radius * c, radius * s, z},
                              normal,
@@ -141,10 +149,11 @@ cylinder(float radius, float height, int segments, const glm::vec3& color)
   // image wraps once around (the seam's column is duplicated, so it can run
   // from u 0 to 1).
   const auto base = static_cast<uint32_t>(mesh.vertices.size());
+
   for (int i = 0; i <= segments; ++i)
   {
     const float u = static_cast<float>(i) / segments;
-    const float angle = kTwoPi * u;
+    const float angle = TWO_PI * u;
     const glm::vec3 normal{std::cos(angle), std::sin(angle), 0.0f};
     const glm::vec3 rim = normal * radius;
 
@@ -178,10 +187,11 @@ MeshData cone(float radius, float height, int segments, const glm::vec3& color)
   // Side normals tilt up by the slope; each face gets its own apex vertex so
   // the normal at the tip matches the face it belongs to.
   const float slope = radius / height;
+
   for (int i = 0; i < segments; ++i)
   {
-    const float a0 = kTwoPi * static_cast<float>(i) / segments;
-    const float a1 = kTwoPi * static_cast<float>(i + 1) / segments;
+    const float a0 = TWO_PI * static_cast<float>(i) / segments;
+    const float a1 = TWO_PI * static_cast<float>(i + 1) / segments;
     const float mid = (a0 + a1) * 0.5f;
 
     const auto sideNormal = [slope](float angle) {
@@ -228,10 +238,11 @@ MeshData sphere(float radius, int segments, int rings, const glm::vec3& color)
   {
     const float v = static_cast<float>(ring) / rings;
     const float polar = glm::pi<float>() * v;
+
     for (int segment = 0; segment <= segments; ++segment)
     {
       const float u = static_cast<float>(segment) / segments;
-      const float azimuth = kTwoPi * u;
+      const float azimuth = TWO_PI * u;
       const glm::vec3 normal{std::sin(polar) * std::cos(azimuth),
                              std::sin(polar) * std::sin(azimuth),
                              std::cos(polar)};
@@ -241,6 +252,7 @@ MeshData sphere(float radius, int segments, int rings, const glm::vec3& color)
   }
 
   const auto columns = static_cast<uint32_t>(segments + 1);
+
   for (uint32_t ring = 0; ring < static_cast<uint32_t>(rings); ++ring)
   {
     for (uint32_t segment = 0; segment < static_cast<uint32_t>(segments);
@@ -286,6 +298,7 @@ void append(MeshData& target,
   const auto base = static_cast<uint32_t>(target.vertices.size());
 
   target.vertices.reserve(target.vertices.size() + source.vertices.size());
+
   for (const MeshVertex& vertex : source.vertices)
   {
     target.vertices.push_back(
@@ -296,6 +309,7 @@ void append(MeshData& target,
   }
 
   target.indices.reserve(target.indices.size() + source.indices.size());
+
   for (const uint32_t index : source.indices)
     target.indices.push_back(base + index);
 }

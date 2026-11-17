@@ -1,11 +1,12 @@
 #pragma once
 
 #include "engine/core/rendering/lighting.h"
-#include "glm/glm/ext/matrix_float4x4.hpp"
-#include "glm/glm/ext/vector_float2.hpp"
-#include "glm/glm/ext/vector_float3.hpp"
-#include "glm/glm/ext/vector_uint2.hpp"
-#include "glm/glm/ext/vector_uint3.hpp"
+
+#include <glm/glm/ext/matrix_float4x4.hpp>
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
+#include <glm/glm/ext/vector_uint2.hpp>
+#include <glm/glm/ext/vector_uint3.hpp>
 
 #include <cstdint>
 #include <span>
@@ -28,16 +29,17 @@ namespace sfs
  */
 struct ClusterGrid
 {
-  glm::uvec3 size{1, 1, 1}; // tiles across, tiles down, depth slices
-  float tilePixels = 64.0f; // forViewport() picks it for the viewport
-  float nearPlane = 0.1f;
-  float farPlane = 500.0f;
+  uint32_t count() const { return size.x * size.y * size.z; }
 
   /** A grid over a viewport `viewport` pixels big. */
   static ClusterGrid
   forViewport(glm::vec2 viewport, float nearPlane, float farPlane);
 
-  uint32_t count() const { return size.x * size.y * size.z; }
+  /** A cluster's index in ClusterLights::ranges. */
+  uint32_t index(glm::uvec2 tile, uint32_t slice) const
+  {
+    return (slice * size.y + tile.y) * size.x + tile.x;
+  }
 
   /** The slice a depth along the view direction falls in (clamped). */
   uint32_t sliceOf(float depth) const;
@@ -45,11 +47,10 @@ struct ClusterGrid
   /** The tile a pixel is in (clamped). */
   glm::uvec2 tileOf(glm::vec2 pixel) const;
 
-  /** A cluster's index in ClusterLights::ranges. */
-  uint32_t index(glm::uvec2 tile, uint32_t slice) const
-  {
-    return (slice * size.y + tile.y) * size.x + tile.x;
-  }
+  glm::uvec3 size{1, 1, 1}; // tiles across, tiles down, depth slices
+  float tilePixels = 64.0f; // forViewport() picks it for the viewport
+  float nearPlane = 0.1f;
+  float farPlane = 500.0f;
 };
 
 /** The view a grid is laid over. */

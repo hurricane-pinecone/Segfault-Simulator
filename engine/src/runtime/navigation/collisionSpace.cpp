@@ -3,16 +3,36 @@
 #include "engine/core/logger/logger.h"
 #include "engine/core/util/debugFeatures.h"
 #include "engine/runtime/navigation/coarseGraph.h"
+#include "engine/runtime/navigation/geometry.h"
+#include "engine/runtime/navigation/space.h"
+#include "engine/runtime/systems/collisionWorld3D.h"
 
-#include "glm/glm/gtc/quaternion.hpp"
+#include <glm/glm/common.hpp>
+#include <glm/glm/ext/matrix_float3x3.hpp>
+#include <glm/glm/ext/quaternion_float.hpp>
+#include <glm/glm/ext/quaternion_trigonometric.hpp>
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
+#include <glm/glm/ext/vector_int2.hpp>
+#include <glm/glm/geometric.hpp>
+#include <glm/glm/gtc/quaternion.hpp>
 
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <functional>
 #include <limits>
+#include <memory>
+#include <mutex>
+#include <optional>
+#include <ratio>
+#include <span>
+#include <utility>
+#include <vector>
 
 namespace sfs::nav
 {
@@ -39,6 +59,7 @@ struct Timed
   {
     const CheckStats& stats = checkStats();
     on = ((stats.exact + stats.broad) & 7u) == 0;
+
     if (on)
       t0 = std::chrono::steady_clock::now();
   }
@@ -61,13 +82,14 @@ struct Prepared
 
 // (A hair more than the broad phase needs clear: Jolt's least half size of a
 // shape, 5 mm, and rounding.)
-constexpr float kHair = 0.02f;
+constexpr float HAIR = 0.02f;
 
 // How far `p` is from a footprint (m; 0 or less on or in it).
 float distanceTo(const BoxSpace::Solid& f, glm::vec2 p)
 {
   if (f.circle)
     return glm::length(p - f.centre) - f.half.x;
+
   const glm::vec2 local = rotate(p - f.centre, -f.yaw);
   return glm::length(local - glm::clamp(local, -f.half, f.half));
 }
@@ -93,20 +115,24 @@ void rasterOf(const std::vector<BoxSpace::Solid>& foot,
 {
   out.assign(
       static_cast<std::size_t>(width) * static_cast<std::size_t>(height), 0);
+
   for (const BoxSpace::Solid& f : foot)
   {
     if (f.top < low || f.bottom > high)
       continue;
+
     const float reach = reachOf(f) + inflate;
     const glm::ivec2 lo =
         glm::ivec2(glm::floor((f.centre - reach - origin) / cell));
     const glm::ivec2 hi =
         glm::ivec2(glm::floor((f.centre + reach - origin) / cell));
+
     for (int y = std::max(lo.y, 0); y <= std::min(hi.y, height - 1); ++y)
       for (int x = std::max(lo.x, 0); x <= std::min(hi.x, width - 1); ++x)
       {
         const glm::vec2 p = origin + (glm::vec2(x, y) + 0.5f) * cell;
         float dist;
+
         if (!f.circle)
         {
           const glm::vec2 local = rotate(p - f.centre, -f.yaw);
@@ -114,6 +140,7 @@ void rasterOf(const std::vector<BoxSpace::Solid>& foot,
         }
         else
           dist = glm::length(p - f.centre) - f.half.x;
+
         if (dist <= inflate)
           out[static_cast<std::size_t>(y) * width + x] = 1;
       }
@@ -136,19 +163,24 @@ public:
   {
     if (foot.empty())
       return;
+
     m_all = {glm::vec2(std::numeric_limits<float>::max()),
              glm::vec2(std::numeric_limits<float>::lowest())};
+
     for (const BoxSpace::Solid& f : foot)
     {
       m_all.lo = glm::min(m_all.lo, f.centre - reachOf(f));
       m_all.hi = glm::max(m_all.hi, f.centre + reachOf(f));
     }
+
     if (foot.size() <= kFew)
     {
       for (const BoxSpace::Solid& f : foot)
         m_few.push_back({f, reachOf(f), unit(f.yaw)});
+
       return;
     }
+
     m_foot = std::move(foot);
     m_origin = m_all.lo - kReach;
     const float side = kCell * static_cast<float>(kTile);
@@ -163,6 +195,7 @@ public:
     m_made = std::make_unique<std::atomic<bool>[]>(tiles);
     // (Which colliders each tile's field sees: those within kReach of it.)
     m_near.resize(tiles);
+
     for (uint32_t k = 0; k < m_foot.size(); ++k)
     {
       const BoxSpace::Solid& f = m_foot[k];
@@ -171,6 +204,7 @@ public:
           glm::ivec2(glm::floor((f.centre - r - m_origin) / side));
       const glm::ivec2 hi =
           glm::ivec2(glm::floor((f.centre + r - m_origin) / side));
+
       for (int y = std::max(lo.y, 0); y <= std::min(hi.y, m_th - 1); ++y)
         for (int x = std::max(lo.x, 0); x <= std::min(hi.x, m_tw - 1); ++x)
           m_near[static_cast<std::size_t>(y) * m_tw + x].push_back(k);
@@ -181,6 +215,7 @@ public:
   {
     if (m_all.lo.x > m_all.hi.x)
       return true;
+
     if (!m_few.empty())
     {
       // (A world of a few: each one's circle first (no trig), its exact
@@ -189,9 +224,12 @@ public:
       {
         const glm::vec2 d = p - f.solid.centre;
         const float out = f.reach + r;
+
         if (glm::dot(d, d) > out * out)
           continue;
+
         float dist;
+
         if (f.solid.circle)
           dist = glm::length(d) - f.solid.half.x;
         else
@@ -201,11 +239,14 @@ public:
           dist = glm::length(local -
                              glm::clamp(local, -f.solid.half, f.solid.half));
         }
+
         if (dist <= r)
           return false;
       }
+
       return true;
     }
+
     return at(p) > r;
   }
   /** At least how far `p` is from every collider (m; 0 on or in one). */
@@ -213,34 +254,45 @@ public:
   {
     if (m_all.lo.x > m_all.hi.x)
       return std::numeric_limits<float>::infinity();
+
     if (!m_few.empty())
     {
       float least = std::numeric_limits<float>::infinity();
+
       for (const Few& f : m_few)
         least = std::min(least, distanceTo(f.solid, p));
+
       return std::max(least, 0.0f);
     }
+
     const float fx = (p.x - m_origin.x) / kCell,
                 fy = (p.y - m_origin.y) / kCell;
+
     if (!(fx >= 0.0f && fy >= 0.0f))
       return glm::length(p - glm::clamp(p, m_all.lo, m_all.hi));
+
     const int cx = static_cast<int>(fx), cy = static_cast<int>(fy);
     const int tx = cx / kTile, ty = cy / kTile;
+
     // (Off the tiles: every collider's within the box round them all.)
     if (tx >= m_tw || ty >= m_th)
       return glm::length(p - glm::clamp(p, m_all.lo, m_all.hi));
+
     const std::size_t t = static_cast<std::size_t>(ty) * m_tw + tx;
+
     // (Made once, by whichever query comes first; never a lock once made:
     // std::call_once takes one global lock a call on some platforms.)
     if (!m_made[t].load(std::memory_order_acquire))
     {
       const std::lock_guard lock(m_making);
+
       if (!m_made[t].load(std::memory_order_relaxed))
       {
         make(tx, ty);
         m_made[t].store(true, std::memory_order_release);
       }
     }
+
     return m_tiles[t][static_cast<std::size_t>(cy - ty * kTile) * kTile +
                       static_cast<std::size_t>(cx - tx * kTile)];
   }
@@ -262,8 +314,10 @@ private:
                     static_cast<float>(pad)) *
                        kCell;
     std::vector<BoxSpace::Solid> near;
+
     for (uint32_t k : m_near[static_cast<std::size_t>(ty) * m_tw + tx])
       near.push_back(m_foot[k]);
+
     std::vector<uint8_t> solid;
     // (Every cell any of them touches: a point of one lies within half a
     // cell's diagonal of its own cell's middle, so its cell is marked.)
@@ -283,6 +337,7 @@ private:
     std::vector<float>& tile =
         m_tiles[static_cast<std::size_t>(ty) * m_tw + tx];
     tile.resize(static_cast<std::size_t>(kTile) * kTile);
+
     for (int y = 0; y < kTile; ++y)
       for (int x = 0; x < kTile; ++x)
         tile[static_cast<std::size_t>(y) * kTile + x] = std::max(
@@ -322,8 +377,10 @@ bool broadCheck()
 void broadMissed(Pose2 pose)
 {
   static std::atomic<int> logged{0};
+
   if (logged++ >= 20)
     return;
+
   char line[200];
   std::snprintf(line,
                 sizeof(line),
@@ -356,59 +413,21 @@ bool clearBy(const CollisionSpace::Clearance& clear,
         static_cast<int>(std::ceil(half.x / std::max(half.y, 0.5f))), 1, 6);
     const float reach = glm::length(along) / static_cast<float>(n) + side;
     const glm::vec2 centre = glm::vec2(at.position + at.rotation * s.offset);
+
     for (int k = 0; k < n; ++k)
     {
       // (The k-th of n equal stretches along its length: its middle.)
       const float t =
           (2.0f * static_cast<float>(k) + 1.0f) / static_cast<float>(n) - 1.0f;
-      if (!clear.clear(centre + along * t, reach + kHair))
+
+      if (!clear.clear(centre + along * t, reach + HAIR))
         return false;
     }
   }
+
   return true;
 }
 } // namespace
-
-Span spanOf(std::span<const Box3> boxes)
-{
-  Span s;
-  bool any = false;
-  for (const Box3& b : boxes)
-  {
-    s.back = any ? std::min(s.back, b.back) : b.back;
-    s.front = any ? std::max(s.front, b.front) : b.front;
-    s.half = std::max(s.half, std::abs(b.shift) + b.half);
-    any = true;
-  }
-  return s;
-}
-
-Stance stanceOf(Pose2 pose,
-                const Span& span,
-                const std::function<float(glm::vec2)>& ground)
-{
-  const glm::quat yaw = yawRotation(pose.heading);
-  if (!ground)
-    return {{pose.position, 0.0f}, yaw};
-  const glm::vec2 f(std::cos(pose.heading), std::sin(pose.heading));
-  const glm::vec2 l(-f.y, f.x);
-  const float z = ground(pose.position);
-  const float length = span.front - span.back, width = 2.0f * span.half;
-  if (length < 0.01f || width < 0.01f)
-    return {{pose.position, z}, yaw};
-  const glm::vec2 mid = pose.position + f * (0.5f * (span.back + span.front));
-  const float zBack = ground(pose.position + f * span.back);
-  const float zFront = ground(pose.position + f * span.front);
-  const float zLeft = ground(mid + l * span.half);
-  const float zRight = ground(mid - l * span.half);
-  // (Nose up turns +x towards +z: about +y, negative. Left side up turns +y
-  // towards +z: about +x, positive.)
-  const float pitch = -std::atan2(zFront - zBack, length);
-  const float roll = std::atan2(zLeft - zRight, width);
-  return {{pose.position, z},
-          yaw * glm::angleAxis(pitch, glm::vec3(0.0f, 1.0f, 0.0f)) *
-              glm::angleAxis(roll, glm::vec3(1.0f, 0.0f, 0.0f))};
-}
 
 CollisionSpace::CollisionSpace(
     std::vector<std::shared_ptr<const CollisionWorld3D>> worlds,
@@ -416,6 +435,7 @@ CollisionSpace::CollisionSpace(
     : m_worlds(std::move(worlds)), m_options(std::move(options))
 {
   m_bounds = {glm::vec2(1e9f), glm::vec2(-1e9f)};
+
   for (const auto& w : m_worlds)
     for (const CollisionWorld3D::Body& b : w->bodies())
       for (const CollisionShape3D& s : b.shapes)
@@ -426,8 +446,88 @@ CollisionSpace::CollisionSpace(
         m_bounds.lo = glm::min(m_bounds.lo, c - r);
         m_bounds.hi = glm::max(m_bounds.hi, c + r);
       }
+
   if (m_bounds.lo.x > m_bounds.hi.x)
     m_bounds = {glm::vec2(-1.0f), glm::vec2(1.0f)};
+}
+
+bool CollisionSpace::fits(const void* prepared, Pose2 pose) const
+{
+  const Timed timed;
+  const auto& p = *static_cast<const Prepared*>(prepared);
+  const Stance at = stanceOf(pose, p.span, m_options.ground);
+  const auto& clear = clearances();
+  bool exact = false;
+
+  for (std::size_t k = 0; k < m_worlds.size(); ++k)
+  {
+    if (k < clear.size() && clearBy(*clear[k], p, at))
+    {
+      if (broadCheck() && m_worlds[k]->overlaps(p.probe,
+                                                at.position,
+                                                at.rotation,
+                                                m_options.layers,
+                                                m_options.ignore))
+        broadMissed(pose);
+
+      continue;
+    }
+
+    exact = true;
+
+    if (m_worlds[k]->overlaps(p.probe,
+                              at.position,
+                              at.rotation,
+                              m_options.layers,
+                              m_options.ignore))
+    {
+      ++checkStats().exact;
+      return false;
+    }
+  }
+
+  ++(exact ? checkStats().exact : checkStats().broad);
+  return true;
+}
+
+std::optional<Space::Hit> CollisionSpace::hit(const void* prepared,
+                                              Pose2 pose) const
+{
+  const Timed timed;
+  const auto& p = *static_cast<const Prepared*>(prepared);
+  const Stance at = stanceOf(pose, p.span, m_options.ground);
+  const auto& clear = clearances();
+  bool exact = false;
+
+  for (std::size_t k = 0; k < m_worlds.size(); ++k)
+  {
+    if (k < clear.size() && clearBy(*clear[k], p, at))
+    {
+      if (broadCheck() && m_worlds[k]->overlaps(p.probe,
+                                                at.position,
+                                                at.rotation,
+                                                m_options.layers,
+                                                m_options.ignore))
+        broadMissed(pose);
+
+      continue;
+    }
+
+    exact = true;
+
+    if (const auto h = m_worlds[k]->overlap(p.probe,
+                                            at.position,
+                                            at.rotation,
+                                            m_options.layers,
+                                            m_options.ignore))
+    {
+      ++checkStats().exact;
+      return Hit{h->id, {h->point.x, h->point.y}};
+    }
+  }
+
+  ++(exact ? checkStats().exact : checkStats().broad);
+  return std::nullopt;
 }
 
 std::shared_ptr<const void> CollisionSpace::prepare(std::span<const Box3> boxes,
@@ -436,6 +536,7 @@ std::shared_ptr<const void> CollisionSpace::prepare(std::span<const Box3> boxes,
                                                     float widen) const
 {
   std::vector<CollisionShape3D> shapes;
+
   for (const Box3& b : boxes)
   {
     CollisionShape3D s;
@@ -446,8 +547,28 @@ std::shared_ptr<const void> CollisionSpace::prepare(std::span<const Box3> boxes,
     s.offset = {0.5f * (b.back + b.front), b.shift, 0.5f * (b.bottom + b.top)};
     shapes.push_back(s);
   }
+
   return std::make_shared<const Prepared>(
       Prepared{CollisionWorld3D::Probe(shapes), spanOf(boxes), shapes});
+}
+
+void CollisionSpace::raster(glm::vec2 origin,
+                            float cell,
+                            int width,
+                            int height,
+                            float inflate,
+                            std::vector<uint8_t>& out) const
+{
+  footprints();
+  rasterOf(m_foot,
+           m_options.rasterLow,
+           m_options.rasterHigh,
+           origin,
+           cell,
+           width,
+           height,
+           inflate,
+           out);
 }
 
 const std::vector<std::shared_ptr<const CollisionSpace::Clearance>>&
@@ -456,6 +577,7 @@ CollisionSpace::clearances() const
   // (Every query asks: no lock once they're made.)
   if (m_clearMade.load(std::memory_order_acquire))
     return m_clear;
+
   std::call_once(
       m_clearOnce,
       [this]
@@ -465,6 +587,7 @@ CollisionSpace::clearances() const
           m_clearMade.store(true, std::memory_order_release);
           return;
         }
+
         // (Kept by world while it lives, its layers and ignored ids: a static
         // world's grid is made once, however many spaces are made over it
         // (one per change of the parked machines).)
@@ -480,13 +603,16 @@ CollisionSpace::clearances() const
         static std::vector<Kept> kept;
         const std::lock_guard lock(mutex);
         std::erase_if(kept, [](const Kept& k) { return k.world.expired(); });
+
         for (const auto& w : m_worlds)
         {
           std::shared_ptr<const Clearance> found;
+
           for (const Kept& k : kept)
             if (k.raw == w.get() && k.layers == m_options.layers &&
                 k.ignore == m_options.ignore)
               found = k.clearance;
+
           if (!found)
           {
             found = std::make_shared<const Clearance>(
@@ -494,80 +620,76 @@ CollisionSpace::clearances() const
             kept.push_back(
                 {w, w.get(), m_options.layers, m_options.ignore, found});
           }
+
           m_clear.push_back(std::move(found));
         }
+
         m_clearMade.store(true, std::memory_order_release);
       });
   return m_clear;
 }
 
-bool CollisionSpace::fits(const void* prepared, Pose2 pose) const
+std::vector<BoxSpace::Solid> CollisionSpace::footprints() const
 {
-  const Timed timed;
-  const auto& p = *static_cast<const Prepared*>(prepared);
-  const Stance at = stanceOf(pose, p.span, m_options.ground);
-  const auto& clear = clearances();
-  bool exact = false;
-  for (std::size_t k = 0; k < m_worlds.size(); ++k)
-  {
-    if (k < clear.size() && clearBy(*clear[k], p, at))
-    {
-      if (broadCheck() && m_worlds[k]->overlaps(p.probe,
-                                                at.position,
-                                                at.rotation,
-                                                m_options.layers,
-                                                m_options.ignore))
-        broadMissed(pose);
-      continue;
-    }
-    exact = true;
-    if (m_worlds[k]->overlaps(p.probe,
-                              at.position,
-                              at.rotation,
-                              m_options.layers,
-                              m_options.ignore))
-    {
-      ++checkStats().exact;
-      return false;
-    }
-  }
-  ++(exact ? checkStats().exact : checkStats().broad);
-  return true;
+  std::call_once(
+      m_footOnce,
+      [this]
+      {
+        for (const auto& w : m_worlds)
+        {
+          std::vector<BoxSpace::Solid> each = nav::footprints(
+              *w, m_options.layers, m_options.ignore, m_options.ground);
+          m_foot.insert(m_foot.end(), each.begin(), each.end());
+        }
+      });
+  return m_foot;
 }
 
-std::optional<Space::Hit> CollisionSpace::hit(const void* prepared,
-                                              Pose2 pose) const
+Span spanOf(std::span<const Box3> boxes)
 {
-  const Timed timed;
-  const auto& p = *static_cast<const Prepared*>(prepared);
-  const Stance at = stanceOf(pose, p.span, m_options.ground);
-  const auto& clear = clearances();
-  bool exact = false;
-  for (std::size_t k = 0; k < m_worlds.size(); ++k)
+  Span s;
+  bool any = false;
+
+  for (const Box3& b : boxes)
   {
-    if (k < clear.size() && clearBy(*clear[k], p, at))
-    {
-      if (broadCheck() && m_worlds[k]->overlaps(p.probe,
-                                                at.position,
-                                                at.rotation,
-                                                m_options.layers,
-                                                m_options.ignore))
-        broadMissed(pose);
-      continue;
-    }
-    exact = true;
-    if (const auto h = m_worlds[k]->overlap(p.probe,
-                                            at.position,
-                                            at.rotation,
-                                            m_options.layers,
-                                            m_options.ignore))
-    {
-      ++checkStats().exact;
-      return Hit{h->id, {h->point.x, h->point.y}};
-    }
+    s.back = any ? std::min(s.back, b.back) : b.back;
+    s.front = any ? std::max(s.front, b.front) : b.front;
+    s.half = std::max(s.half, std::abs(b.shift) + b.half);
+    any = true;
   }
-  ++(exact ? checkStats().exact : checkStats().broad);
-  return std::nullopt;
+
+  return s;
+}
+
+Stance stanceOf(Pose2 pose,
+                const Span& span,
+                const std::function<float(glm::vec2)>& ground)
+{
+  const glm::quat yaw = yawRotation(pose.heading);
+
+  if (!ground)
+    return {{pose.position, 0.0f}, yaw};
+
+  const glm::vec2 f(std::cos(pose.heading), std::sin(pose.heading));
+  const glm::vec2 l(-f.y, f.x);
+  const float z = ground(pose.position);
+  const float length = span.front - span.back, width = 2.0f * span.half;
+
+  if (length < 0.01f || width < 0.01f)
+    return {{pose.position, z}, yaw};
+
+  const glm::vec2 mid = pose.position + f * (0.5f * (span.back + span.front));
+  const float zBack = ground(pose.position + f * span.back);
+  const float zFront = ground(pose.position + f * span.front);
+  const float zLeft = ground(mid + l * span.half);
+  const float zRight = ground(mid - l * span.half);
+  // (Nose up turns +x towards +z: about +y, negative. Left side up turns +y
+  // towards +z: about +x, positive.)
+  const float pitch = -std::atan2(zFront - zBack, length);
+  const float roll = std::atan2(zLeft - zRight, width);
+  return {{pose.position, z},
+          yaw * glm::angleAxis(pitch, glm::vec3(0.0f, 1.0f, 0.0f)) *
+              glm::angleAxis(roll, glm::vec3(1.0f, 0.0f, 0.0f))};
 }
 
 std::vector<BoxSpace::Solid>
@@ -577,11 +699,13 @@ footprints(const CollisionWorld3D& world,
            const std::function<float(glm::vec2)>& ground)
 {
   std::vector<BoxSpace::Solid> out;
+
   for (const CollisionWorld3D::Body& b : world.bodies())
   {
     if (!(layers & (1u << (b.layer & 31u))) ||
         std::find(ignore.begin(), ignore.end(), b.id) != ignore.end())
       continue;
+
     for (const CollisionShape3D& s : b.shapes)
     {
       const glm::quat turn = b.rotation * s.rotation;
@@ -590,6 +714,7 @@ footprints(const CollisionWorld3D& world,
       f.centre = {centre.x, centre.y};
       f.id = b.id;
       float up = 0.0f;
+
       if (s.kind == CollisionShape3D::Kind::Box)
       {
         const glm::vec3 h = 0.5f * s.size;
@@ -624,6 +749,7 @@ footprints(const CollisionWorld3D& world,
         // its circle grown by its middle line's reach over the ground, as it
         // lies.)
         const glm::vec3 axis = turn * glm::vec3(0.0f, 0.0f, 1.0f);
+
         if (s.kind == CollisionShape3D::Kind::Capsule &&
             glm::length(glm::vec2(axis)) > 1.0e-4f)
         {
@@ -632,48 +758,15 @@ footprints(const CollisionWorld3D& world,
           up = s.size.x + std::abs(axis.z) * half;
         }
       }
+
       const float under = ground ? ground(f.centre) : 0.0f;
       f.bottom = centre.z - up - under;
       f.top = centre.z + up - under;
       out.push_back(f);
     }
   }
+
   return out;
-}
-
-std::vector<BoxSpace::Solid> CollisionSpace::footprints() const
-{
-  std::call_once(
-      m_footOnce,
-      [this]
-      {
-        for (const auto& w : m_worlds)
-        {
-          std::vector<BoxSpace::Solid> each = nav::footprints(
-              *w, m_options.layers, m_options.ignore, m_options.ground);
-          m_foot.insert(m_foot.end(), each.begin(), each.end());
-        }
-      });
-  return m_foot;
-}
-
-void CollisionSpace::raster(glm::vec2 origin,
-                            float cell,
-                            int width,
-                            int height,
-                            float inflate,
-                            std::vector<uint8_t>& out) const
-{
-  footprints();
-  rasterOf(m_foot,
-           m_options.rasterLow,
-           m_options.rasterHigh,
-           origin,
-           cell,
-           width,
-           height,
-           inflate,
-           out);
 }
 
 } // namespace sfs::nav

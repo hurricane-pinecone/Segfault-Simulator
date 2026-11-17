@@ -1,13 +1,18 @@
 #pragma once
 
+#include "engine/core/components/contactReportComponent.h"
 #include "engine/core/ecs/entity.h"
+#include "engine/core/ecs/hierarchyLinks.h"
 #include "engine/core/ecs/registry.h"
+#include "engine/core/events/events.h"
 #include "engine/core/hierarchy/hierarchy.h"
 #include "engine/runtime/assetStore/assetStore.h"
 #include "engine/runtime/game/gameObject.h"
 #include "engine/runtime/input/input.h"
+#include "engine/runtime/systems/collision2D.h"
 #include "engine/runtime/systems/transformSystem.h"
-#include <SDL_render.h>
+
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -43,6 +48,12 @@ struct SceneBackends
 class Scene
 {
 public:
+  enum class Mode
+  {
+    EDITOR,
+    GAME,
+  };
+
   Scene(SceneId id, const SceneBackends& backends)
       : Scene(id, backends, "scene_" + std::to_string(id))
   {
@@ -57,116 +68,73 @@ public:
 
   virtual ~Scene() = default;
 
-  enum class Mode
-  {
-    EDITOR,
-    GAME,
-  };
-
-  SceneId id() const;
-  const std::string& name() const;
-
-  // A frame: the flush, the events' frame boundary (Events::update()), the
-  // systems (in game time: see Registry::setTimeScale() and
-  // System::TimeStep), then the game objects and onUpdate() (real time:
-  // they're the player's, input and cameras), then the systems' lateUpdate().
-  void update(double deltaTime);
-  // The frame's input: filterInput(), then each game object (without the
-  // keys that input contexts outranking its own claim: see
-  // InputContextComponent), then onProcessInput().
-  void processInput(const sfs::Input& input);
   /**
-   * The render phase: each enabled system's render(), in the order they were
-   * added (the transform pass first), then onRender(). Nothing in it should
-   * write a TransformComponent: what's drawn reads the world matrices the
-   * pass cached.
+   * Gives the scene its one T, a type marked [[sfs::scene_data]], made from
+   * `args`: Registry::addSceneData(). When it has one already, it logs an error
+   * and keeps that one.
+   * @return the scene's T
    */
-  void render();
-
-  // Invoked inside the debug ImGui frame (debug builds only) so a scene can add
-  // game-specific debug controls.
-  void debugUI() { onDebugUI(); }
-
-  Entity createEntity();
-  Entity getEntity(Entity::EntityId id);
-
-  // Destroy an entity (at the next flush). Its children become roots; use
-  // destroyBranch to take them with it.
-  void destroyEntity(const Entity& entity);
-
-  // Destroy an entity and everything below it (at the next flush).
-  void destroyBranch(const Entity& entity);
-
-  // The first entity with this name (NameComponent), parents before children;
-  // invalid if none. A path such as "Town/House/Door" starts from a root
-  // entity's name and follows children's names down.
-  Entity findEntity(std::string_view nameOrPath);
-
-  // Every entity with this name, parents before children.
-  std::vector<Entity> findEntities(std::string_view name);
-
-  // Every living entity, in id order.
-  std::vector<Entity> entities() { return m_registry.entities(); }
-
-  /**
-   * Every living entity, parents before children, roots and siblings in id
-   * order (the order scenes save in), each with its parent's place in the
-   * list: hierarchy::preorder() of the scene's registry. Rebuilt only after
-   * the hierarchy or the set of entities changed, in place by the first call
-   * after, so while iterating it, call nothing that may call preorder() (a
-   * save, findEntity). Main thread only.
-   * @return the index
-   */
-  const std::vector<HierarchyLinks::Placed>& preorder()
+  template <typename T, typename... TArgs>
+  T& addSceneData(TArgs&&... args)
   {
-    return m_registry.preorder();
+    return m_registry.addSceneData<T>(std::forward<TArgs>(args)...);
   }
 
   /**
-   * The root entities (those with no parent), in id order: hierarchy::roots()
-   * of the scene's registry.
-   * @return a range of Entity, read from the registry as it goes
+   * Gives the scene default-made data of a reflected scene data type:
+   * addSceneData<T>() for a type known only at run time. One it has is kept,
+   * with an error logged.
+   * @param type the reflected type
+   * @return the scene's one; null when the type isn't scene data
    */
-  hierarchy::RootRange roots() { return hierarchy::roots(m_registry); }
+  void* addSceneData(const reflect::TypeInfo& type);
 
-  // Apply pending entity creation/destruction now instead of at the start of
-  // the next update (e.g. after an editor replaces the scene's contents).
-  // Game objects on entities it destroys are destroyed too.
-  void flushEntities();
+  /**
+   * Adds a service (docs/core/services), as Registry::addService() does: it
+   * runs at the start of each step, before the systems, whenever its event
+   * handles have something new.
+   * @param args what its constructor takes
+   * @return the service
+   */
+  template <typename TService, typename... TArgs>
+  TService& addService(TArgs&&... args)
+  {
+    return m_registry.addService<TService>(std::forward<TArgs>(args)...);
+  }
 
-  AssetStore& assetStore() const { return m_assetStore; }
-  // The backend's renderer. Asking for it where there's none (a tool without
-  // a GPU) is a setup bug, so it's a fatal error (see fatalError()), like
-  // getSystem; tryRenderer() returns null instead.
-  IRenderer& renderer() const;
-  // The game this scene runs in: quit, switch scenes, change the window. Like
-  // the renderer, game() assumes there is one (there always is when a game or
-  // the editor runs the scene); tryGame() is null in tools and tests.
-  Game& game() const;
-  Game* tryGame() const { return m_game; }
-
-  IRenderer* tryRenderer() const { return m_renderer; }
-
-  template <typename TObject, typename... TArgs>
-  TObject& createObject(TArgs&&... args);
-
-  // Create a GameObject bound to an existing entity (e.g. one placed in the
-  // editor): the object's entity() is already set when its onCreate runs.
-  template <typename TObject>
-  TObject& attachObject(const Entity& entity);
+  template <typename TSystem, typename... TArgs>
+  TSystem& addSystem(TArgs&&... args);
 
   // attachObject for an object made elsewhere (e.g. by a script factory, with
   // its fields already set): binds it to `entity`, then runs its onCreate.
   GameObject& adoptObject(std::unique_ptr<GameObject> object,
                           const Entity& entity);
 
-  template <typename TObject>
-  TObject* tryFindObject() const;
+  AssetStore& assetStore() const { return m_assetStore; }
 
-  // Every object of a type (or derived from it), in the order made. Objects
-  // destroyed this frame aren't found.
+  // Create a GameObject bound to an existing entity (e.g. one placed in the
+  // editor): the object's entity() is already set when its onCreate runs.
   template <typename TObject>
-  std::vector<TObject*> findObjects() const;
+  TObject& attachObject(const Entity& entity);
+
+  /** Destroys all the scene's scene data, at once. */
+  void clearSceneData() { m_registry.clearSceneData(); }
+
+  Entity createEntity();
+
+  template <typename TObject, typename... TArgs>
+  TObject& createObject(TArgs&&... args);
+
+  // Invoked inside the debug ImGui frame (debug builds only) so a scene can add
+  // game-specific debug controls.
+  void debugUI() { onDebugUI(); }
+
+  // Destroy an entity and everything below it (at the next flush).
+  void destroyBranch(const Entity& entity);
+
+  // Destroy an entity (at the next flush). Its children become roots; use
+  // destroyBranch to take them with it.
+  void destroyEntity(const Entity& entity);
 
   /**
    * Destroy a game object and its entity (if it has one). It gets no more
@@ -182,18 +150,8 @@ public:
    */
   void destroyObjects();
 
-  // Tell the game objects on both entities that a physics contact began or
-  // ended (their onCollision/onTrigger Enter/Exit). Called by the scene's
-  // physics, not by game code.
-  void notifyContact(const Contact3D& contact, bool begun);
-  void notifyContact(const Contact2D& contact, bool begun);
-
-  /** Game seconds since play began: the time handed to the scene's systems
-   * (Registry::gameTime()). */
-  double gameTime() const { return m_registry.gameTime(); }
-
-  /** Whether the game is paused (Registry::paused()). */
-  bool paused() const { return m_registry.paused(); }
+  // Every living entity, in id order.
+  std::vector<Entity> entities() { return m_registry.entities(); }
 
   /**
    * The scene's event queues (Registry::events()): send what one system tells
@@ -203,6 +161,100 @@ public:
    * @return the events
    */
   Events& events() { return m_registry.events(); }
+
+  // Every entity with this name, parents before children.
+  std::vector<Entity> findEntities(std::string_view name);
+
+  // The first entity with this name (NameComponent), parents before children;
+  // invalid if none. A path such as "Town/House/Door" starts from a root
+  // entity's name and follows children's names down.
+  Entity findEntity(std::string_view nameOrPath);
+
+  // Every object of a type (or derived from it), in the order made. Objects
+  // destroyed this frame aren't found.
+  template <typename TObject>
+  std::vector<TObject*> findObjects() const;
+
+  // Apply pending entity creation/destruction now instead of at the start of
+  // the next update (e.g. after an editor replaces the scene's contents).
+  // Game objects on entities it destroys are destroyed too.
+  void flushEntities();
+
+  /**
+   * Calls fn(Service&) for each service, in the order they were added (debug
+   * tooling: enable/disable, inspect).
+   * @param fn what to call
+   */
+  template <typename Fn>
+  void forEachService(Fn&& fn)
+  {
+    m_registry.forEachService(std::forward<Fn>(fn));
+  }
+
+  // Iterate all systems (debug tooling: enable/disable, inspect).
+  template <typename Fn>
+  void forEachSystem(Fn&& fn)
+  {
+    m_registry.forEachSystem(std::forward<Fn>(fn));
+  }
+
+  // The game this scene runs in: quit, switch scenes, change the window. Like
+  // the renderer, game() assumes there is one (there always is when a game or
+  // the editor runs the scene); tryGame() is null in tools and tests.
+  Game& game() const;
+
+  /** Game seconds since play began: the time handed to the scene's systems
+   * (Registry::gameTime()). */
+  double gameTime() const { return m_registry.gameTime(); }
+
+  Entity getEntity(Entity::EntityId id);
+
+  template <typename TSystem>
+  TSystem& getSystem() const;
+
+  template <typename TSystem>
+  bool hasSystem() const;
+
+  /**
+   * The flushed, living entities with a reflected component type, in id
+   * order: query<T>() for a type known only at run time (tools that work
+   * from reflection, as Unity's FindObjectsOfType(Type)).
+   * @param type the component's reflected type
+   * @return its query list, read-only; empty for a type that isn't a
+   *         component
+   */
+  const std::vector<Entity>& holdersOf(const reflect::TypeInfo& type);
+
+  SceneId id() const;
+  const std::string& name() const;
+
+  // Tell the game objects on both entities that a physics contact began or
+  // ended (their onCollision/onTrigger Enter/Exit). Called by the scene's
+  // physics, not by game code.
+  void notifyContact(const Contact3D& contact, bool begun);
+  void notifyContact(const Contact2D& contact, bool begun);
+
+  /** Whether the game is paused (Registry::paused()). */
+  bool paused() const { return m_registry.paused(); }
+
+  /**
+   * Every living entity, parents before children, roots and siblings in id
+   * order (the order scenes save in), each with its parent's place in the
+   * list: hierarchy::preorder() of the scene's registry. Rebuilt only after
+   * the hierarchy or the set of entities changed, in place by the first call
+   * after, so while iterating it, call nothing that may call preorder() (a
+   * save, findEntity). Main thread only.
+   * @return the index
+   */
+  const std::vector<HierarchyLinks::Placed>& preorder()
+  {
+    return m_registry.preorder();
+  }
+
+  // The frame's input: filterInput(), then each game object (without the
+  // keys that input contexts outranking its own claim: see
+  // InputContextComponent), then onProcessInput().
+  void processInput(const sfs::Input& input);
 
   /**
    * The flushed, living entities that match these terms (components, one
@@ -218,6 +270,43 @@ public:
     return m_registry.query<TTerms...>();
   }
 
+  /** Destroys the scene's T, a type marked [[sfs::scene_data]], at once. */
+  template <typename T>
+  void removeSceneData()
+  {
+    m_registry.removeSceneData<T>();
+  }
+
+  /**
+   * Destroys the scene's data of a reflected scene data type; nothing when
+   * it has none or the type isn't scene data.
+   * @param type the reflected type
+   */
+  void removeSceneData(const reflect::TypeInfo& type);
+
+  template <typename TSystem>
+  void removeSystem();
+
+  /**
+   * The render phase: each enabled system's render(), in the order they were
+   * added (the transform pass first), then onRender(). Nothing in it should
+   * write a TransformComponent: what's drawn reads the world matrices the
+   * pass cached.
+   */
+  void render();
+
+  // The backend's renderer. Asking for it where there's none (a tool without
+  // a GPU) is a setup bug, so it's a fatal error (see fatalError()), like
+  // getSystem; tryRenderer() returns null instead.
+  IRenderer& renderer() const;
+
+  /**
+   * The root entities (those with no parent), in id order: hierarchy::roots()
+   * of the scene's registry.
+   * @return a range of Entity, read from the registry as it goes
+   */
+  hierarchy::RootRange roots() { return hierarchy::roots(m_registry); }
+
   /**
    * The scene's one T, a type marked [[sfs::scene_data]] (a match's scoreboard,
    * the weather), in constant time: Registry::sceneData().
@@ -230,28 +319,6 @@ public:
   }
 
   /**
-   * Gives the scene its one T, a type marked [[sfs::scene_data]], made from
-   * `args`: Registry::addSceneData(). When it has one already, it logs an error
-   * and keeps that one.
-   * @return the scene's T
-   */
-  template <typename T, typename... TArgs>
-  T& addSceneData(TArgs&&... args)
-  {
-    return m_registry.addSceneData<T>(std::forward<TArgs>(args)...);
-  }
-
-  /** Destroys the scene's T, a type marked [[sfs::scene_data]], at once. */
-  template <typename T>
-  void removeSceneData()
-  {
-    m_registry.removeSceneData<T>();
-  }
-
-  /** Destroys all the scene's scene data, at once. */
-  void clearSceneData() { m_registry.clearSceneData(); }
-
-  /**
    * The scene's data of a reflected scene data type: sceneData<T>() for a type
    * known only at run time (the editor, the scene file).
    * @param type the reflected type
@@ -260,102 +327,64 @@ public:
    */
   void* sceneDataOf(const reflect::TypeInfo& type);
 
-  /**
-   * Gives the scene default-made data of a reflected scene data type:
-   * addSceneData<T>() for a type known only at run time. One it has is kept,
-   * with an error logged.
-   * @param type the reflected type
-   * @return the scene's one; null when the type isn't scene data
-   */
-  void* addSceneData(const reflect::TypeInfo& type);
+  template <typename TObject>
+  TObject* tryFindObject() const;
 
-  /**
-   * Destroys the scene's data of a reflected scene data type; nothing when
-   * it has none or the type isn't scene data.
-   * @param type the reflected type
-   */
-  void removeSceneData(const reflect::TypeInfo& type);
-
-  /**
-   * The flushed, living entities with a reflected component type, in id
-   * order: query<T>() for a type known only at run time (tools that work
-   * from reflection, as Unity's FindObjectsOfType(Type)).
-   * @param type the component's reflected type
-   * @return its query list, read-only; empty for a type that isn't a
-   *         component
-   */
-  const std::vector<Entity>& holdersOf(const reflect::TypeInfo& type);
-
-  template <typename TSystem, typename... TArgs>
-  TSystem& addSystem(TArgs&&... args);
-
-  template <typename TSystem>
-  void removeSystem();
-
-  template <typename TSystem>
-  bool hasSystem() const;
-
-  template <typename TSystem>
-  TSystem& getSystem() const;
+  Game* tryGame() const { return m_game; }
 
   // Null when the system isn't registered (for getSystem that's a fatal
   // error).
   template <typename TSystem>
   TSystem* tryGetSystem() const;
 
-  // Iterate all systems (debug tooling: enable/disable, inspect).
-  template <typename Fn>
-  void forEachSystem(Fn&& fn)
-  {
-    m_registry.forEachSystem(std::forward<Fn>(fn));
-  }
+  IRenderer* tryRenderer() const { return m_renderer; }
 
-  /**
-   * Adds a service (docs/core/services), as Registry::addService() does: it
-   * runs at the start of each step, before the systems, whenever its event
-   * handles have something new.
-   * @param args what its constructor takes
-   * @return the service
-   */
-  template <typename TService, typename... TArgs>
-  TService& addService(TArgs&&... args)
-  {
-    return m_registry.addService<TService>(std::forward<TArgs>(args)...);
-  }
-
-  /**
-   * Calls fn(Service&) for each service, in the order they were added (debug
-   * tooling: enable/disable, inspect).
-   * @param fn what to call
-   */
-  template <typename Fn>
-  void forEachService(Fn&& fn)
-  {
-    m_registry.forEachService(std::forward<Fn>(fn));
-  }
-
-private:
-  Registry& registry();
-  const Registry& registry() const;
+  // A frame: the flush, the events' frame boundary (Events::update()), the
+  // systems (in game time: see Registry::setTimeScale() and
+  // System::TimeStep), then the game objects and onUpdate() (real time:
+  // they're the player's, input and cameras), then the systems' lateUpdate().
+  void update(double deltaTime);
 
 protected:
-  virtual void onInit(){};
-  virtual void onEnter(){};
-  virtual void onExit(){};
-  virtual void onUpdate(double deltaTime){};
-  virtual void onRender(){};
-  virtual void onProcessInput(const Input& input){};
+  friend class SceneManager;
+
   // First, before any object sees the frame's input: a chance to take some
   // of it (a scene's UI, clicks on it).
   virtual void filterInput(Input& input){};
   virtual void onDebugUI(){};
+  virtual void onEnter(){};
+  virtual void onExit(){};
+  virtual void onInit(){};
+  virtual void onProcessInput(const Input& input){};
+  virtual void onRender(){};
+  virtual void onUpdate(double deltaTime){};
 
-  friend class SceneManager;
-
-protected:
   AssetStore& m_assetStore;
 
 private:
+  // While game objects are being called (an update, input, contacts):
+  // objects destroyed meanwhile are only marked, and deleted after.
+  struct ObjectCalls
+  {
+    explicit ObjectCalls(Scene& scene) : scene(scene) { ++scene.m_objectCalls; }
+    ~ObjectCalls() { --scene.m_objectCalls; }
+
+    Scene& scene;
+  };
+
+  // Runs a new object's onCreate, as a call to it (so it isn't deleted under
+  // itself), owning the event handles it makes there.
+  void create(GameObject& object);
+  // Run the destroyed objects' onDestroy and delete them, if no object calls
+  // are under way.
+  void deleteDestroyedObjects();
+  // Mark the objects whose entities have been destroyed (and flushed).
+  void destroyObjectsOfDeadEntities();
+  Registry& registry();
+  const Registry& registry() const;
+  // update()'s systems, objects and onUpdate.
+  void updateObjects(double deltaTime);
+
   // Constructor-injected by SceneManager; null where there's no renderer.
   IRenderer* m_renderer = nullptr;
   Game* m_game = nullptr; // set by SceneManager
@@ -363,28 +392,6 @@ private:
   SceneId m_id = 0;
   std::string m_name = "";
   Registry m_registry;
-
-  // While game objects are being called (an update, input, contacts):
-  // objects destroyed meanwhile are only marked, and deleted after.
-  struct ObjectCalls
-  {
-    explicit ObjectCalls(Scene& scene) : scene(scene) { ++scene.m_objectCalls; }
-    ~ObjectCalls() { --scene.m_objectCalls; }
-    Scene& scene;
-  };
-
-  // update()'s systems, objects and onUpdate.
-  void updateObjects(double deltaTime);
-  // Mark the objects whose entities have been destroyed (and flushed).
-  void destroyObjectsOfDeadEntities();
-  // Run the destroyed objects' onDestroy and delete them, if no object calls
-  // are under way.
-  void deleteDestroyedObjects();
-
-  // Runs a new object's onCreate, as a call to it (so it isn't deleted under
-  // itself), owning the event handles it makes there.
-  void create(GameObject& object);
-
   std::vector<std::unique_ptr<GameObject>> m_gameObjects;
   int m_objectCalls = 0;
   bool m_objectsDestroyed = false; // some in m_gameObjects are destroyed
@@ -413,10 +420,12 @@ template <typename TObject>
 std::vector<TObject*> Scene::findObjects() const
 {
   std::vector<TObject*> found;
+
   for (auto& object : m_gameObjects)
     if (auto casted = dynamic_cast<TObject*>(object.get());
         casted && !object->destroyed())
       found.push_back(casted);
+
   return found;
 }
 

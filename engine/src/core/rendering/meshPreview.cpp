@@ -2,25 +2,39 @@
 
 #include "engine/core/rendering/materialGraphCompiler.h"
 #include "engine/core/rendering/materialNodes.h"
+#include "engine/core/rendering/mesh.h"
 #include "engine/core/rendering/terrain.h"
 
-#include "glm/glm/common.hpp"
-#include "glm/glm/exponential.hpp"
-#include "glm/glm/geometric.hpp"
-#include "glm/glm/trigonometric.hpp"
+#include <glm/glm/common.hpp>
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
+#include <glm/glm/ext/vector_float4.hpp>
+#include <glm/glm/geometric.hpp>
+#include <glm/glm/trigonometric.hpp>
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
 #include <limits>
+#include <memory>
+#include <vector>
 
 namespace sfs::meshPreview
 {
 
 namespace
 {
-constexpr int kSupersample = 2;
-constexpr float kPi = 3.14159265f;
+constexpr int SUPERSAMPLE = 2;
+constexpr float PI = 3.14159265f;
+
+struct Pixel
+{
+  float depth = std::numeric_limits<float>::max();
+  glm::vec3 color{0.0f};
+  float alpha = 0.0f;
+};
 
 float toLinear(uint8_t value)
 {
@@ -46,8 +60,10 @@ glm::vec4 sample(const sfs::TextureData& texture, glm::vec2 uv)
       static_cast<uint32_t>(uv.y * texture.height), texture.height - 1);
   const uint8_t* texel =
       &texture.rgba[(std::size_t(y) * texture.width + x) * 4];
+
   if (texture.linear)
     return glm::vec4(texel[0], texel[1], texel[2], texel[3]) / 255.0f;
+
   return {toLinear(texel[0]),
           toLinear(texel[1]),
           toLinear(texel[2]),
@@ -79,45 +95,57 @@ surfaceAt(const sfs::MeshMaterial& material,
     sfs::materialGraph::SurfaceValues surface;
     surface.baseColor = glm::vec3(0.0f);
     surface.roughness = 0.0f;
+
     for (std::size_t i = 0; i < weights.size() && !terrain.layers.empty(); ++i)
     {
       const sfs::TerrainLayer& layer =
           terrain.layers[i < terrain.layers.size() ? i : 0];
       glm::vec3 color = layer.tint;
+
       if (usable(layer.baseTexture))
         color *= glm::vec3(sample(*layer.baseTexture, point.uv * 2.0f));
+
       surface.baseColor += color * weights[i];
       surface.roughness += layer.roughness * weights[i];
     }
+
     if (terrain.layers.empty())
       surface.baseColor = glm::vec3(1.0f);
+
     return surface;
   }
+
   if (material.shader)
   {
     // Textures the preview can't read (still loading) read white.
     std::vector<std::shared_ptr<const sfs::TextureData>> textures;
+
     for (const auto& texture : material.shaderTextures)
       textures.push_back(usable(texture) ? texture : nullptr);
+
     return material.shader->evaluate(
         point, material.shaderParameters, textures);
   }
 
   const glm::vec2 uv = point.uv * material.tiling + material.offset;
   glm::vec4 albedo = glm::vec4(point.vertexColor, 1.0f) * material.baseColor;
+
   if (usable(material.baseTexture))
     albedo *= sample(*material.baseTexture, uv);
+
   sfs::materialGraph::SurfaceValues surface;
   surface.baseColor = glm::vec3(albedo);
   surface.alpha = albedo.a;
   surface.metallic = material.metallic;
   surface.roughness = material.roughness;
+
   if (usable(material.metallicRoughnessTexture))
   {
     const glm::vec4 data = sample(*material.metallicRoughnessTexture, uv);
     surface.metallic *= data.b;
     surface.roughness *= data.g;
   }
+
   if (usable(material.normalTexture))
   {
     const glm::vec3 bump =
@@ -125,6 +153,7 @@ surfaceAt(const sfs::MeshMaterial& material,
     surface.normal = glm::normalize(glm::vec3(
         glm::vec2(bump) * material.normalScale, std::max(bump.z, 0.0001f)));
   }
+
   surface.alphaClip = material.alphaCutoff;
   return surface;
 }
@@ -174,22 +203,16 @@ glm::vec3 shade(const glm::vec3& albedo,
   const float d = std::pow(std::max(glm::dot(normal, halfway), 0.0f), 2.0f) *
                       (a * a - 1.0f) +
                   1.0f;
-  const float glint = std::min(a * a / (kPi * d * d) * ndotl * 0.25f, 6.0f);
+  const float glint = std::min(a * a / (PI * d * d) * ndotl * 0.25f, 6.0f);
   return diffuse + reflection + f0 * glint * reflectivity;
 }
-
-struct Pixel
-{
-  float depth = std::numeric_limits<float>::max();
-  glm::vec3 color{0.0f};
-  float alpha = 0.0f;
-};
 } // namespace
 
 std::vector<uint8_t>
 render(const sfs::MeshData& mesh, int size, const sfs::MeshMaterial* material)
 {
   std::vector<uint8_t> out(std::size_t(size) * size * 4, 0);
+
   if (mesh.empty() || size <= 0)
     return out;
 
@@ -205,6 +228,7 @@ render(const sfs::MeshData& mesh, int size, const sfs::MeshMaterial* material)
 
   glm::vec2 low(std::numeric_limits<float>::max()),
       high(std::numeric_limits<float>::lowest());
+
   for (const sfs::MeshVertex& vertex : mesh.vertices)
   {
     const glm::vec2 flat(
@@ -212,12 +236,13 @@ render(const sfs::MeshData& mesh, int size, const sfs::MeshMaterial* material)
     low = glm::min(low, flat);
     high = glm::max(high, flat);
   }
+
   const glm::vec2 middle = (low + high) * 0.5f;
   const float span =
       std::max(std::max(high.x - low.x, high.y - low.y), 1.0e-4f);
   const glm::vec3 centre = right * middle.x + up * middle.y;
 
-  const int n = size * kSupersample;
+  const int n = size * SUPERSAMPLE;
   const float scale = n * 0.86f / span;
   std::vector<Pixel> pixels(std::size_t(n) * n);
 
@@ -227,6 +252,7 @@ render(const sfs::MeshData& mesh, int size, const sfs::MeshMaterial* material)
     float depth;
   };
   std::vector<Projected> projected(mesh.vertices.size());
+
   for (std::size_t i = 0; i < mesh.vertices.size(); ++i)
   {
     const glm::vec3 p = mesh.vertices[i].position - centre;
@@ -240,10 +266,12 @@ render(const sfs::MeshData& mesh, int size, const sfs::MeshMaterial* material)
   {
     if (material)
       return *material;
+
     for (const sfs::MeshSection& section : mesh.sections)
       if (index >= section.firstIndex &&
           index < std::size_t(section.firstIndex) + section.indexCount)
         return section.material;
+
     return defaults;
   };
 
@@ -251,14 +279,18 @@ render(const sfs::MeshData& mesh, int size, const sfs::MeshMaterial* material)
   {
     const uint32_t ia = mesh.indices[i], ib = mesh.indices[i + 1],
                    ic = mesh.indices[i + 2];
+
     if (ia >= projected.size() || ib >= projected.size() ||
         ic >= projected.size())
       continue;
+
     const Projected &a = projected[ia], &b = projected[ib], &c = projected[ic];
     const float area = (b.screen.x - a.screen.x) * (c.screen.y - a.screen.y) -
                        (b.screen.y - a.screen.y) * (c.screen.x - a.screen.x);
+
     if (std::abs(area) < 1.0e-8f)
       continue;
+
     const sfs::MeshMaterial& material = materialOf(i);
     // Which way the texture runs across the triangle, for normal maps.
     glm::vec3 alongU, upImage;
@@ -283,6 +315,7 @@ render(const sfs::MeshData& mesh, int size, const sfs::MeshMaterial* material)
     const int maxY = std::min(n - 1,
                               static_cast<int>(std::ceil(std::max(
                                   {a.screen.y, b.screen.y, c.screen.y}))));
+
     for (int y = minY; y <= maxY; ++y)
       for (int x = minX; x <= maxX; ++x)
       {
@@ -294,10 +327,13 @@ render(const sfs::MeshData& mesh, int size, const sfs::MeshMaterial* material)
                           (c.screen.y - p.y) * (a.screen.x - p.x)) /
                          area;
         const float w2 = 1.0f - w0 - w1;
+
         if (w0 < 0.0f || w1 < 0.0f || w2 < 0.0f)
           continue;
+
         const float depth = w0 * a.depth + w1 * b.depth + w2 * c.depth;
         Pixel& pixel = pixels[std::size_t(y) * n + x];
+
         if (depth >= pixel.depth)
           continue;
 
@@ -306,6 +342,7 @@ render(const sfs::MeshData& mesh, int size, const sfs::MeshMaterial* material)
         glm::vec3 normal = w0 * va.normal + w1 * vb.normal + w2 * vc.normal;
         const float length = glm::length(normal);
         normal = length > 0.0f ? normal / length : toView;
+
         if (glm::dot(normal, toView) < 0.0f)
           normal = -normal; // either side of an open mesh
 
@@ -324,10 +361,12 @@ render(const sfs::MeshData& mesh, int size, const sfs::MeshMaterial* material)
 
         float alpha =
             material.alphaMode == sfs::AlphaMode::Opaque ? 1.0f : surface.alpha;
+
         if (material.alphaMode == sfs::AlphaMode::Mask)
         {
           if (alpha < surface.alphaClip)
             continue;
+
           alpha = 1.0f;
         }
         else if (sfs::isSeeThrough(material.alphaMode) && alpha < 0.02f)
@@ -350,15 +389,18 @@ render(const sfs::MeshData& mesh, int size, const sfs::MeshMaterial* material)
     {
       glm::vec3 color(0.0f);
       float alpha = 0.0f;
-      for (int sy = 0; sy < kSupersample; ++sy)
-        for (int sx = 0; sx < kSupersample; ++sx)
+
+      for (int sy = 0; sy < SUPERSAMPLE; ++sy)
+        for (int sx = 0; sx < SUPERSAMPLE; ++sx)
         {
-          const Pixel& pixel = pixels[std::size_t(y * kSupersample + sy) * n +
-                                      x * kSupersample + sx];
+          const Pixel& pixel = pixels[std::size_t(y * SUPERSAMPLE + sy) * n +
+                                      x * SUPERSAMPLE + sx];
           color += pixel.color * pixel.alpha;
           alpha += pixel.alpha;
         }
+
       uint8_t* texel = &out[(std::size_t(y) * size + x) * 4];
+
       if (alpha > 0.0f)
       {
         color /= alpha;
@@ -366,9 +408,11 @@ render(const sfs::MeshData& mesh, int size, const sfs::MeshMaterial* material)
         texel[1] = toSrgb(color.g);
         texel[2] = toSrgb(color.b);
       }
+
       texel[3] = static_cast<uint8_t>(
-          std::lround(alpha / (kSupersample * kSupersample) * 255.0f));
+          std::lround(alpha / (SUPERSAMPLE * SUPERSAMPLE) * 255.0f));
     }
+
   return out;
 }
 
@@ -378,13 +422,15 @@ std::vector<uint8_t> renderMaterial(const sfs::MeshMaterial& material, int size)
   static const sfs::MeshData sphere = []
   {
     sfs::MeshData mesh;
-    constexpr int segments = 48, rings = 24;
-    for (int r = 0; r <= rings; ++r)
+    constexpr int SEGMENTS = 48, RINGS = 24;
+
+    for (int r = 0; r <= RINGS; ++r)
     {
-      const float theta = kPi * r / rings;
-      for (int s = 0; s <= segments; ++s)
+      const float theta = PI * r / RINGS;
+
+      for (int s = 0; s <= SEGMENTS; ++s)
       {
-        const float phi = 2.0f * kPi * s / segments;
+        const float phi = 2.0f * PI * s / SEGMENTS;
         const glm::vec3 normal(std::sin(theta) * std::cos(phi),
                                std::sin(theta) * std::sin(phi),
                                std::cos(theta));
@@ -392,15 +438,17 @@ std::vector<uint8_t> renderMaterial(const sfs::MeshMaterial& material, int size)
             {normal * 0.5f,
              normal,
              glm::vec3(1.0f),
-             glm::vec2(2.0f * s / segments, static_cast<float>(r) / rings)});
+             glm::vec2(2.0f * s / SEGMENTS, static_cast<float>(r) / RINGS)});
       }
     }
-    for (int r = 0; r < rings; ++r)
-      for (int s = 0; s < segments; ++s)
+
+    for (int r = 0; r < RINGS; ++r)
+      for (int s = 0; s < SEGMENTS; ++s)
       {
-        const uint32_t a = r * (segments + 1) + s, b = a + segments + 1;
+        const uint32_t a = r * (SEGMENTS + 1) + s, b = a + SEGMENTS + 1;
         mesh.indices.insert(mesh.indices.end(), {a, b, a + 1, a + 1, b, b + 1});
       }
+
     return mesh;
   }();
   return render(sphere, size, &material);
@@ -409,6 +457,7 @@ std::vector<uint8_t> renderMaterial(const sfs::MeshMaterial& material, int size)
 std::vector<uint8_t> fitTexture(const sfs::TextureData& texture, int size)
 {
   std::vector<uint8_t> out(std::size_t(size) * size * 4, 0);
+
   if (texture.empty() || size <= 0 ||
       texture.rgba.size() < std::size_t(texture.width) * texture.height * 4)
     return out;
@@ -419,6 +468,7 @@ std::vector<uint8_t> fitTexture(const sfs::TextureData& texture, int size)
   const int width = std::max(1, static_cast<int>(texture.width * scale));
   const int height = std::max(1, static_cast<int>(texture.height * scale));
   const int left = (size - width) / 2, top = (size - height) / 2;
+
   for (int y = 0; y < height; ++y)
     for (int x = 0; x < width; ++x)
     {
@@ -432,15 +482,19 @@ std::vector<uint8_t> fitTexture(const sfs::TextureData& texture, int size)
           std::min(texture.height, static_cast<uint32_t>((y + 1) / scale)));
       std::array<uint32_t, 4> sum{};
       uint32_t count = 0;
+
       for (uint32_t ty = y0; ty < y1 && ty < texture.height; ++ty)
         for (uint32_t tx = x0; tx < x1 && tx < texture.width; ++tx, ++count)
           for (int c = 0; c < 4; ++c)
             sum[c] +=
                 texture.rgba[(std::size_t(ty) * texture.width + tx) * 4 + c];
+
       uint8_t* texel = &out[(std::size_t(top + y) * size + left + x) * 4];
+
       for (int c = 0; c < 4; ++c)
         texel[c] = static_cast<uint8_t>(count ? sum[c] / count : 0);
     }
+
   return out;
 }
 

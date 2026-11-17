@@ -1,6 +1,6 @@
 #pragma once
 
-#include <sfs/codegen/rules.h>
+#include "sfs/codegen/rules.h"
 
 #include <filesystem>
 #include <string>

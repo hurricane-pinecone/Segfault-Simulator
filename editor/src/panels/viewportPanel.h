@@ -1,16 +1,23 @@
 #pragma once
 
 #include "camera/viewportCamera.h"
+#include "engine/core/components/transformComponent.h"
+#include "engine/core/ecs/entity.h"
+#include "engine/core/rendering/aabb.h"
+#include "engine/core/rendering/mesh.h"
+#include "engine/runtime/rendering/backend/iRenderBackend.h"
+#include "engine/runtime/rendering/backend/renderTarget.h"
+#include "engine/runtime/rendering/picking.h"
 #include "panels/panel.h"
 
-#include "engine/core/components/transformComponent.h"
-#include "engine/runtime/rendering/picking.h"
-#include "engine/runtime/rendering/backend/iRenderBackend.h"
-#include "glm/glm/ext/matrix_float4x4.hpp"
+#include <glm/glm/ext/matrix_float4x4.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
+#include <glm/glm/ext/vector_int2.hpp>
+#include <imgui.h>
 
-#include "imgui.h"
-
+#include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -37,29 +44,34 @@
 class ViewportPanel : public Panel
 {
 public:
-  explicit ViewportPanel(sfs::IRenderBackend& backend, std::string title = "Viewport");
+  explicit ViewportPanel(sfs::IRenderBackend& backend,
+                         std::string title = "Viewport");
   ~ViewportPanel() override;
-
-  void update(EditorContext& context) override;
-
-  /** Render the active scene into this viewport (the app switches the context). */
-  void setActive(bool active);
   bool active() const { return m_active; }
-  /** True once after the inactive viewport was focused. */
-  bool takeActivationRequest() { return std::exchange(m_activationRequested, false); }
-
-  /** Extra controls on the toolbar, after its own (e.g. a prefab's Apply). */
-  void setToolbarExtras(std::function<void(EditorContext&)> extras) { m_toolbarExtras = std::move(extras); }
-  /** Mark the tab as having unsaved changes. */
-  void setUnsaved(bool unsaved) { m_unsaved = unsaved; }
   /** On its first appearance, tab into the dock node of the window called
    * `window`. */
   void dockWith(std::string window) { m_dockWith = std::move(window); }
+  /** Render the active scene into this viewport (the app switches the context).
+   */
+  void setActive(bool active);
+  /** Extra controls on the toolbar, after its own (e.g. a prefab's Apply). */
+  void setToolbarExtras(std::function<void(EditorContext&)> extras)
+  {
+    m_toolbarExtras = std::move(extras);
+  }
+  /** Mark the tab as having unsaved changes. */
+  void setUnsaved(bool unsaved) { m_unsaved = unsaved; }
+  /** True once after the inactive viewport was focused. */
+  bool takeActivationRequest()
+  {
+    return std::exchange(m_activationRequested, false);
+  }
+  void update(EditorContext& context) override;
 
 protected:
+  void beforeBegin() override;
   void drawContents(EditorContext& context) override;
   int windowFlags() const override;
-  void beforeBegin() override;
 
 private:
   enum class Tool
@@ -81,17 +93,20 @@ private:
     ImVec2 size{0.0f, 0.0f};
   };
 
-  View currentView(const EditorContext& context, ImVec2 origin, ImVec2 size) const;
-  std::optional<ImVec2> toScreen(const View& view, const glm::vec3& world) const;
-
-  bool gizmosVisible(const EditorContext& context) const;
-  void drawToolbar(const EditorContext& context);
-  void handleShortcuts(EditorContext& context);
+  // An entity's world bounds with everything below it (a marker box if
+  // there's no mesh in its branch).
+  std::optional<sfs::Aabb> branchBounds(const EditorContext& context,
+                                        const sfs::Entity& entity) const;
+  View
+  currentView(const EditorContext& context, ImVec2 origin, ImVec2 size) const;
+  void drawCameraIcons(const EditorContext& context, const View& view) const;
+  void drawColliders(const EditorContext& context, const View& view) const;
+  // What a drag would land on: its object outlined, and named by the cursor.
+  void drawDropTarget(const EditorContext& context,
+                      const View& view,
+                      const sfs::SurfaceHit& hit) const;
   // True while the gizmo is hovered or dragging (so clicks don't pick).
   bool drawGizmo(EditorContext& context, const View& view);
-  // A 2D game's: moves (turns, scales) the selection on its plane, through
-  // its Space2D.
-  bool drawPlanarGizmo(EditorContext& context, const View& view, bool snapping);
   // Several selected: the gizmo in their middle, each moving, turning and
   // scaling as much as it does (about its own origin). `operation` is an
   // ImGuizmo::OPERATION.
@@ -100,40 +115,43 @@ private:
                       const std::vector<sfs::Entity>& group,
                       int operation,
                       const float* snap);
-  // The selected entities the gizmo moves: those with a place, not inside
-  // another selected one.
-  static std::vector<sfs::Entity> movableSelection(const EditorContext& context);
-  void pick(EditorContext& context, const View& view);
-  // The grass brush: its ring on the selection's mesh under the cursor, and a
-  // stroke while the left button's down. True while over the image (so
-  // clicks paint rather than pick).
-  bool paintGrass(EditorContext& context, const View& view, bool hovered);
-  void endGrassStroke(EditorContext& context);
-  // The terrain brush: the same, into the splat map of the terrain material
-  // the selection is drawn with (saved to its file as each stroke ends).
-  bool paintTerrain(EditorContext& context, const View& view, bool hovered);
-  void endTerrainStroke(EditorContext& context);
-  // Save a terrain's splat map to its texture asset.
-  static void saveSplat(EditorContext& context, const sfs::TextureData& splat);
-  // A texture or material dragged from the Assets panel onto an object: into
-  // the material slot of the part under the cursor.
-  void dropAsset(EditorContext& context, const View& view);
-  void navigate(EditorContext& context, float viewportHeight);
-  void drawSelectionOutline(const EditorContext& context, const View& view) const;
-  // An entity's world bounds with everything below it (a marker box if
-  // there's no mesh in its branch).
-  std::optional<sfs::Aabb> branchBounds(const EditorContext& context, const sfs::Entity& entity) const;
+  void drawLightIcons(const EditorContext& context, const View& view) const;
   // An entity's bounds as a box outline.
   void drawOutline(const EditorContext& context,
                    const View& view,
                    const sfs::Entity& entity,
                    ImU32 color,
                    float thickness) const;
-  // What a drag would land on: its object outlined, and named by the cursor.
-  void drawDropTarget(const EditorContext& context, const View& view, const sfs::SurfaceHit& hit) const;
-  void drawLightIcons(const EditorContext& context, const View& view) const;
-  void drawCameraIcons(const EditorContext& context, const View& view) const;
-  void drawColliders(const EditorContext& context, const View& view) const;
+  // A 2D game's: moves (turns, scales) the selection on its plane, through
+  // its Space2D.
+  bool drawPlanarGizmo(EditorContext& context, const View& view, bool snapping);
+  void drawSelectionOutline(const EditorContext& context,
+                            const View& view) const;
+  void drawToolbar(const EditorContext& context);
+  // A texture or material dragged from the Assets panel onto an object: into
+  // the material slot of the part under the cursor.
+  void dropAsset(EditorContext& context, const View& view);
+  void endGrassStroke(EditorContext& context);
+  void endTerrainStroke(EditorContext& context);
+  bool gizmosVisible(const EditorContext& context) const;
+  void handleShortcuts(EditorContext& context);
+  // The selected entities the gizmo moves: those with a place, not inside
+  // another selected one.
+  static std::vector<sfs::Entity>
+  movableSelection(const EditorContext& context);
+  void navigate(EditorContext& context, float viewportHeight);
+  // The grass brush: its ring on the selection's mesh under the cursor, and a
+  // stroke while the left button's down. True while over the image (so
+  // clicks paint rather than pick).
+  bool paintGrass(EditorContext& context, const View& view, bool hovered);
+  // The terrain brush: the same, into the splat map of the terrain material
+  // the selection is drawn with (saved to its file as each stroke ends).
+  bool paintTerrain(EditorContext& context, const View& view, bool hovered);
+  void pick(EditorContext& context, const View& view);
+  // Save a terrain's splat map to its texture asset.
+  static void saveSplat(EditorContext& context, const sfs::TextureData& splat);
+  std::optional<ImVec2> toScreen(const View& view,
+                                 const glm::vec3& world) const;
 
   sfs::IRenderBackend& m_backend;
   std::unique_ptr<sfs::IRenderTarget> m_target; // null: the backend has none
@@ -149,7 +167,7 @@ private:
   bool m_snap = false;
   bool m_gizmosInEdit = true;
   bool m_gizmosInPlay = false;
-  bool m_animate = true; // while editing (see RenderSystem::setAnimating)
+  bool m_animate = true;    // while editing (see RenderSystem::setAnimating)
   bool m_wasPlanar = false; // the scene was 2D last frame (its view top-down)
 
   // The grass brush: world units across, how fast it paints, erasing.

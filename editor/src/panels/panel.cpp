@@ -1,6 +1,6 @@
 #include "panels/panel.h"
 
-#include "imgui.h"
+#include <imgui.h>
 
 void Panel::draw(EditorContext& context)
 {
@@ -8,7 +8,9 @@ void Panel::draw(EditorContext& context)
     return;
 
   beforeBegin();
+
   if (ImGui::Begin(m_title.c_str(), &m_open, windowFlags()))
     drawContents(context);
+
   ImGui::End();
 }

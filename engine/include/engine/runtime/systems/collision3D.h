@@ -1,7 +1,6 @@
 #pragma once
 
 // Contact3D lives with ContactReportComponent, which hands contacts to games.
-#include "engine/core/components/contactReportComponent.h"
 #include "engine/core/ecs/entity.h"
 
 namespace sfs

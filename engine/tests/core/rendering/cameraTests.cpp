@@ -1,10 +1,12 @@
 #include "../../testHarness.h"
+#include "engine/core/rendering/aabb.h"
+#include "engine/core/rendering/camera.h"
 
-#include <engine/core/rendering/camera.h>
-
-#include <glm/glm/ext/scalar_constants.hpp>
+#include <glm/glm/ext/matrix_float4x4.hpp>
+#include <glm/glm/ext/quaternion_float.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
+#include <glm/glm/ext/vector_float4.hpp>
 #include <glm/glm/geometric.hpp>
-#include <glm/glm/gtc/quaternion.hpp>
 
 using namespace sfs;
 

@@ -1,30 +1,38 @@
 #include "../../testHarness.h"
 #include "../rendering/mockRenderer.h"
+#include "engine/core/animation/animation.h"
+#include "engine/core/assets/assetDatabase.h"
+#include "engine/core/components/boxCollider3DComponent.h"
+#include "engine/core/components/meshRendererComponent.h"
+#include "engine/core/components/nameComponent.h"
+#include "engine/core/components/transformComponent.h"
+#include "engine/core/ecs/entity.h"
+#include "engine/core/hierarchy/hierarchy.h"
+#include "engine/core/logger/logger.h"
+#include "engine/core/reflection/reflection.h"
+#include "engine/core/rendering/mesh.h"
+#include "engine/runtime/assetStore/assetStore.h"
+#include "engine/runtime/assetStore/modelData.h"
+#include "engine/runtime/assetStore/modelImporter.h"
+#include "engine/runtime/rendering/renderSystem.h"
+#include "engine/runtime/sceneManager/scene.h"
+#include "engine/runtime/serialization/prefabComponents.h"
+#include "engine/runtime/serialization/sceneSerializer.h"
+#include "engine/runtime/serialization/unresolvedComponents.h"
 
-#include <engine/core/assets/assetDatabase.h>
-#include <engine/core/components/boxCollider3DComponent.h>
-#include <engine/core/components/meshRendererComponent.h>
-#include <engine/core/components/nameComponent.h>
-#include <engine/core/components/transformComponent.h>
-#include <engine/core/hierarchy/hierarchy.h>
-#include <engine/core/logger/logger.h>
-#include <engine/core/reflection/reflection.h>
-#include <engine/runtime/assetStore/assetStore.h>
-#include <engine/runtime/assetStore/modelData.h>
-#include <engine/runtime/assetStore/modelImporter.h>
-#include <engine/runtime/rendering/renderSystem.h>
-#include <engine/runtime/sceneManager/scene.h>
-#include <engine/runtime/serialization/prefabComponents.h>
-#include <engine/runtime/serialization/sceneSerializer.h>
-#include <engine/runtime/serialization/unresolvedComponents.h>
-
-#include <SDL.h>
+#include <nlohmann/json.hpp>
+#include <SDL_pixels.h>
+#include <SDL_surface.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <ios>
+#include <iterator>
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -33,11 +41,42 @@ using namespace sfs;
 namespace
 {
 
+// Every warning logged while it's alive.
+struct Warnings
+{
+  std::vector<std::string> messages;
+  Logger::SinkId sink = Logger::addSink(
+      [this](Logger::Level level, const std::string& message)
+      {
+        if (level == Logger::Level::WARN)
+          messages.push_back(message);
+      });
+  ~Warnings() { Logger::removeSink(sink); }
+
+  bool any(const std::string& text) const
+  {
+    return std::any_of(messages.begin(),
+                       messages.end(),
+                       [&](const std::string& message)
+                       { return message.find(text) != std::string::npos; });
+  }
+};
+
+// A body with an arm (and its hand) and a leg, and a cab beside it.
+constexpr const char* TREE_NODES = R"([
+  {"name": "Body", "mesh": 0, "children": [1, 3]},
+  {"name": "Arm", "children": [2]},
+  {"name": "Hand"},
+  {"name": "Leg"},
+  {"name": "Cab", "mesh": 1}
+])";
+
 std::string base64(const std::vector<uint8_t>& bytes)
 {
   static const char* digits =
       "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
   std::string out;
+
   for (std::size_t i = 0; i < bytes.size(); i += 3)
   {
     const uint32_t n = (bytes[i] << 16) |
@@ -48,6 +87,7 @@ std::string base64(const std::vector<uint8_t>& bytes)
     out += i + 1 < bytes.size() ? digits[(n >> 6) & 63] : '=';
     out += i + 2 < bytes.size() ? digits[n & 63] : '=';
   }
+
   return out;
 }
 
@@ -65,10 +105,12 @@ void writeImage(const std::filesystem::path& file)
       SDL_CreateRGBSurfaceWithFormat(0, 2, 2, 32, SDL_PIXELFORMAT_RGBA32);
   const uint8_t pixels[2][2][4] = {{{255, 0, 0, 255}, {0, 255, 0, 255}},
                                    {{0, 0, 255, 255}, {255, 255, 255, 255}}};
+
   for (int y = 0; y < 2; ++y)
     std::memcpy(static_cast<uint8_t*>(surface->pixels) + y * surface->pitch,
                 pixels[y],
                 8);
+
   SDL_SaveBMP(surface, file.string().c_str());
   SDL_FreeSurface(surface);
 }
@@ -327,41 +369,13 @@ std::map<std::string, uint32_t> idsByPath(const std::filesystem::path& file)
   std::vector<std::string> paths;
   const auto nodes = importModelNodes(file, {}, &paths);
   std::map<std::string, uint32_t> ids;
+
   if (nodes && paths.size() == nodes->size())
     for (std::size_t i = 0; i < paths.size(); ++i)
       ids[paths[i]] = (*nodes)[i].id;
+
   return ids;
 }
-
-// Every warning logged while it's alive.
-struct Warnings
-{
-  std::vector<std::string> messages;
-  Logger::SinkId sink = Logger::addSink(
-      [this](Logger::Level level, const std::string& message)
-      {
-        if (level == Logger::Level::WARN)
-          messages.push_back(message);
-      });
-  ~Warnings() { Logger::removeSink(sink); }
-
-  bool any(const std::string& text) const
-  {
-    return std::any_of(messages.begin(),
-                       messages.end(),
-                       [&](const std::string& message)
-                       { return message.find(text) != std::string::npos; });
-  }
-};
-
-// A body with an arm (and its hand) and a leg, and a cab beside it.
-constexpr const char* kTreeNodes = R"([
-  {"name": "Body", "mesh": 0, "children": [1, 3]},
-  {"name": "Arm", "children": [2]},
-  {"name": "Hand"},
-  {"name": "Leg"},
-  {"name": "Cab", "mesh": 1}
-])";
 
 std::vector<uint8_t> readFile(const std::filesystem::path& file)
 {
@@ -377,6 +391,7 @@ int main()
   {
     const auto model = importModel(writeModel("textured.gltf", "checker.bmp"));
     CHECK(model.has_value());
+
     if (!model)
       return testing::report("modelImporterTests");
 
@@ -392,6 +407,7 @@ int main()
 
     const auto& texture = whole.sections[0].material.baseTexture;
     CHECK(texture != nullptr);
+
     if (texture)
     {
       CHECK(texture->width == 2u);
@@ -410,6 +426,7 @@ int main()
   {
     const auto model = importModel(writeModel("materials.gltf", "checker.bmp"));
     CHECK(model.has_value());
+
     if (model)
     {
       const MeshMaterial& masked = model->whole.sections[0].material;
@@ -423,15 +440,19 @@ int main()
       CHECK(masked.offset.x == 0.5f);
       CHECK(model->whole.sections[1].material.tiling.x == 1.0f);
       CHECK(masked.metallicRoughnessTexture != nullptr);
+
       if (masked.metallicRoughnessTexture)
       {
         CHECK(masked.metallicRoughnessTexture->linear); // data, not colour
         CHECK(!masked.baseTexture->linear);
       }
+
       // The normal map, read as data, with its scale.
       CHECK(masked.normalTexture != nullptr);
+
       if (masked.normalTexture)
         CHECK(masked.normalTexture->linear);
+
       CHECK(masked.normalScale == 0.5f);
       CHECK(model->whole.sections[1].material.normalTexture == nullptr);
 
@@ -446,9 +467,11 @@ int main()
   {
     const auto model = importModel(writeModel("tree.gltf", "checker.bmp"));
     CHECK(model.has_value());
+
     if (model)
     {
       CHECK(model->nodes.size() == 2u);
+
       if (model->nodes.size() == 2u)
       {
         CHECK(model->nodes[0].part == "Textured");
@@ -467,9 +490,11 @@ int main()
     const auto model = importModel(file);
     const auto nodes = importModelNodes(file);
     CHECK(model.has_value() && nodes.has_value());
+
     if (model && nodes)
     {
       CHECK(nodes->size() == model->nodes.size());
+
       for (std::size_t i = 0; i < std::min(nodes->size(), model->nodes.size());
            ++i)
       {
@@ -479,9 +504,11 @@ int main()
         CHECK((*nodes)[i].local == model->nodes[i].local);
       }
     }
+
     // The geometry isn't read: the tree comes even with the data file gone.
     std::filesystem::path data = file;
     data.replace_extension(".bin");
+
     if (std::filesystem::exists(data))
     {
       std::filesystem::remove(data);
@@ -493,6 +520,7 @@ int main()
   {
     const auto model = importModel(writeModel("plain.gltf", "checker.bmp"));
     CHECK(model.has_value());
+
     if (model)
     {
       CHECK(model->whole.sections[1].material.baseTexture == nullptr);
@@ -507,6 +535,7 @@ int main()
   {
     const auto model = importModel(writeModel("shared.gltf", "checker.bmp"));
     CHECK(model.has_value());
+
     if (model)
     {
       CHECK(model->parts.size() == 2u);
@@ -526,10 +555,12 @@ int main()
         "data:image/bmp;base64," + base64(readFile(folder / "checker.bmp"));
     const auto model = importModel(writeModel("embedded.gltf", uri));
     CHECK(model.has_value());
+
     if (model)
     {
       const auto& texture = model->whole.sections[0].material.baseTexture;
       CHECK(texture != nullptr);
+
       if (texture)
         CHECK(texture->width == 2u);
     }
@@ -539,6 +570,7 @@ int main()
   {
     const auto model = importModel(writeModel("missing.gltf", "nowhere.png"));
     CHECK(model.has_value());
+
     if (model)
     {
       CHECK(model->whole.sections.size() == 2u);
@@ -571,6 +603,7 @@ int main()
     const std::filesystem::path file = writeSkinnedModel("skinned.gltf");
     const auto model = importModel(file);
     CHECK(model.has_value());
+
     if (model)
     {
       // Even one mesh is a part, placed in the node tree with its joints.
@@ -578,6 +611,7 @@ int main()
       CHECK(model->nodes.size() == 4u);
       const MeshData& body = model->parts.front().mesh;
       CHECK(body.skinned());
+
       if (body.skinned())
       {
         CHECK(body.skin->joints == std::vector<std::string>{"hip", "knee"});
@@ -593,10 +627,12 @@ int main()
         CHECK(body.skinWeights[2].joints[0] == 1);
         CHECK(!body.skin->jointBounds[1].empty());
       }
+
       CHECK(model->animations != nullptr);
       const AnimationClip* walk =
           model->animations ? model->animations->find("Walk") : nullptr;
       CHECK(walk != nullptr);
+
       if (walk)
       {
         CHECK(testing::approx(walk->duration, 1.0f));
@@ -614,6 +650,7 @@ int main()
         CHECK(testing::approx(sampleChannel(walk->channels[1], 0.5f).w, 1.0f));
       }
     }
+
     const auto nodes = importModelNodes(file);
     CHECK(nodes.has_value() && nodes->size() == 4u);
   }
@@ -637,6 +674,7 @@ int main()
     const std::filesystem::path file = writeColliderModel("collider.gltf");
     const auto model = importModel(file);
     CHECK(model.has_value());
+
     if (model)
     {
       // Neither the whole model nor the parts draw the colliders.
@@ -644,6 +682,7 @@ int main()
       CHECK(model->parts.size() == 1u);
       CHECK(model->parts.size() == 1u && model->parts[0].name == "Body");
       CHECK(model->nodes.size() == 4u);
+
       if (model->nodes.size() == 4u)
       {
         const ModelNode& body = model->nodes[0];
@@ -666,9 +705,11 @@ int main()
         CHECK(testing::approx(cab.bounds.max.z, 2.0f));
       }
     }
+
     // The tree alone (the model placed before its geometry loads) agrees.
     const auto nodes = importModelNodes(file);
     CHECK(nodes.has_value() && nodes->size() == 4u);
+
     if (nodes && model && nodes->size() == model->nodes.size())
       for (std::size_t i = 0; i < nodes->size(); ++i)
       {
@@ -699,6 +740,7 @@ int main()
                                  AssetDatabase::projectFolders());
     const AssetRecord* record = database.findByPath("assets/crane.gltf");
     CHECK(record != nullptr);
+
     if (record)
     {
       AssetStore store;
@@ -721,12 +763,14 @@ int main()
           if (const NameComponent* named = entity.getComponent<NameComponent>();
               named && named->name == name)
             return entity;
+
         return Entity{};
       };
       const Entity body = find("Body");
       const Entity boom = find("Boom-collider.001");
       const Entity cab = find("Cab-COLLIDER");
       CHECK(body.isValid() && boom.isValid() && cab.isValid());
+
       if (body.isValid() && boom.isValid() && cab.isValid())
       {
         CHECK(body.hasComponent<MeshRendererComponent>());
@@ -735,6 +779,7 @@ int main()
         CHECK(boom.hasComponent<BoxCollider3DComponent>());
         CHECK(hierarchy::parentOf(boom).getComponent<NameComponent>()->name ==
               "Boom");
+
         if (const BoxCollider3DComponent* box =
                 boom.getComponent<BoxCollider3DComponent>())
         {
@@ -746,6 +791,7 @@ int main()
           CHECK(testing::approx(box->offset.y, 0.0f));
           CHECK(!box->trigger);
         }
+
         CHECK(cab.hasComponent<BoxCollider3DComponent>());
         CHECK(!cab.hasComponent<MeshRendererComponent>());
       }
@@ -760,13 +806,15 @@ int main()
     CHECK(stableNodeId("") == 2847271067u);
     CHECK(stableNodeId("#1") == 2860501858u);
     const std::map<std::string, uint32_t> ids =
-        idsByPath(writeTreeModel("ids.gltf", kTreeNodes, "[0, 4]"));
+        idsByPath(writeTreeModel("ids.gltf", TREE_NODES, "[0, 4]"));
     CHECK(ids.size() == 5u);
+
     for (const auto& [path, id] : ids)
     {
       CHECK(id == stableNodeId(path));
       CHECK((id & kModelNodeIdBit) != 0u);
     }
+
     CHECK(ids.contains("Body/Arm/Hand"));
     CHECK(ids.contains("Cab"));
   }
@@ -778,7 +826,7 @@ int main()
     CHECK(nodeNameSegment("") == "");
     CHECK(nodeNameSegment("a/b#c\\d") == "a\\/b\\#c\\\\d");
     const std::map<std::string, uint32_t> ids =
-        idsByPath(writeTreeModel("segment.gltf", kTreeNodes, "[0, 4]"));
+        idsByPath(writeTreeModel("segment.gltf", TREE_NODES, "[0, 4]"));
     CHECK(ids.at("Body/Arm/Hand") ==
           stableNodeId(nodeNameSegment("Body") + "/" + nodeNameSegment("Arm") +
                        "/Hand"));
@@ -788,7 +836,7 @@ int main()
        "id")
   {
     const std::map<std::string, uint32_t> ids =
-        idsByPath(writeTreeModel("order.gltf", kTreeNodes, "[0, 4]"));
+        idsByPath(writeTreeModel("order.gltf", TREE_NODES, "[0, 4]"));
     // The cab first, and the leg before the arm.
     const std::map<std::string, uint32_t> reordered =
         idsByPath(writeTreeModel("reordered.gltf",
@@ -804,7 +852,7 @@ int main()
     CHECK(reordered == ids);
     const std::map<std::string, uint32_t> moved = idsByPath(
         writeTreeModel(std::filesystem::path("elsewhere") / "renamed.gltf",
-                       kTreeNodes,
+                       TREE_NODES,
                        "[0, 4]"));
     CHECK(moved == ids);
   }
@@ -812,7 +860,7 @@ int main()
   TEST("renaming a node should change its id and its descendants' only")
   {
     const std::map<std::string, uint32_t> ids =
-        idsByPath(writeTreeModel("named.gltf", kTreeNodes, "[0, 4]"));
+        idsByPath(writeTreeModel("named.gltf", TREE_NODES, "[0, 4]"));
     const std::map<std::string, uint32_t> renamed =
         idsByPath(writeTreeModel("renamed.gltf",
                                  R"([
@@ -861,12 +909,14 @@ int main()
                                              "",
                                              "#1",
                                              "a\\/b\\#c"}));
+
     if (nodes && nodes->size() == 8u)
     {
       CHECK((*nodes)[5].name == "Node 6"); // shown so, never used as identity
       CHECK((*nodes)[4].id == stableNodeId("Body/Wheel#1"));
       CHECK((*nodes)[6].id == stableNodeId("#1"));
     }
+
     // Another sibling between the two wheels keeps their ids.
     const std::map<std::string, uint32_t> ids = idsByPath(file);
     const std::map<std::string, uint32_t> spaced =
@@ -921,16 +971,19 @@ int main()
     ])",
                                                       "[0, 1]");
     Warnings warnings;
+
     for (int run = 0; run < 2; ++run)
     {
       const auto nodes = importModelNodes(file);
       CHECK(nodes.has_value() && nodes->size() == 2u);
+
       if (nodes && nodes->size() == 2u)
       {
         CHECK((*nodes)[0].id == 2174831622u);
         CHECK((*nodes)[1].id == 2174831623u);
       }
     }
+
     // Logged naming both (once: a repeat soon after is only counted).
     CHECK(warnings.any(
         "the nodes 'part3720' and 'part83680' hash to the same id"));
@@ -944,7 +997,7 @@ int main()
         "idProject";
     std::filesystem::create_directories(project / "assets");
     std::filesystem::copy_file(
-        writeTreeModel("prefabIds.gltf", kTreeNodes, "[0, 4]"),
+        writeTreeModel("prefabIds.gltf", TREE_NODES, "[0, 4]"),
         project / "assets" / "tree.gltf",
         std::filesystem::copy_options::overwrite_existing);
     std::ofstream(project / "assets" / "tree.gltf.meta")
@@ -954,6 +1007,7 @@ int main()
                                  AssetDatabase::projectFolders());
     const AssetRecord* record = database.findByPath("assets/tree.gltf");
     CHECK(record != nullptr);
+
     if (record)
     {
       AssetStore store;
@@ -961,6 +1015,7 @@ int main()
       const auto prefab = store.prefab(record->id);
       const auto nodes = importModelNodes(project / "assets" / "tree.gltf");
       CHECK(prefab.has_value() && nodes.has_value());
+
       if (prefab && nodes)
       {
         CHECK((*prefab)["formatVersion"] ==
@@ -982,7 +1037,7 @@ int main()
         "oldIdProject";
     std::filesystem::create_directories(project / "assets");
     std::filesystem::copy_file(
-        writeTreeModel("oldIds.gltf", kTreeNodes, "[0, 4]"),
+        writeTreeModel("oldIds.gltf", TREE_NODES, "[0, 4]"),
         project / "assets" / "tree.gltf",
         std::filesystem::copy_options::overwrite_existing);
     std::ofstream(project / "assets" / "tree.gltf.meta")
@@ -1018,6 +1073,7 @@ int main()
         {
           if (name == "asset:machine")
             return machine;
+
           const auto asset = parseAssetMeshName(name);
           return asset ? store.prefab(asset->model) : std::nullopt;
         });
@@ -1036,6 +1092,7 @@ int main()
         if (const NameComponent* named = entity.getComponent<NameComponent>();
             named && named->name == name)
           return entity;
+
       return Entity{};
     };
     const Entity arm = find("Arm");
@@ -1043,6 +1100,7 @@ int main()
     const Entity glove = find("Glove");
     CHECK(arm.isValid() && cab.isValid() && glove.isValid());
     CHECK(!find("Leg").isValid());
+
     if (arm.isValid() && cab.isValid() && glove.isValid())
     {
       CHECK(arm.getComponent<TransformComponent>()->position.z == 2.0f);
@@ -1056,6 +1114,7 @@ int main()
     // Saved again, it names the nodes by their stable ids.
     const auto nodes = importModelNodes(project / "assets" / "tree.gltf");
     CHECK(nodes.has_value() && nodes->size() == 5u);
+
     if (nodes && nodes->size() == 5u)
     {
       const nlohmann::json resaved = serializer.save(scene);
@@ -1070,6 +1129,7 @@ int main()
       // The edits that upgrade the old files say the same.
       const auto edits = serializer.nodeIdEdits(machine);
       CHECK(edits.size() == 3u);
+
       if (edits.size() == 3u)
       {
         CHECK(edits[0].pointer == "/root/children/0/$overrides/2");
@@ -1083,14 +1143,17 @@ int main()
         CHECK(edits[2].pointer == "/root/children/0/$added/0/$parent");
         CHECK(edits[2].to == std::to_string((*nodes)[2].id));
       }
+
       const auto sceneEdits = serializer.nodeIdEdits(saved);
       CHECK(sceneEdits.size() == 1u);
+
       if (sceneEdits.size() == 1u)
       {
         CHECK(sceneEdits[0].pointer == "/entities/0/$overrides/1~15");
         CHECK(sceneEdits[0].from == "1/5");
         CHECK(sceneEdits[0].to == "1/" + std::to_string((*nodes)[4].id));
       }
+
       CHECK(serializer.nodeIdEdits(resaved).empty());
     }
   }

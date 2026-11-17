@@ -1,8 +1,7 @@
 #pragma once
 
-#include "nlohmann/json.hpp"
+#include <nlohmann/json.hpp>
 
-#include <compare>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -22,11 +21,10 @@ namespace sfs
  */
 struct AssetId
 {
-  uint64_t high = 0;
-  uint64_t low = 0;
-
   /** A new, random id. */
   static AssetId generate();
+
+  auto operator<=>(const AssetId&) const = default;
 
   /** Read 32 hex digits; nothing if `text` isn't one. */
   static std::optional<AssetId> parse(std::string_view text);
@@ -34,7 +32,8 @@ struct AssetId
   std::string toString() const;
   bool valid() const { return high != 0 || low != 0; }
 
-  auto operator<=>(const AssetId&) const = default;
+  uint64_t high = 0;
+  uint64_t low = 0;
 };
 
 struct AssetIdHash

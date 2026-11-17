@@ -1,8 +1,16 @@
 #include "../../testHarness.h"
+#include "engine/runtime/navigation/collisionSpace.h"
+#include "engine/runtime/navigation/geometry.h"
+#include "engine/runtime/navigation/space.h"
+#include "engine/runtime/systems/collisionWorld3D.h"
 
-#include <engine/runtime/navigation/collisionSpace.h>
+#include <glm/glm/ext/quaternion_trigonometric.hpp>
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
+#include <glm/glm/geometric.hpp>
 
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <memory>
 #include <random>
@@ -45,6 +53,7 @@ const BoxSpace::Solid* find(const std::vector<BoxSpace::Solid>& all,
   for (const BoxSpace::Solid& s : all)
     if (s.id == id)
       return &s;
+
   return nullptr;
 }
 } // namespace
@@ -65,6 +74,7 @@ int main()
     CHECK(all.size() == 3u);
     const BoxSpace::Solid* rock = find(all, 1);
     CHECK(rock != nullptr);
+
     if (rock)
     {
       CHECK(!rock->circle);
@@ -77,8 +87,10 @@ int main()
       CHECK(testing::approx(rock->bottom, -0.1f, 1e-3f) &&
             testing::approx(rock->top, 0.5f, 1e-3f));
     }
+
     const BoxSpace::Solid* tree = find(all, 2);
     CHECK(tree != nullptr);
+
     if (tree)
     {
       CHECK(tree->circle);
@@ -86,6 +98,7 @@ int main()
       CHECK(testing::approx(tree->bottom, -0.1f, 1e-3f) &&
             testing::approx(tree->top, 3.9f, 1e-3f));
     }
+
     // Layer 3 counted only when asked for; ignored ids left out.
     CHECK(footprints(world, ~(1u << 3)).size() == 2u);
     const uint64_t skip[] = {2};
@@ -131,6 +144,7 @@ int main()
     const CollisionWorld3D world(std::span(&log, 1));
     const auto all = footprints(world);
     CHECK(all.size() == 1u);
+
     if (!all.empty())
     {
       CHECK(all[0].circle);
@@ -149,10 +163,12 @@ int main()
     // A yard's worth (enough for the grid): boxes yawed and some tipped,
     // trunks, spheres, a log lying over, on several layers.
     std::vector<CollisionWorld3D::Body> bodies;
+
     for (uint64_t id = 1; id <= 160; ++id)
     {
       const glm::vec2 at{in(-120.0f, 120.0f), in(-80.0f, 80.0f)};
       const int kind = static_cast<int>(id % 5);
+
       if (kind <= 1)
       {
         auto b = box(id,
@@ -160,9 +176,11 @@ int main()
                      {in(0.1f, 6.0f), in(0.1f, 3.0f), in(0.2f, 3.0f)},
                      in(-3.0f, 3.0f),
                      static_cast<uint32_t>(id % 3));
+
         if (kind == 1)
           b.rotation = b.rotation * glm::angleAxis(in(-0.6f, 0.6f),
                                                    glm::vec3(1.0f, 0.0f, 0.0f));
+
         bodies.push_back(b);
       }
       else if (kind == 2)
@@ -172,6 +190,7 @@ int main()
         CollisionWorld3D::Body b;
         b.id = id;
         b.position = {at, in(0.0f, 1.5f)};
+
         if (kind == 3)
           b.shapes.push_back({CollisionShape3D::Kind::Sphere,
                               {in(0.1f, 1.0f), 0.0f, 0.0f},
@@ -185,16 +204,20 @@ int main()
                               {in(0.1f, 0.5f), in(1.0f, 5.0f), 0.0f},
                               {}});
         }
+
         bodies.push_back(b);
       }
     }
+
     // And a few parked in a second world (exact, a world of a few).
     std::vector<CollisionWorld3D::Body> parked;
+
     for (uint64_t id = 500; id < 506; ++id)
       parked.push_back(box(id,
                            {in(-40.0f, 40.0f), in(-30.0f, 30.0f), 1.5f},
                            {6.0f, 2.5f, 3.0f},
                            in(-3.0f, 3.0f)));
+
     auto world = std::make_shared<const CollisionWorld3D>(bodies);
     auto other = std::make_shared<const CollisionWorld3D>(parked);
     CollisionSpace::Options options;
@@ -209,6 +232,7 @@ int main()
     const CollisionSpace exact({world, other}, plain);
     int same = 0, settled = 0, touched = 0, cases = 0;
     const CheckStats before = checkStats();
+
     for (int probe = 0; probe < 40; ++probe)
     {
       std::vector<Box3> boxes{{in(-4.0f, -0.5f),
@@ -217,6 +241,7 @@ int main()
                                in(-0.3f, 0.3f),
                                in(0.0f, 0.5f),
                                in(1.0f, 4.0f)}};
+
       if (probe % 2)
         boxes.push_back({in(2.0f, 3.0f),
                          in(3.0f, 5.0f),
@@ -224,10 +249,12 @@ int main()
                          0.0f,
                          in(0.0f, 1.0f),
                          in(1.2f, 2.0f)});
+
       const float grow = in(0.0f, 0.1f), extend = in(0.0f, 1.2f),
                   widen = in(0.0f, 0.3f);
       const auto pb = broad.prepare(boxes, grow, extend, widen);
       const auto pe = exact.prepare(boxes, grow, extend, widen);
+
       for (int k = 0; k < 250; ++k)
       {
         const Pose2 pose{
@@ -242,6 +269,7 @@ int main()
         touched += !fe;
       }
     }
+
     const CheckStats& after = checkStats();
     settled = static_cast<int>(after.broad - before.broad);
     CHECK(same == cases);

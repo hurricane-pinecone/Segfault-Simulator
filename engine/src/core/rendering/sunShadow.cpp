@@ -1,11 +1,18 @@
 #include "engine/core/rendering/sunShadow.h"
 
-#include "glm/glm/ext/matrix_clip_space.hpp"
-#include "glm/glm/ext/matrix_transform.hpp"
-#include "glm/glm/geometric.hpp"
+#include <glm/glm/common.hpp>
+#include <glm/glm/ext/matrix_clip_space.hpp>
+#include <glm/glm/ext/matrix_float4x4.hpp>
+#include <glm/glm/ext/matrix_transform.hpp>
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
+#include <glm/glm/ext/vector_float4.hpp>
+#include <glm/glm/geometric.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstdint>
 #include <limits>
 
 namespace sfs
@@ -57,6 +64,7 @@ cascadeSplits(uint32_t count, float nearPlane, float farPlane, float lambda)
   std::array<float, kMaxShadowCascades + 1> splits{};
   splits.fill(f);
   splits[0] = n;
+
   for (uint32_t i = 1; i < count; ++i)
   {
     const float part = static_cast<float>(i) / static_cast<float>(count);
@@ -64,6 +72,7 @@ cascadeSplits(uint32_t count, float nearPlane, float farPlane, float lambda)
     const float even = n + (f - n) * part;
     splits[i] = blend * logarithmic + (1.0f - blend) * even;
   }
+
   return splits;
 }
 
@@ -72,6 +81,7 @@ cascadeSphere(const CascadeView& view, float splitNear, float splitFar)
 {
   const float n = splitNear;
   const float f = std::max(splitFar, n);
+
   if (!view.perspective)
   {
     const float half = 0.5f * (f - n);
@@ -79,6 +89,7 @@ cascadeSphere(const CascadeView& view, float splitNear, float splitFar)
             std::sqrt(view.halfExtent.x * view.halfExtent.x +
                       view.halfExtent.y * view.halfExtent.y + half * half)};
   }
+
   // A corner at distance d along the view is d * t off its axis. The sphere
   // through the near and far corners has its centre where they're equally
   // far; past the far plane, the far corners' circle bounds it all.
@@ -144,6 +155,7 @@ SunCascades fitSunCascades(const glm::vec3& sunDirection,
   // Casters as far toward the sun as the shadows reach still cast into the
   // nearest cascades.
   const float reach = std::max(farPlane * 0.5f, 20.0f);
+
   for (uint32_t i = 0; i < out.count; ++i)
   {
     const glm::vec2 sphere = cascadeSphere(view, splits[i], splits[i + 1]);
@@ -159,6 +171,7 @@ SunCascades fitSunCascades(const glm::vec3& sunDirection,
     cascade.splitNear = splits[i];
     cascade.splitFar = splits[i + 1];
   }
+
   return out;
 }
 
@@ -167,6 +180,7 @@ glm::mat4 cascadeBounds(const glm::vec3& sunDirection,
 {
   if (cascades.count == 0)
     return glm::mat4(1.0f);
+
   const glm::vec3 toSun = glm::normalize(sunDirection);
   const glm::vec3 up = std::abs(toSun.z) > 0.99f ? glm::vec3(0.0f, 1.0f, 0.0f)
                                                  : glm::vec3(0.0f, 0.0f, 1.0f);
@@ -178,6 +192,7 @@ glm::mat4 cascadeBounds(const glm::vec3& sunDirection,
   glm::vec2 high(std::numeric_limits<float>::lowest());
   float nearest = std::numeric_limits<float>::max();
   float farthest = std::numeric_limits<float>::lowest();
+
   for (uint32_t i = 0; i < cascades.count; ++i)
   {
     const SunCascade& cascade = cascades.cascades[i];
@@ -190,6 +205,7 @@ glm::mat4 cascadeBounds(const glm::vec3& sunDirection,
         std::min(nearest, -center.z - (cascade.depthRange - cascade.radius));
     farthest = std::max(farthest, -center.z + cascade.radius);
   }
+
   return glm::orthoRH_ZO(low.x, high.x, low.y, high.y, nearest, farthest) *
          view;
 }

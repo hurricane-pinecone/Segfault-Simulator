@@ -1,12 +1,23 @@
 #include "../../testHarness.h"
+#include "engine/core/animation/animation.h"
+#include "engine/core/rendering/aabb.h"
+#include "engine/core/rendering/mesh.h"
 
-#include <engine/core/animation/animation.h>
-
+#include <glm/glm/ext/matrix_float4x4.hpp>
 #include <glm/glm/ext/matrix_transform.hpp>
+#include <glm/glm/ext/quaternion_float.hpp>
+#include <glm/glm/ext/quaternion_trigonometric.hpp>
 #include <glm/glm/ext/scalar_constants.hpp>
-#include <glm/glm/gtc/quaternion.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
+#include <glm/glm/ext/vector_float4.hpp>
+#include <glm/glm/geometric.hpp>
+#include <glm/glm/gtc/constants.hpp>
+#include <glm/glm/matrix.hpp>
+#include <glm/glm/vector_relational.hpp>
 
-#include <cmath>
+#include <span>
+#include <string>
+#include <utility>
 #include <vector>
 
 using namespace sfs;
@@ -200,8 +211,10 @@ int main()
     playback.play("c", 1.0f);
     playback.advance(0.5f, true, duration);
     float total = 0.0f;
+
     for (const AnimationPlayback::Layer& layer : playback.layers())
       total += layer.weight;
+
     CHECK(playback.layers().size() == 3u);
     CHECK(testing::approx(total, 1.0f));
     CHECK(testing::approx(playback.current()->weight, 0.5f));
@@ -269,11 +282,14 @@ int main()
         glm::rotate(glm::mat4(1.0f), 1.0f, glm::vec3(0.0f, 0.0f, 1.0f)),
         glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, 4.0f))};
     std::vector<glm::vec3> positions;
+
     for (const MeshVertex& vertex : vertices)
       positions.push_back(vertex.position);
+
     std::vector<glm::vec3> moved;
     skinPositions(positions, weights, palette, moved);
     const Aabb bounds = skinnedBounds(skin, palette);
+
     for (const glm::vec3& p : moved)
       CHECK(glm::all(glm::greaterThanEqual(p, bounds.min - 1e-5f)) &&
             glm::all(glm::lessThanEqual(p, bounds.max + 1e-5f)));

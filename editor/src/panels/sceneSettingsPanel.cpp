@@ -1,28 +1,44 @@
 #include "panels/sceneSettingsPanel.h"
 
 #include "editorContext.h"
-#include "panels/inspectorPanel.h"
+#include "engine/core/assets/assetDatabase.h"
+#include "engine/core/ecs/ecs.h"
+#include "engine/core/ecs/moduleSettings.h"
+#include "engine/core/events/eventQueue.h"
+#include "engine/core/reflection/reflection.h"
+#include "engine/core/rendering/ambientOcclusion.h"
+#include "engine/core/rendering/colorGrading.h"
+#include "engine/core/rendering/contactShadows.h"
+#include "engine/core/rendering/fog.h"
+#include "engine/core/rendering/lighting.h"
+#include "engine/core/rendering/rain.h"
+#include "engine/core/rendering/sky.h"
+#include "engine/core/rendering/visualStyle.h"
+#include "engine/runtime/rendering/debug/ui.h"
+#include "engine/runtime/rendering/renderSystem.h"
+#include "engine/runtime/rendering/space2D.h"
+#include "engine/runtime/rendering/visualStyles.h"
+#include "engine/runtime/scripting/scriptRegistry.h"
 #include "history/editorHistory.h"
+#include "panels/inspectorPanel.h"
 #include "scene/editorScene.h"
 #include "scene/entityLabel.h"
 #include "widgets/lookWidgets.h"
 #include "widgets/widgets.h"
 
-#include "engine/core/ecs/ecs.h" // IWYU pragma: keep (Entity templates)
-#include "engine/core/reflection/reflection.h"
-#include "engine/runtime/rendering/debug/ui.h"
-#include "engine/runtime/rendering/renderSystem.h"
-#include "engine/runtime/rendering/visualStyles.h"
-#include "engine/runtime/scripting/scriptRegistry.h"
+#include <glm/glm/ext/vector_float2.hpp>
+#include <imgui.h>
 
 #include <algorithm>
+#include <cfloat>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <optional>
+#include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
-
-#include "imgui.h"
 
 namespace
 {
@@ -38,18 +54,22 @@ void sceneScriptList(const char* title,
   const bool systems = kind == sfs::ScriptType::Kind::System;
   const bool open =
       ImGui::CollapsingHeader(title, ImGuiTreeNodeFlags_DefaultOpen);
+
   if (!systems)
     ImGui::SetItemTooltip("Services run only when their events bring them "
                           "something, at the start of each step. Their order "
                           "doesn't matter.");
+
   if (!open)
     return;
 
   ImGui::PushID(title);
+
   for (std::size_t i = 0; i < names.size(); ++i)
   {
     ImGui::PushID(static_cast<int>(i));
     const bool known = sfs::scripts().find(names[i]) != nullptr;
+
     if (ImGui::SmallButton("x"))
     {
       history.change(
@@ -57,13 +77,17 @@ void sceneScriptList(const char* title,
       ImGui::PopID();
       break;
     }
+
     ImGui::SameLine();
+
     if (known)
       ImGui::TextUnformatted(names[i].c_str());
     else
       ImGui::TextDisabled("%s (not built)", names[i].c_str());
+
     ImGui::PopID();
   }
+
   if (names.empty())
     ImGui::TextDisabled(systems ? "None"
                                 : "No services (create one under Scripts, "
@@ -73,10 +97,12 @@ void sceneScriptList(const char* title,
   {
     // The engine's first, then the game's.
     std::vector<const sfs::ScriptType*> candidates;
+
     for (const sfs::ScriptType& type : sfs::scripts().types())
       if (type.kind == kind &&
           std::find(names.begin(), names.end(), type.name) == names.end())
         candidates.push_back(&type);
+
     std::stable_sort(candidates.begin(),
                      candidates.end(),
                      [](const sfs::ScriptType* a, const sfs::ScriptType* b) {
@@ -84,6 +110,7 @@ void sceneScriptList(const char* title,
                      });
 
     const std::string* section = nullptr;
+
     for (const sfs::ScriptType* type : candidates)
     {
       if (!section || *section != type->module)
@@ -92,16 +119,20 @@ void sceneScriptList(const char* title,
         ImGui::SeparatorText(*section == "engine" ? "Engine"
                                                   : section->c_str());
       }
+
       if (ImGui::Selectable(type->name.c_str()))
         history.change([&] { names.push_back(type->name); });
     }
+
     if (candidates.empty())
       ImGui::TextDisabled(systems ? "No other systems (create one under "
                                     "Scripts, then Build)"
                                   : "No other services (create one under "
                                     "Scripts, then Build)");
+
     ImGui::EndCombo();
   }
+
   ImGui::PopID();
 }
 
@@ -116,8 +147,10 @@ void sceneData(EditorScene& scene, EditorHistory& history, bool prefab)
   ImGui::SetItemTooltip("Data the scene holds one of each type of, apart "
                         "from its entities ([[sfs::scene_data]]), which "
                         "systems, services and scripts read");
+
   if (!open)
     return;
+
   if (prefab)
   {
     ImGui::TextDisabled("A prefab holds no scene data: it's the scene's");
@@ -127,27 +160,34 @@ void sceneData(EditorScene& scene, EditorHistory& history, bool prefab)
   ImGui::PushID("sceneData");
   std::vector<const sfs::reflect::TypeInfo*> held;
   std::vector<const sfs::reflect::TypeInfo*> candidates;
+
   for (const sfs::reflect::TypeInfo& type : sfs::reflect::types().types())
     if (type.kind == sfs::reflect::TypeKind::SceneData)
       (scene.sceneDataOf(type) ? held : candidates).push_back(&type);
 
   sfs::MeshLibrary* meshes = &scene.renderSystem().meshes();
+
   for (const sfs::reflect::TypeInfo* type : held)
   {
     ImGui::PushID(type->name.c_str());
+
     if (ImGui::SmallButton("x"))
     {
       history.change([&] { scene.removeSceneData(*type); });
       ImGui::PopID();
       break;
     }
+
     ImGui::SetItemTooltip("Remove %s", type->displayName.c_str());
     ImGui::SameLine();
     ImGui::SeparatorText(type->displayName.c_str());
+
     if (void* object = scene.sceneDataOf(*type))
       reflectedFields(*type, object, meshes, &history);
+
     ImGui::PopID();
   }
+
   if (held.empty())
     ImGui::TextDisabled("None");
 
@@ -159,6 +199,7 @@ void sceneData(EditorScene& scene, EditorHistory& history, bool prefab)
         [](const sfs::reflect::TypeInfo* a, const sfs::reflect::TypeInfo* b)
         { return (a->module == "engine") > (b->module == "engine"); });
     const std::string* section = nullptr;
+
     for (const sfs::reflect::TypeInfo* type : candidates)
     {
       if (!section || *section != type->module)
@@ -167,16 +208,19 @@ void sceneData(EditorScene& scene, EditorHistory& history, bool prefab)
         ImGui::SeparatorText(*section == "engine" ? "Engine"
                                                   : section->c_str());
       }
+
       if (ImGui::Selectable(type->displayName.c_str()))
         history.change([&] { scene.addSceneData(*type); });
     }
+
     if (candidates.empty())
-      ImGui::TextDisabled(held.empty()
-                              ? "No scene data types (mark a struct "
-                                "[[sfs::scene_data]], then Build)"
-                              : "The scene has every scene data type");
+      ImGui::TextDisabled(held.empty() ? "No scene data types (mark a struct "
+                                         "[[sfs::scene_data]], then Build)"
+                                       : "The scene has every scene data type");
+
     ImGui::EndCombo();
   }
+
   ImGui::PopID();
 }
 
@@ -190,11 +234,10 @@ void sceneStyle(sfs::RenderSystem& render, EditorHistory& history)
   using Projection = sfs::Space2D::Projection;
   const std::optional<sfs::Space2D>& current = render.space2D();
   const char* kinds[] = {"3D", "Flat 2D", "Isometric 2D"};
-  int kind = !current                                     ? 0
-             : current->projection == Projection::Flat ? 1
-                                                          : 2;
+  int kind = !current ? 0 : current->projection == Projection::Flat ? 1 : 2;
   widgets::propertyLabel("Style");
   ImGui::SetNextItemWidth(-FLT_MIN);
+
   if (ImGui::Combo("##style", &kind, kinds, 3))
     history.change(
         [&]
@@ -204,11 +247,13 @@ void sceneStyle(sfs::RenderSystem& render, EditorHistory& history)
             render.clearSpace2D();
             return;
           }
+
           sfs::Space2D space = render.space2D().value_or(sfs::Space2D{});
           space.projection =
               kind == 1 ? Projection::Flat : Projection::Isometric;
           render.setSpace2D(space);
         });
+
   ImGui::SetItemTooltip(
       "3D: a world in metres, seen through a camera you place.\n"
       "Flat 2D: sprites on a plane, seen straight on (platformers,\n"
@@ -216,6 +261,7 @@ void sceneStyle(sfs::RenderSystem& render, EditorHistory& history)
 
   if (!render.space2D())
     return;
+
   sfs::Space2D space = *render.space2D();
   bool changed = widgets::undoable(&history,
                                    space.pixelsPerUnit,
@@ -223,12 +269,10 @@ void sceneStyle(sfs::RenderSystem& render, EditorHistory& history)
                                    {
                                      widgets::propertyLabel("Pixels Per Unit");
                                      ImGui::SetNextItemWidth(-FLT_MIN);
-                                     return ImGui::DragFloat("##ppu",
-                                                             &value,
-                                                             0.1f,
-                                                             0.01f,
-                                                             1000.0f);
+                                     return ImGui::DragFloat(
+                                         "##ppu", &value, 0.1f, 0.01f, 1000.0f);
                                    });
+
   if (space.projection == Projection::Flat)
   {
     changed |= widgets::undoable(
@@ -263,6 +307,7 @@ void sceneStyle(sfs::RenderSystem& render, EditorHistory& history)
                                        "##height", &value, 0.5f, 0.0f, 512.0f);
                                  });
   }
+
   if (changed)
     render.setSpace2D(space);
 }
@@ -283,33 +328,43 @@ void sceneLook(EditorContext& context,
   const auto label = [](const std::string& path)
   { return std::filesystem::path(path).stem().string(); };
   std::string preview = "None (the scene's own)";
+
   for (const auto& [name, path] : styles)
     if (name == current)
       preview = label(path);
+
   if (!current.empty() && preview.rfind("None", 0) == 0)
     preview = "Missing (" + current + ")";
 
   widgets::propertyLabel("Visual Style");
   ImGui::SetNextItemWidth(-FLT_MIN);
+
   if (ImGui::BeginCombo("##visualStyle", preview.c_str()))
   {
     const auto choose = [&](const std::string& name)
     { history.change([&] { render.setVisualStyle(name); }); };
+
     if (ImGui::Selectable("None (the scene's own)", current.empty()))
       choose("");
+
     for (const auto& [name, path] : styles)
     {
       ImGui::PushID(name.c_str());
+
       if (ImGui::Selectable(label(path).c_str(), name == current))
         choose(name);
+
       ImGui::SetItemTooltip("%s", path.c_str());
       ImGui::PopID();
     }
+
     if (styles.empty())
       ImGui::TextDisabled(
           "No styles yet: right-click in Assets > New Visual Style");
+
     ImGui::EndCombo();
   }
+
   ImGui::SetItemTooltip(
       "A whole look, from a .style asset: its grading, bloom, haze, fog, "
       "ambient\nocclusion and shadows replace the scene's own, its light "
@@ -325,27 +380,33 @@ void sceneLook(EditorContext& context,
           current.rfind("asset:", 0) == 0
               ? sfs::AssetId::parse(std::string_view(current).substr(6))
               : std::nullopt;
+
       if (id && ImGui::Button("Edit Style"))
       {
         context.selection = {};
         context.selectedAsset = *id;
         context.revealAsset = *id;
       }
+
       ImGui::SameLine();
       ImGui::TextDisabled("Its look stands in for the scene's own");
     }
     else
       ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f),
                          "Can't load this style: the scene looks as with none");
+
     return;
   }
 
   ImGui::PushID("grading");
   sfs::ColorGrading grading = render.colorGrading();
+
   if (lookWidgets::grading(&history, grading))
     render.setColorGrading(grading);
+
   if (!render.colorGrading().neutral() && ImGui::Button("Reset Grading"))
     history.change([&] { render.setColorGrading({}); });
+
   ImGui::PopID();
 }
 
@@ -356,22 +417,29 @@ void sceneSkyAndShadows(sfs::RenderSystem& render, EditorHistory& history)
   if (render.space2D() ||
       !ImGui::CollapsingHeader("Sky & Shadows", ImGuiTreeNodeFlags_DefaultOpen))
     return;
+
   const sfs::VisualStyle* style = render.visualStyle();
 
   ImGui::PushID("sky");
   sfs::SkySettings sky = render.skySettings();
+
   if (lookWidgets::sky(&history, sky))
     render.setSkySettings(sky);
+
   if (style && style->sky)
     ImGui::TextDisabled("The visual style's sky stands in for this");
+
   ImGui::PopID();
 
   ImGui::PushID("cascades");
   sfs::ShadowSettings shadows = render.shadowSettings();
+
   if (lookWidgets::shadowCascades(&history, shadows))
     render.setShadowSettings(shadows);
+
   if (style && style->shadowCascades)
     ImGui::TextDisabled("The visual style's cascades stand in for these");
+
   ImGui::PopID();
 }
 
@@ -380,34 +448,44 @@ void sceneSkyAndShadows(sfs::RenderSystem& render, EditorHistory& history)
 void sceneAtmosphere(sfs::RenderSystem& render, EditorHistory& history)
 {
   if (render.space2D() ||
-      !ImGui::CollapsingHeader("Occlusion & Fog",
-                               ImGuiTreeNodeFlags_DefaultOpen))
+      !ImGui::CollapsingHeader(
+          "Occlusion & Fog", ImGuiTreeNodeFlags_DefaultOpen))
     return;
+
   const sfs::VisualStyle* style = render.visualStyle();
 
   ImGui::PushID("occlusion");
   sfs::AmbientOcclusionSettings occlusion = render.ambientOcclusionSettings();
+
   if (lookWidgets::ambientOcclusion(&history, occlusion))
     render.setAmbientOcclusionSettings(occlusion);
+
   if (style && style->ambientOcclusion)
     ImGui::TextDisabled(
         "The visual style's ambient occlusion stands in for this");
+
   ImGui::PopID();
 
   ImGui::PushID("contact");
   sfs::ContactShadowSettings contact = render.contactShadowSettings();
+
   if (lookWidgets::contactShadows(&history, contact))
     render.setContactShadowSettings(contact);
+
   if (style && style->contactShadows)
     ImGui::TextDisabled("The visual style's contact shadows stand in for this");
+
   ImGui::PopID();
 
   ImGui::PushID("fog");
   sfs::FogSettings fog = render.fogSettings();
+
   if (lookWidgets::fog(&history, fog))
     render.setFogSettings(fog);
+
   if (style && style->fog)
     ImGui::TextDisabled("The visual style's fog stands in for this");
+
   ImGui::PopID();
 }
 
@@ -418,13 +496,17 @@ void sceneRain(sfs::RenderSystem& render, EditorHistory& history)
   if (render.space2D() ||
       !ImGui::CollapsingHeader("Rain", ImGuiTreeNodeFlags_DefaultOpen))
     return;
+
   ImGui::PushID("rain");
   sfs::RainSettings rain = render.rainSettings();
+
   if (lookWidgets::rain(&history, rain))
     render.setRainSettings(rain);
+
   if (const sfs::VisualStyle* style = render.visualStyle();
       style && style->rain)
     ImGui::TextDisabled("The visual style's rain stands in for this");
+
   ImGui::PopID();
 }
 
@@ -442,9 +524,12 @@ void sceneEvents(EditorScene& scene,
       "cap before a consumer had them, keyed events superseded, and\n"
       "responses dropped as their request was superseded.\n"
       "SFS_LOG_EVENTS=Type,Other (or *) logs each send.");
+
   if (!open)
     return;
+
   scene.events().stats(stats);
+
   if (stats.empty())
     ImGui::TextDisabled("No events yet (the scene sends while it plays)");
   else if (ImGui::BeginTable(
@@ -463,15 +548,19 @@ void sceneEvents(EditorScene& scene,
                                 "Superseded",
                                 "Dropped"})
       ImGui::TableSetupColumn(heading);
+
     ImGui::TableHeadersRow();
+
     for (const sfs::EventStats& type : stats)
     {
       ImGui::TableNextRow();
+
       for (const std::string_view text : {type.type, type.kind})
       {
         ImGui::TableNextColumn();
         ImGui::TextUnformatted(text.data(), text.data() + text.size());
       }
+
       for (const std::size_t count : {type.sentLastFrame,
                                       type.kept,
                                       type.staged,
@@ -481,20 +570,25 @@ void sceneEvents(EditorScene& scene,
         ImGui::TableNextColumn();
         ImGui::Text("%zu", count);
       }
+
       for (const uint64_t count : {type.missed, type.superseded, type.dropped})
       {
         ImGui::TableNextColumn();
         ImGui::Text("%llu", static_cast<unsigned long long>(count));
       }
     }
+
     ImGui::EndTable();
   }
+
   scene.events().consumerStats(consumers);
   const bool listed = !consumers.empty() && ImGui::TreeNode("Consumers");
+
   if (!consumers.empty())
     ImGui::SetItemTooltip("Each type's consumers: the system or object that "
                           "owns each, how it\nreads, and the kept events it "
                           "hasn't read yet.");
+
   if (listed)
   {
     if (ImGui::BeginTable(
@@ -504,22 +598,29 @@ void sceneEvents(EditorScene& scene,
     {
       for (const char* heading : {"Type", "Consumer", "How", "Unread"})
         ImGui::TableSetupColumn(heading);
+
       ImGui::TableHeadersRow();
+
       for (const sfs::EventConsumerStats& row : consumers)
       {
         ImGui::TableNextRow();
+
         for (const std::string_view text : {row.type, row.consumer, row.how})
         {
           ImGui::TableNextColumn();
           ImGui::TextUnformatted(text.data(), text.data() + text.size());
         }
+
         ImGui::TableNextColumn();
         ImGui::Text("%zu", row.unconsumed);
       }
+
       ImGui::EndTable();
     }
+
     ImGui::TreePop();
   }
+
   ImGui::TreePop();
 }
 
@@ -533,22 +634,30 @@ void sceneDebug(EditorScene& scene,
 {
   if (!ImGui::CollapsingHeader("Debug", ImGuiTreeNodeFlags_DefaultOpen))
     return;
+
   ImGui::PushID("debug");
   bool drawColliders = render.drawColliders();
-  if (widgets::undoable(&history,
-                        drawColliders,
-                        [](bool& on)
-                        { return widgets::propertyCheckbox("Draw Colliders", &on); }))
+
+  if (widgets::undoable(
+          &history,
+          drawColliders,
+          [](bool& on)
+          { return widgets::propertyCheckbox("Draw Colliders", &on); }))
     render.setDrawColliders(drawColliders);
-  ImGui::SetItemTooltip("Every collider drawn as lines, in the viewport and the game:\n"
-                        "solid ones green, triggers orange. Game code can turn it on\n"
-                        "or off (RenderSystem::forceDrawColliders), and so can\n"
-                        "SFS_DRAW_COLLIDERS=1 (or 0) in the environment.");
-  ImGui::TextDisabled("Development builds only: a release export ignores these");
+
+  ImGui::SetItemTooltip(
+      "Every collider drawn as lines, in the viewport and the game:\n"
+      "solid ones green, triggers orange. Game code can turn it on\n"
+      "or off (RenderSystem::forceDrawColliders), and so can\n"
+      "SFS_DRAW_COLLIDERS=1 (or 0) in the environment.");
+  ImGui::TextDisabled(
+      "Development builds only: a release export ignores these");
+
   if (render.effectiveDrawColliders())
     ImGui::TextDisabled("Colliders drawn: %zu (%zu lines)",
                         render.stats().colliders,
                         render.stats().debugLines);
+
   sceneEvents(scene, eventStats, eventConsumers);
   ImGui::PopID();
 }
@@ -575,8 +684,7 @@ void SceneSettingsPanel::drawContents(EditorContext& context)
   sceneSkyAndShadows(render, history);
   sceneAtmosphere(render, history);
   sceneRain(render, history);
-  sceneDebug(
-      *context.scene, render, history, m_eventStats, m_eventConsumers);
+  sceneDebug(*context.scene, render, history, m_eventStats, m_eventConsumers);
   ImGui::Separator();
 
   // Which view the game starts from.
@@ -591,6 +699,7 @@ void SceneSettingsPanel::drawContents(EditorContext& context)
         "Without a camera entity, the game starts from the viewport's\n"
         "view as last saved. Add one with + > Camera.");
   }
+
   ImGui::Separator();
 
   // The descriptor widgets apply their values themselves, so they can't edit a
@@ -598,10 +707,12 @@ void SceneSettingsPanel::drawContents(EditorContext& context)
   // draws; the widget that takes the click keeps that snapshot until it's
   // released (one undo step per drag), and the others drop theirs unchanged.
   bool clickTaken = !ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows);
+
   for (const sfs::ModuleSetting& setting : render.settings())
   {
     const bool speculate =
         !clickTaken && ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+
     if (speculate)
       history.beginChange();
 
@@ -627,6 +738,7 @@ void SceneSettingsPanel::drawContents(EditorContext& context)
               stats.pointLights,
               stats.emissionLights,
               stats.shadowedLights);
+
   if (!render.space2D())
     ImGui::Text("Grass fields: %zu", stats.grassFields);
 }

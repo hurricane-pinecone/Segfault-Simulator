@@ -63,8 +63,10 @@ std::string missingCpuFeatures()
   {
     if (present)
       return;
+
     if (!missing.empty())
       missing += ", ";
+
     missing += name;
   };
 

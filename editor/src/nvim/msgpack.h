@@ -1,8 +1,8 @@
 #pragma once
 
 #include <concepts>
+#include <cstddef>
 #include <cstdint>
-#include <memory>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -65,24 +65,27 @@ public:
   Value(T value) : m_storage(std::move(value))
   {
   }
-
-  bool isNil() const { return std::holds_alternative<std::monostate>(m_storage); }
-  bool isInteger() const;
-  bool isString() const { return std::holds_alternative<std::string>(m_storage); }
-  bool isArray() const { return std::holds_alternative<Array>(m_storage); }
-  bool isMap() const { return std::holds_alternative<Map>(m_storage); }
-
-  /** Integer value (from either signedness), or `fallback`. */
-  int64_t asInt(int64_t fallback = 0) const;
-  bool asBool(bool fallback = false) const;
-  double asDouble(double fallback = 0.0) const;
-  /** String (or binary) contents, or empty. */
-  const std::string& asString() const;
   /** Array elements, or an empty array. */
   const Array& asArray() const;
+  bool asBool(bool fallback = false) const;
+  double asDouble(double fallback = 0.0) const;
+  /** Integer value (from either signedness), or `fallback`. */
+  int64_t asInt(int64_t fallback = 0) const;
   /** Map entries, or an empty map. */
   const Map& asMap() const;
-
+  /** String (or binary) contents, or empty. */
+  const std::string& asString() const;
+  bool isArray() const { return std::holds_alternative<Array>(m_storage); }
+  bool isInteger() const;
+  bool isMap() const { return std::holds_alternative<Map>(m_storage); }
+  bool isNil() const
+  {
+    return std::holds_alternative<std::monostate>(m_storage);
+  }
+  bool isString() const
+  {
+    return std::holds_alternative<std::string>(m_storage);
+  }
   /** The entry with a string key, or nil. */
   const Value& operator[](std::string_view key) const;
 
@@ -110,19 +113,17 @@ DecodeStatus decode(std::string_view input, std::size_t& consumed, Value& out);
 class Writer
 {
 public:
-  Writer& nil();
-  Writer& boolean(bool value);
-  Writer& integer(int64_t value);
-  Writer& floating(double value);
-  Writer& string(std::string_view value);
   Writer& arrayHeader(std::size_t count);
+  Writer& boolean(bool value);
+  const std::string& data() const { return m_out; }
+  Writer& floating(double value);
+  Writer& integer(int64_t value);
   Writer& mapHeader(std::size_t count);
-
+  Writer& nil();
+  Writer& string(std::string_view value);
+  std::string take() { return std::move(m_out); }
   /** Any Value, recursively. */
   Writer& value(const Value& value);
-
-  const std::string& data() const { return m_out; }
-  std::string take() { return std::move(m_out); }
 
 private:
   void bigEndian(uint64_t value, int bytes);

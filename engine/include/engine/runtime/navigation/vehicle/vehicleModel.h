@@ -3,6 +3,9 @@
 #include "engine/runtime/navigation/geometry.h"
 
 #include <algorithm>
+#include <cmath>
+#include <cstdint>
+#include <cstdlib>
 #include <optional>
 #include <vector>
 
@@ -69,16 +72,6 @@ struct Tunables
  */
 struct VehicleModel
 {
-  std::vector<Box3> boxes; // the exact collider boxes (not the trailer's)
-  float minRadius = 5.0f;  // at the reference point, wheel on full lock
-  float wheelbase = 2.6f;  // m, reference point to the steered axle
-  float steerRate = 1.2f;  // rad/s at the wheel
-  float topSpeed = 7.0f, reverseSpeed = 2.0f; // m/s
-  float accel = 1.2f, brake = 2.0f;           // m/s^2
-  float lateralAccel = 0.9f;                  // m/s^2 round a curve
-  float shuttleSeconds = 0.5f; // s it stands at a change of direction
-  bool mayReverse = true;
-  std::optional<Trailer> trailer;
   /**
    * A working mode (a tool lowered): its own boxes and tightest turn,
    * forward only if it must be. Mode 0 is plain travel (the fields above);
@@ -90,38 +83,9 @@ struct VehicleModel
     float minRadius = 5.0f;
     bool forwardOnly = true;
   };
-  std::vector<Mode> modes; // modes 1.. (index + 1)
 
-  /** The largest curvature (1/m). */
-  float maxCurvature() const { return 1.0f / std::max(minRadius, 0.01f); }
   /** How fast curvature may change a second (1/m/s). */
   float curvatureRate() const { return steerRate / wheelbase; }
-  /**
-   * THE most it goes at a point of a path: its gear's top speed, slow for a
-   * tight curve (sqrt(lateralAccel / |k|)) and where the wheel must turn fast
-   * (curvatureRate / |dk/ds|). The speed profile and the planner's pricing
-   * both ask this.
-   */
-  float speedAt(int gear, float k, float dkds) const
-  {
-    float s = gear > 0 ? topSpeed : reverseSpeed;
-    if (std::abs(k) > 1e-6f)
-      s = std::min(s, std::sqrt(lateralAccel / std::abs(k)));
-    if (std::abs(dkds) > 1e-6f)
-      s = std::min(s, curvatureRate() / std::abs(dkds));
-    return s;
-  }
-  /** The time lost pulling away to `v` from a stand (over driving those
-   * metres at v): v / 2 accel. */
-  float pullAwaySeconds(float v) const
-  {
-    return v / (2.0f * std::max(accel, 0.05f));
-  }
-  /** The time lost braking from `v` to a stand: v / 2 brake. */
-  float stopSeconds(float v) const
-  {
-    return v / (2.0f * std::max(brake, 0.05f));
-  }
   /**
    * The time a change of direction (a cusp) really costs, as the follower
    * drives it: standing shuttleSeconds, plus the time lost braking to a stand
@@ -137,6 +101,49 @@ struct VehicleModel
     const float v = 0.5f * (ahead + back);
     return std::max(shuttleSeconds, 0.0f) + stopSeconds(v) + pullAwaySeconds(v);
   }
+  /** The largest curvature (1/m). */
+  float maxCurvature() const { return 1.0f / std::max(minRadius, 0.01f); }
+  /** The time lost pulling away to `v` from a stand (over driving those
+   * metres at v): v / 2 accel. */
+  float pullAwaySeconds(float v) const
+  {
+    return v / (2.0f * std::max(accel, 0.05f));
+  }
+  /**
+   * THE most it goes at a point of a path: its gear's top speed, slow for a
+   * tight curve (sqrt(lateralAccel / |k|)) and where the wheel must turn fast
+   * (curvatureRate / |dk/ds|). The speed profile and the planner's pricing
+   * both ask this.
+   */
+  float speedAt(int gear, float k, float dkds) const
+  {
+    float s = gear > 0 ? topSpeed : reverseSpeed;
+
+    if (std::abs(k) > 1e-6f)
+      s = std::min(s, std::sqrt(lateralAccel / std::abs(k)));
+
+    if (std::abs(dkds) > 1e-6f)
+      s = std::min(s, curvatureRate() / std::abs(dkds));
+
+    return s;
+  }
+  /** The time lost braking from `v` to a stand: v / 2 brake. */
+  float stopSeconds(float v) const
+  {
+    return v / (2.0f * std::max(brake, 0.05f));
+  }
+
+  std::vector<Box3> boxes; // the exact collider boxes (not the trailer's)
+  float minRadius = 5.0f;  // at the reference point, wheel on full lock
+  float wheelbase = 2.6f;  // m, reference point to the steered axle
+  float steerRate = 1.2f;  // rad/s at the wheel
+  float topSpeed = 7.0f, reverseSpeed = 2.0f; // m/s
+  float accel = 1.2f, brake = 2.0f;           // m/s^2
+  float lateralAccel = 0.9f;                  // m/s^2 round a curve
+  float shuttleSeconds = 0.5f; // s it stands at a change of direction
+  bool mayReverse = true;
+  std::optional<Trailer> trailer;
+  std::vector<Mode> modes; // modes 1.. (index + 1)
 };
 
 } // namespace sfs::nav::vehicle

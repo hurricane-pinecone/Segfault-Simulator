@@ -1,6 +1,6 @@
 #pragma once
 
-#include "engine/core/ecs/entity.h"
+#include "engine/core/ecs/entityDeclaration.h"
 #include "engine/core/events/eventRules.h"
 
 #include <atomic>
@@ -60,6 +60,21 @@ struct EventInbox : EventInboxBase
   /** Staged events, each with its key and generation where T has them. */
   struct Lanes
   {
+    /** Empties every lane, keeping its room. */
+    void clear()
+    {
+      events.clear();
+
+      if constexpr (kKeyed<T>)
+        keys.clear();
+
+      if constexpr (ResponseQueueType<T>)
+      {
+        stamps.clear();
+        tickets.clear();
+      }
+    }
+
     /** The events, in the order they were sent. */
     std::vector<T> events;
     /** Each event's key entity (keyed types). */
@@ -72,19 +87,6 @@ struct EventInbox : EventInboxBase
     [[no_unique_address]] Lane<ResponseQueueType<T>, uint32_t> stamps;
     /** Each response's request ticket (response types). */
     [[no_unique_address]] Lane<ResponseQueueType<T>, uint32_t> tickets;
-
-    /** Empties every lane, keeping its room. */
-    void clear()
-    {
-      events.clear();
-      if constexpr (kKeyed<T>)
-        keys.clear();
-      if constexpr (ResponseQueueType<T>)
-      {
-        stamps.clear();
-        tickets.clear();
-      }
-    }
   };
 
   /** The workers' events. */

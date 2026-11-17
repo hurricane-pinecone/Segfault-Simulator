@@ -1,22 +1,22 @@
-#include <engine/runtime/game/game.h>
+#include "engine/runtime/game/game.h"
 
+#include "engine/core/logger/logger.h"
 #include "engine/core/scripting/luaScripting.h"
+#include "engine/core/util/allocationMetrics.h"
+#include "engine/core/util/cpuTiming.h"
+#include "engine/core/util/errorDialog.h"
+#include "engine/core/util/profiling.h"
 #include "engine/runtime/rendering/backend/renderBackends.h"
+#include "engine/runtime/rendering/debug/ui.h"
 #include "engine/runtime/rendering/modules/uiModule.h"
 #include "engine/runtime/rendering/renderSystem.h"
 #include "engine/runtime/rendering/standardScene.h"
 #include "engine/runtime/rendering/visualStyles.h"
 #include "engine/runtime/scriptableObjects/scriptableObjects.h"
 
-#include "SDL.h"
+#include <SDL.h>
 #include <SDL_error.h>
 #include <SDL_ttf.h>
-
-#include <engine/core/logger/logger.h>
-#include <engine/core/util/allocationMetrics.h>
-#include <engine/core/util/cpuTiming.h>
-#include <engine/core/util/errorDialog.h>
-#include <engine/core/util/profiling.h>
 
 #include <algorithm>
 #include <cmath>
@@ -25,8 +25,6 @@
 #include <memory>
 #include <string>
 #include <utility>
-
-#include "engine/runtime/rendering/debug/ui.h"
 
 #ifdef __EMSCRIPTEN__
   #include <emscripten.h>
@@ -58,6 +56,7 @@ bool Game::init(int windowWidth, int windowHeight)
     LOG_ERROR(std::string("Error initializing SDL: ") + SDL_GetError());
     return false;
   }
+
   // No sound (no audio device, a broken driver, a headless machine) is no
   // reason not to play: the game runs silent.
   if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0)
@@ -70,35 +69,44 @@ bool Game::init(int windowWidth, int windowHeight)
   }
 
   m_backend = makeRenderBackend();
+
   if (!m_backend ||
       !m_backend->init("SegFaultSimulator", windowWidth, windowHeight))
   {
     // Another backend may have a driver here (the game's choice may not).
     const std::string failed(m_backend ? m_backend->name() : "");
+
     if (m_backend)
       m_backend->shutdown();
+
     m_backend.reset();
+
     for (const std::string& name : RenderBackends::names())
     {
       if (name == failed)
         continue;
+
       std::unique_ptr<IRenderBackend> backend = RenderBackends::make(name);
       LOG_INFO("Trying the " + name + " renderer instead");
+
       if (backend &&
           backend->init("SegFaultSimulator", windowWidth, windowHeight))
       {
         m_backend = std::move(backend);
         break;
       }
+
       if (backend)
         backend->shutdown();
     }
+
     if (!m_backend)
     {
       LOG_ERROR("Failed to initialize render backend");
       return false;
     }
   }
+
   LOG_INFO("Rendering with " + (m_backend->name().empty()
                                     ? std::string("a custom backend")
                                     : std::string(m_backend->name())));
@@ -129,12 +137,14 @@ bool Game::init(int windowWidth, int windowHeight)
 std::unique_ptr<IRenderBackend> Game::makeRenderBackend()
 {
   const std::vector<std::string> names = RenderBackends::names();
+
   if (names.empty())
   {
     LOG_ERROR("No render backend to run on (register one, e.g. "
               "registerWebGpuBackend())");
     return nullptr;
   }
+
   return RenderBackends::make(names.front());
 }
 
@@ -219,8 +229,10 @@ void Game::frame()
       SFS_CPU_SCOPE("render");
       render();
     }
+
     if (std::exchange(m_collectUnusedAssets, false) && m_backends)
       m_backends->assetStore.collectUnused();
+
     if (m_backend && m_backend->deviceLost())
       onFatalError("The graphics device stopped working (it was lost: a "
                    "driver crash or update, or the GPU was removed).");
@@ -251,6 +263,7 @@ bool Game::waitWhileMinimized()
   if (!window || !ownsWindow() ||
       (SDL_GetWindowFlags(window) & SDL_WINDOW_MINIMIZED) == 0)
     return false;
+
   // Wake for the next event (left queued: a frame handles it as usual, e.g.
   // the window coming back, or quitting), or now and then to check. The time
   // asleep doesn't count as a frame's.
@@ -263,6 +276,7 @@ void Game::capFrameRate(Uint64 frameStart)
 {
   if (m_maxFrameRate <= 0.0)
     return;
+
   const double frequency = static_cast<double>(SDL_GetPerformanceFrequency());
   const double frameTime = 1.0 / m_maxFrameRate;
   const auto elapsed = [&]
@@ -270,10 +284,12 @@ void Game::capFrameRate(Uint64 frameStart)
     return static_cast<double>(SDL_GetPerformanceCounter() - frameStart) /
            frequency;
   };
+
   // Sleep most of what's left (a sleep can overshoot by a millisecond or
   // two), then wait out the rest.
   while (frameTime - elapsed() > 0.002)
     SDL_Delay(1);
+
   while (elapsed() < frameTime)
   {
   }
@@ -289,6 +305,7 @@ void Game::updatePixelSize()
 {
   m_pixelWidth = windowWidth;
   m_pixelHeight = windowHeight;
+
   if (window)
     SDL_GetWindowSizeInPixels(window, &m_pixelWidth, &m_pixelHeight);
 }
@@ -320,21 +337,27 @@ bool Game::playScene(const std::filesystem::path& scene)
               ": scene files need a renderer, and this game has none");
     return false;
   }
+
   AssetStore& store = m_backends->assetStore;
+
   if (!store.database())
   {
     std::error_code error;
     bool any = false;
+
     for (const std::filesystem::path& folder : AssetDatabase::projectFolders())
       any |= std::filesystem::is_directory(gameFolder() / folder, error);
+
     if (any)
       store.setDatabase(
           &m_assetDatabase.emplace(gameFolder(),
                                    AssetDatabase::Mode::ReadOnly,
                                    AssetDatabase::projectFolders()));
   }
+
   // Scriptable objects come from the same catalogue.
   scriptableObjects().setCatalogue(store.database());
+
   // What the previous scene loaded and this one doesn't use goes once it has
   // loaded and drawn its first frame (materials load as they're first drawn).
   // Only where the game has the store to itself: a host's (the editor's) is
@@ -344,6 +367,7 @@ bool Game::playScene(const std::filesystem::path& scene)
     store.beginUseTracking();
     m_collectUnusedAssets = true;
   }
+
   return replaceScene().play(gameFolder() / scene);
 }
 
@@ -367,6 +391,7 @@ void Game::applyRequests()
         *std::exchange(m_requestedScene, std::nullopt);
     onLoadScene(scene);
   }
+
   if (std::exchange(m_quitRequested, false))
     onQuit();
 }
@@ -375,10 +400,12 @@ bool Game::canChangeWindow()
 {
   if (ownsWindow() && window)
     return true;
+
   if (!m_windowChangeLogged)
     LOG_INFO("The game changed its window (title, size or fullscreen); that's "
              "ignored in the "
              "editor and applies in the exported game");
+
   m_windowChangeLogged = true;
   return false;
 }
@@ -406,6 +433,7 @@ void Game::setWindowSize(int width, int height)
 {
   if (width <= 0 || height <= 0)
     return;
+
   if (canChangeWindow())
     SDL_SetWindowSize(
         window, width, height); // the resize event updates the backend
@@ -439,6 +467,7 @@ void Game::processInput()
       static_cast<int>(std::lround(view.rect.h * scale.y)));
 
   SDL_Event sdlEvent;
+
   while (SDL_PollEvent(&sdlEvent))
   {
 
@@ -480,11 +509,13 @@ void Game::processInput()
     {
       int width = windowWidth, height = windowHeight;
       SDL_GetWindowSize(window, &width, &height);
+
       if (width > 0 && height > 0)
       {
         windowWidth = width;
         windowHeight = height;
         updatePixelSize();
+
         if (m_pixelWidth > 0 && m_pixelHeight > 0)
           m_backend->onResize(m_pixelWidth, m_pixelHeight);
       }
@@ -505,6 +536,7 @@ void Game::processInput()
     const bool button = sdlEvent.type == SDL_MOUSEBUTTONDOWN ||
                         sdlEvent.type == SDL_MOUSEBUTTONUP;
     const bool inView = button && sdlEvent.button.windowID == view.windowId;
+
     if (sdlEvent.type == SDL_MOUSEBUTTONDOWN && !inView)
       continue;
 
@@ -519,6 +551,7 @@ void Game::processInput()
     {
       if (inView)
         setMouse(sdlEvent.button.x, sdlEvent.button.y);
+
       input.mouse().releaseButton(
           static_cast<sfs::MouseButton>(sdlEvent.button.button));
     }
@@ -544,6 +577,7 @@ void Game::processInput()
     {
       if (sceneReceivesInput() && sceneManager)
         sceneManager.current()->processInput(input);
+
       onProcessInput(input);
     }
   }
@@ -555,14 +589,17 @@ bool Game::handleDevKey(const SDL_Event& event)
       (event.key.keysym.sym != SDLK_F8 && event.key.keysym.sym != SDLK_F9) ||
       !sceneReceivesInput() || !sceneManager)
     return false;
+
   Scene& scene = *sceneManager.current();
   RenderSystem* render = scene.tryGetSystem<RenderSystem>();
+
   // F9: temporal anti-aliasing on or off (to compare), shown in the title.
   if (render && event.key.keysym.sym == SDLK_F9)
   {
     const bool on = !render->effectiveTemporalAntiAliasing();
     render->forceTemporalAntiAliasing(on);
     LOG_INFO(std::string("Temporal anti-aliasing ") + (on ? "on" : "off"));
+
     if (window && ownsWindow())
     {
       std::string title = SDL_GetWindowTitle(window);
@@ -570,11 +607,15 @@ bool Game::handleDevKey(const SDL_Event& event)
       SDL_SetWindowTitle(
           window, (title + (on ? " [TAA on]" : " [TAA off]")).c_str());
     }
+
     return true;
   }
+
   const AssetDatabase* assets = scene.assetStore().database();
+
   if (!render || !assets)
     return false;
+
   const bool back = (event.key.keysym.mod & KMOD_SHIFT) != 0;
   cycleVisualStyle(*render, *assets, back ? -1 : 1);
   return true;
@@ -585,12 +626,14 @@ void Game::update(double deltaTime)
   ZoneScopedN("Game::update");
 
   sfs::ScopedMemoryTracking tracking{sfs::MemoryTrackingPhase::Update};
+
   if (sceneManager)
   {
     sceneManager.current()->update(deltaTime);
     SFS_CPU_SCOPE("update/game");
     onUpdate(deltaTime);
   }
+
   // After every script has run, so none is destroyed mid-update.
   applyRequests();
 }
@@ -650,6 +693,7 @@ void Game::destroy()
     m_backend->shutdown();
     m_backend.reset();
   }
+
   window = nullptr;
 
   setErrorDialog({});

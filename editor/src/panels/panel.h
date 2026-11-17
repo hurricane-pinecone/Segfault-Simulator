@@ -13,10 +13,13 @@ class Panel
 public:
   virtual ~Panel() = default;
 
-  /** Window title; also the ImGui window id, so it must be unique. */
-  const char* title() const { return m_title.c_str(); }
+  /** Draw the panel if open. */
+  void draw(EditorContext& context);
 
   bool& open() { return m_open; }
+
+  /** Window title; also the ImGui window id, so it must be unique. */
+  const char* title() const { return m_title.c_str(); }
 
   /**
    * Per-frame work that must happen before the scene renders (e.g. resizing a
@@ -24,17 +27,14 @@ public:
    */
   virtual void update(EditorContext&) {}
 
-  /** Draw the panel if open. */
-  void draw(EditorContext& context);
-
 protected:
   explicit Panel(std::string title) : m_title(std::move(title)) {}
 
-  /** The panel's contents, between ImGui::Begin and End. */
-  virtual void drawContents(EditorContext& context) = 0;
-
   /** Called just before the panel's window begins (e.g. SetNextWindow*). */
   virtual void beforeBegin() {}
+
+  /** The panel's contents, between ImGui::Begin and End. */
+  virtual void drawContents(EditorContext& context) = 0;
 
   /** Window flags for this panel (default: none). */
   virtual int windowFlags() const { return 0; }

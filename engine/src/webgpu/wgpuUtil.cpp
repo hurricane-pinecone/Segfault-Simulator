@@ -13,6 +13,7 @@ std::string str(WGPUStringView s)
 {
   if (!s.data)
     return {};
+
   return s.length == WGPU_STRLEN ? std::string(s.data)
                                  : std::string(s.data, s.length);
 }
@@ -40,14 +41,17 @@ makeShader(WGPUDevice device, const char* code, const char* label)
                      void*)
   {
     const std::unique_ptr<std::string> module(static_cast<std::string*>(name));
+
     if (status != WGPUCompilationInfoRequestStatus_Success || !compilation)
       return;
+
     for (std::size_t i = 0; i < compilation->messageCount; ++i)
     {
       const WGPUCompilationMessage& message = compilation->messages[i];
       const std::string text =
           "Shader \"" + *module + "\" line " + std::to_string(message.lineNum) +
           ":" + std::to_string(message.linePos) + ": " + str(message.message);
+
       if (message.type == WGPUCompilationMessageType_Error)
         LOG_ERROR(text);
       else if (message.type == WGPUCompilationMessageType_Warning)

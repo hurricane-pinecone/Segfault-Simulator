@@ -1,13 +1,15 @@
 #include "../../engine/tests/testHarness.h"
-
 #include "build/nodeIdUpgrade.h"
-
 #include "engine/core/util/jsonTokens.h"
 #include "engine/runtime/assetStore/modelImporter.h"
 #include "engine/runtime/serialization/sceneSerializer.h"
 
+#include <nlohmann/json.hpp>
+
+#include <cstddef>
 #include <filesystem>
 #include <fstream>
+#include <ios>
 #include <iterator>
 #include <set>
 #include <string>
@@ -18,6 +20,10 @@ using json = nlohmann::json;
 
 namespace
 {
+constexpr const char* MODEL_ID = "3123456789abcdef0123456789abcdef";
+constexpr const char* MACHINE_ID = "4123456789abcdef0123456789abcdef";
+constexpr const char* OUTER_ID = "5123456789abcdef0123456789abcdef";
+
 std::string readText(const fs::path& path)
 {
   std::ifstream in(path, std::ios::binary);
@@ -39,16 +45,21 @@ void writeFile(const fs::path& path, const json& contents)
 
 void writeMeta(const fs::path& file, const std::string& id)
 {
-  writeText(fs::path(file.string() + ".meta"), R"({"formatVersion": 1, "id": ")" + id + R"("})");
+  writeText(fs::path(file.string() + ".meta"),
+            R"({"formatVersion": 1, "id": ")" + id + R"("})");
 }
 
-// A model of two one-triangle meshes. In the file's order its nodes are Body (1), Arm (2), Hand (3), Wheel (4),
-// Wheel again (5), an unnamed one (6) and Cab (7).
+// A model of two one-triangle meshes. In the file's order its nodes are Body
+// (1), Arm (2), Hand (3), Wheel (4), Wheel again (5), an unnamed one (6) and
+// Cab (7).
 void writeModel(const fs::path& file)
 {
-  // Three float positions (0,0,0), (1,0,0), (0,1,0) and the indices 0, 1, 2 (padded), as base64.
-  const std::string buffer = "AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAAAAABAAIAAAA=";
-  writeText(file, R"({
+  // Three float positions (0,0,0), (1,0,0), (0,1,0) and the indices 0, 1, 2
+  // (padded), as base64.
+  const std::string buffer =
+      "AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAAAAABAAIAAAA=";
+  writeText(file,
+            R"({
     "asset": {"version": "2.0"},
     "scene": 0,
     "scenes": [{"nodes": [0, 6]}],
@@ -74,7 +85,7 @@ void writeModel(const fs::path& file)
       {"buffer": 0, "byteOffset": 36, "byteLength": 6}
     ],
     "buffers": [{"byteLength": 44, "uri": "data:application/octet-stream;base64,)" +
-                       buffer + R"("}]
+                buffer + R"("}]
   })");
 }
 
@@ -84,47 +95,55 @@ json named(const std::string& name, json extra = json::object())
   return extra;
 }
 
-json moved(float z) { return {{"TransformComponent", {{"position", {0, 0, z}}}}}; }
-
-constexpr const char* kModelId = "3123456789abcdef0123456789abcdef";
-constexpr const char* kMachineId = "4123456789abcdef0123456789abcdef";
-constexpr const char* kOuterId = "5123456789abcdef0123456789abcdef";
+json moved(float z)
+{
+  return {{"TransformComponent", {{"position", {0, 0, z}}}}};
+}
 
 // A project whose prefabs and scene were saved with the model's old ids.
 fs::path writeProject()
 {
-  const fs::path project = fs::temp_directory_path() / "sfs-node-id-upgrade-test";
+  const fs::path project =
+      fs::temp_directory_path() / "sfs-node-id-upgrade-test";
   fs::remove_all(project);
   writeModel(project / "assets" / "machine.gltf");
-  writeMeta(project / "assets" / "machine.gltf", kModelId);
-  const std::string model = std::string("asset:") + kModelId;
-  const std::string machine = std::string("asset:") + kMachineId;
+  writeMeta(project / "assets" / "machine.gltf", MODEL_ID);
+  const std::string model = std::string("asset:") + MODEL_ID;
+  const std::string machine = std::string("asset:") + MACHINE_ID;
 
-  // The machine: the model as its entity 1, overriding the arm, the second wheel and the unnamed node, removing the
-  // first wheel, adding a glove under the hand.
+  // The machine: the model as its entity 1, overriding the arm, the second
+  // wheel and the unnamed node, removing the first wheel, adding a glove under
+  // the hand.
   json machineRoot = named("Machine");
   machineRoot["children"] = json::array(
       {{{"$id", 1},
         {"$prefab", model},
-        {"$overrides", {{"2", moved(2)}, {"5", moved(5)}, {"6", moved(6)}, {"", moved(1)}}},
+        {"$overrides",
+         {{"2", moved(2)}, {"5", moved(5)}, {"6", moved(6)}, {"", moved(1)}}},
         {"$removed", {"4"}},
         {"$added", {named("Glove", {{"$parent", "3"}})}}},
        named("Seat", {{"$id", 2}})});
-  writeFile(project / "prefabs" / "Machine.prefab", {{"formatVersion", 1}, {"root", machineRoot}});
-  writeMeta(project / "prefabs" / "Machine.prefab", kMachineId);
+  writeFile(project / "prefabs" / "Machine.prefab",
+            {{"formatVersion", 1}, {"root", machineRoot}});
+  writeMeta(project / "prefabs" / "Machine.prefab", MACHINE_ID);
 
   // A shed holding a machine, moving its cab.
   json outerRoot = named("Shed");
   outerRoot["children"] =
-      json::array({{{"$id", 3}, {"$prefab", machine}, {"$overrides", {{"1/7", moved(7)}, {"2", moved(8)}}}}});
-  writeFile(project / "prefabs" / "Shed.prefab", {{"formatVersion", 1}, {"root", outerRoot}});
-  writeMeta(project / "prefabs" / "Shed.prefab", kOuterId);
+      json::array({{{"$id", 3},
+                    {"$prefab", machine},
+                    {"$overrides", {{"1/7", moved(7)}, {"2", moved(8)}}}}});
+  writeFile(project / "prefabs" / "Shed.prefab",
+            {{"formatVersion", 1}, {"root", outerRoot}});
+  writeMeta(project / "prefabs" / "Shed.prefab", OUTER_ID);
 
   // A prefab with no model in it.
   json plainRoot = named("Fence");
   plainRoot["children"] = json::array({named("Rail", {{"$id", 1}})});
-  writeFile(project / "prefabs" / "Fence.prefab", {{"formatVersion", 1}, {"root", plainRoot}});
-  writeMeta(project / "prefabs" / "Fence.prefab", "6123456789abcdef0123456789abcdef");
+  writeFile(project / "prefabs" / "Fence.prefab",
+            {{"formatVersion", 1}, {"root", plainRoot}});
+  writeMeta(
+      project / "prefabs" / "Fence.prefab", "6123456789abcdef0123456789abcdef");
 
   // A scene moving one machine's cab, and a shed overriding only its own root.
   writeFile(project / "scenes" / "level1.scene",
@@ -132,33 +151,49 @@ fs::path writeProject()
              {"systems", json::array()},
              {"entities",
               {{{"$prefab", machine}, {"$overrides", {{"1/7", moved(9)}}}},
-               {{"$prefab", std::string("asset:") + kOuterId}, {"$overrides", {{"", moved(3)}}}},
+               {{"$prefab", std::string("asset:") + OUTER_ID},
+                {"$overrides", {{"", moved(3)}}}},
                named("Sun")}}});
   writeFile(project / "scenes" / "empty.scene",
-            {{"formatVersion", 2}, {"systems", json::array()}, {"entities", {named("Sun")}}});
+            {{"formatVersion", 2},
+             {"systems", json::array()},
+             {"entities", {named("Sun")}}});
   return project;
 }
 
-// Whether `after` differs from `before` only in the strings in `changed` (old text -> new) and formatVersion: every
-// token in the same place, every byte between tokens the same.
-bool onlyTokensChanged(const std::string& before, const std::string& after, const std::set<std::string>& changed)
+// Whether `after` differs from `before` only in the strings in `changed` (old
+// text -> new) and formatVersion: every token in the same place, every byte
+// between tokens the same.
+bool onlyTokensChanged(const std::string& before,
+                       const std::string& after,
+                       const std::set<std::string>& changed)
 {
   const auto a = sfs::scanJsonTokens(before);
   const auto b = sfs::scanJsonTokens(after);
+
   if (!a || !b || a->size() != b->size())
     return false;
+
   std::size_t endA = 0, endB = 0;
+
   for (std::size_t i = 0; i < a->size(); ++i)
   {
     const sfs::JsonToken& x = (*a)[i];
     const sfs::JsonToken& y = (*b)[i];
-    if (before.substr(endA, x.begin - endA) != after.substr(endB, y.begin - endB) || x.kind != y.kind)
+
+    if (before.substr(endA, x.begin - endA) !=
+            after.substr(endB, y.begin - endB) ||
+        x.kind != y.kind)
       return false;
-    if (x.text != y.text && !changed.contains(x.text + " -> " + y.text) && x.pointer != "/formatVersion")
+
+    if (x.text != y.text && !changed.contains(x.text + " -> " + y.text) &&
+        x.pointer != "/formatVersion")
       return false;
+
     endA = x.end;
     endB = y.end;
   }
+
   return before.substr(endA) == after.substr(endB);
 }
 } // namespace
@@ -172,14 +207,18 @@ int main()
                                           "scenes/level1.scene",
                                           "scenes/empty.scene"};
   std::vector<std::string> original;
+
   for (const std::string& name : names)
     original.push_back(readText(project / name));
 
   std::vector<std::string> paths;
-  const auto nodes = sfs::importModelNodes(project / "assets" / "machine.gltf", {}, &paths);
+  const auto nodes =
+      sfs::importModelNodes(project / "assets" / "machine.gltf", {}, &paths);
   CHECK(nodes.has_value() && nodes->size() == 7u);
+
   if (!nodes || nodes->size() != 7u)
     return testing::report("nodeIdUpgradeTests");
+
   const auto id = [&](int old) { return std::to_string((*nodes)[old - 1].id); };
 
   TEST("--check should find every old id, pass, and write nothing")
@@ -188,6 +227,7 @@ int main()
     CHECK(report.ok);
     CHECK(report.files == 5u);
     CHECK(report.changed.size() == 3u);
+
     if (report.changed.size() == 3u)
     {
       CHECK(report.changed[0].path == "prefabs/Machine.prefab");
@@ -195,9 +235,11 @@ int main()
       CHECK(report.changed[1].path == "prefabs/Shed.prefab");
       CHECK(report.changed[2].path == "scenes/level1.scene");
     }
+
     CHECK(report.overrideKeys == 5u);
     CHECK(report.removedPaths == 1u);
     CHECK(report.addedParents == 1u);
+
     for (std::size_t i = 0; i < names.size(); ++i)
       CHECK(readText(project / names[i]) == original[i]);
   }
@@ -212,14 +254,17 @@ int main()
                                            "4 -> " + id(4),
                                            "3 -> " + id(3),
                                            "1/7 -> 1/" + id(7)};
+
     for (std::size_t i = 0; i < names.size(); ++i)
     {
       const std::string text = readText(project / names[i]);
       CHECK(onlyTokensChanged(original[i], text, changed));
       CHECK((text != original[i]) == (i == 0 || i == 1 || i == 3));
     }
+
     const json machine = json::parse(readText(project / names[0]));
-    CHECK(machine["formatVersion"] == sfs::SceneSerializer::kPrefabFormatVersion);
+    CHECK(machine["formatVersion"] ==
+          sfs::SceneSerializer::kPrefabFormatVersion);
     const json& instance = machine["root"]["children"][0];
     CHECK(instance["$overrides"].contains(id(5)));
     CHECK(instance["$overrides"].contains(""));
@@ -236,11 +281,14 @@ int main()
   TEST("a second run should change nothing")
   {
     std::vector<std::string> upgraded;
+
     for (const std::string& name : names)
       upgraded.push_back(readText(project / name));
+
     const NodeIdUpgradeReport report = upgradeNodeIds(project, true);
     CHECK(report.ok);
     CHECK(report.changed.empty());
+
     for (std::size_t i = 0; i < names.size(); ++i)
       CHECK(readText(project / names[i]) == upgraded[i]);
   }
@@ -272,14 +320,20 @@ int main()
     fs::remove(missing / "assets" / "machine.gltf.meta");
     fs::remove(missing / "assets" / "machine.gltf");
     std::vector<std::string> before;
+
     for (const std::string& name : names)
       before.push_back(readText(missing / name));
+
     const NodeIdUpgradeReport report = upgradeNodeIds(missing, true);
     CHECK(!report.ok);
     CHECK(!report.unreadable.empty());
+
     if (!report.unreadable.empty())
-      CHECK(report.unreadable[0] == std::string("prefabs/Machine.prefab: asset:") + kModelId);
+      CHECK(report.unreadable[0] ==
+            std::string("prefabs/Machine.prefab: asset:") + MODEL_ID);
+
     CHECK(upgradeNodeIdsHeadless(missing, true) != 0);
+
     for (std::size_t i = 0; i < names.size(); ++i)
       CHECK(readText(missing / names[i]) == before[i]);
   }
@@ -292,10 +346,13 @@ int main()
     machine.erase("formatVersion");
     writeFile(broken / names[0], machine);
     std::vector<std::string> before;
+
     for (const std::string& name : names)
       before.push_back(readText(broken / name));
+
     const NodeIdUpgradeReport report = upgradeNodeIds(broken, true);
     CHECK(!report.ok);
+
     for (std::size_t i = 0; i < names.size(); ++i)
       CHECK(readText(broken / names[i]) == before[i]);
   }

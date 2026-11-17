@@ -1,13 +1,21 @@
 #include "../../testHarness.h"
+#include "engine/core/rendering/grass.h"
+#include "engine/runtime/rendering/frame.h"
+#include "engine/runtime/rendering/framePlan.h"
+#include "engine/runtime/rendering/grassTiles.h"
 
-#include <engine/core/rendering/grass.h>
-#include <engine/runtime/rendering/framePlan.h>
-#include <engine/runtime/rendering/grassTiles.h>
-
-#include "glm/glm/ext/matrix_clip_space.hpp"
-#include "glm/glm/ext/matrix_transform.hpp"
+#include <glm/glm/ext/matrix_clip_space.hpp>
+#include <glm/glm/ext/matrix_transform.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
+#include <glm/glm/ext/vector_float4.hpp>
+#include <glm/glm/ext/vector_int2.hpp>
+#include <glm/glm/ext/vector_int4.hpp>
+#include <glm/glm/trigonometric.hpp>
 
 #include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <optional>
 #include <vector>
 
 using namespace sfs;
@@ -67,16 +75,19 @@ int main()
       const glm::vec2 ranks = grassLatticeRanks(lattice);
       CHECK(grassTileThreshold(lattice, 0) == ranks.y);
       CHECK(grassTileLevel(lattice, ranks.y * 2.0f) == 0);
+
       for (float needed = ranks.y; needed > ranks.y * 0.01f; needed *= 0.9f)
       {
         if (needed <= ranks.x)
           break;
+
         const int level = grassTileLevel(lattice, needed);
         CHECK(grassTileThreshold(lattice, level) >= needed);
         CHECK(level == (lattice < 3 ? 3 : 20) ||
               grassTileThreshold(lattice, level + 1) < needed);
       }
     }
+
     // The finer lattices' ranks above the coarser ones'; the coarsest to 0.
     CHECK(grassLatticeRanks(0) == glm::vec2(0.25f, 1.0f));
     CHECK(grassLatticeRanks(1).y == grassLatticeRanks(0).x);
@@ -131,6 +142,7 @@ int main()
     CHECK(first.outOfRoom == 0u);
     const std::size_t drawn = first.drawn.size();
     uint32_t chunks = 0;
+
     for (const GrassTileEntry& entry : first.drawn)
     {
       CHECK(entry.firstChunk == chunks);
@@ -139,6 +151,7 @@ int main()
       CHECK(entry.heights.x <= 0.0f && entry.heights.y >= 0.0f);
       chunks += entry.room / kGrassChunk;
     }
+
     CHECK(first.chunks == chunks);
     // The tile under the camera's gaze, on the finest lattice, is one.
     CHECK(hasTile(first.drawn, 0, {0, 0}) || hasTile(first.drawn, 0, {-64, 0}));
@@ -154,6 +167,7 @@ int main()
     cache.changed({1.0f, 1.0f}, {1.5f, 1.5f});
     const GrassTileCache::Frame& edited = cache.plan(grow, 3, true);
     CHECK(edited.builds.size() <= 4u && !edited.builds.empty());
+
     for (const GrassTileEntry& entry : edited.builds)
     {
       CHECK((entry.lattice & kGrassTileEdited) != 0u);
@@ -191,6 +205,7 @@ int main()
       for (const GrassTileEntry& entry : entries)
         if ((entry.lattice & 3u) == 1u && entry.origin == glm::ivec2(0))
           return entry.threshold;
+
       return -1.0f;
     };
     // (Its second lattice's tile there: most of its blades thinned out.)
@@ -208,8 +223,10 @@ int main()
     // Looking away for long enough: let go.
     GrassGrowUniforms away = near;
     away.lattices = {};
+
     for (uint64_t frame = 3; frame <= 240; ++frame)
       cache.plan(away, frame, false);
+
     CHECK(cache.tiles() == 0u && cache.usedChunks() == 0u);
   }
 

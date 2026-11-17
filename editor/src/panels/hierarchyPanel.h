@@ -1,9 +1,9 @@
 #pragma once
 
+#include "engine/core/ecs/entity.h"
 #include "panels/panel.h"
 
-#include "engine/core/ecs/entity.h"
-#include "imgui.h"
+#include <imgui.h>
 
 #include <cstdint>
 #include <string>
@@ -39,33 +39,38 @@ private:
       MakePrefab, // `entity`'s branch into a new prefab
       Place,      // an instance of `prefab` under `parent` (invalid: a root)
     };
+
     Kind kind = Kind::None;
     sfs::Entity entity;
     sfs::Entity parent;
     std::string prefab;
   };
 
+  void applyPendingEdit(EditorContext& context);
+  void drawCreateMenu(EditorContext& context, const sfs::Entity& parent = {});
+  void drawDropBelow(EditorContext& context);
+  void drawFocusButton(EditorContext& context, const sfs::Entity& entity);
+  void drawRenameBox(EditorContext& context,
+                     const sfs::Entity& entity,
+                     ImVec2 rowMin,
+                     ImVec2 rowMax);
+  bool
+  drawRow(EditorContext& context, const sfs::Entity& entity, bool hasChildren);
   void drawTree(EditorContext& context, const sfs::Entity& entity);
-
+  void finishRename(EditorContext& context, const sfs::Entity& entity);
   // One row: the entity's tree node, plus its drag and drop and context menu.
   // @return true if it's open with children to draw (the caller pops it).
   // The row's focus button (frames the entity in the viewport).
   void startRename(const sfs::Entity& entity);
-  void finishRename(EditorContext& context, const sfs::Entity& entity);
-  void drawRenameBox(EditorContext& context, const sfs::Entity& entity, ImVec2 rowMin, ImVec2 rowMax);
-  void drawFocusButton(EditorContext& context, const sfs::Entity& entity);
-  bool drawRow(EditorContext& context, const sfs::Entity& entity, bool hasChildren);
-
-  void drawDropBelow(EditorContext& context);
-  void drawCreateMenu(EditorContext& context, const sfs::Entity& parent = {});
-  void applyPendingEdit(EditorContext& context);
 
   std::string m_filter;
-  uint32_t m_shownSelection = UINT32_MAX; // the selection the list last scrolled to
-  const void* m_shownScene = nullptr;     // the scene it's for
+  uint32_t m_shownSelection =
+      UINT32_MAX;                     // the selection the list last scrolled to
+  const void* m_shownScene = nullptr; // the scene it's for
   std::unordered_map<const void*, uint32_t> m_shownSelections; // other scenes
   bool m_scrollToSelection = false;
-  std::unordered_set<uint32_t> m_reveal; // ids to open this frame (the selection's parents)
+  std::unordered_set<uint32_t>
+      m_reveal; // ids to open this frame (the selection's parents)
   PendingEdit m_pending;
   // Renaming a row in place (F2, or Rename): its entity's id, the name as
   // typed, and whether the box still needs the keyboard.

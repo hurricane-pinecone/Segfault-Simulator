@@ -1,4 +1,4 @@
-#include <engine/core/logger/logger.h>
+#include "engine/core/logger/logger.h"
 
 #include <algorithm>
 #include <atomic>
@@ -75,7 +75,7 @@ LastMessage& lastMessage()
 // A message logged again within this long of being written is counted, not
 // written: one logged every frame shows once a second (with the count of the
 // ones in between), and the same message a while later shows as usual.
-constexpr std::chrono::seconds kRepeatWindow{1};
+constexpr std::chrono::seconds REPEAT_WINDOW{1};
 } // namespace
 
 Logger::SinkId Logger::addSink(Sink sink)
@@ -97,11 +97,14 @@ void Logger::removeSink(SinkId id)
         std::find_if(registry.sinks.begin(),
                      registry.sinks.end(),
                      [id](const auto& entry) { return entry.first == id; });
+
     if (it == registry.sinks.end())
       return;
+
     removed = std::move(it->second);
     registry.sinks.erase(it);
   }
+
   // Calls under way on other threads finish first. (From inside a sink, this
   // thread's own call would never finish: then it doesn't wait.)
   if (!t_inSink)
@@ -113,13 +116,17 @@ void Logger::notifySinks(Level level, const std::string& message)
 {
   if (t_inSink)
     return;
+
   SinkRegistry& registry = sinkRegistry();
   std::vector<std::shared_ptr<SinkEntry>> sinks;
   {
     const std::lock_guard lock(registry.mutex);
+
     if (registry.sinks.empty())
       return;
+
     sinks.reserve(registry.sinks.size());
+
     for (const auto& [id, entry] : registry.sinks)
     {
       ++entry->calls;
@@ -127,6 +134,7 @@ void Logger::notifySinks(Level level, const std::string& message)
     }
   }
   t_inSink = true;
+
   for (const std::shared_ptr<SinkEntry>& entry : sinks)
   {
     try
@@ -139,6 +147,7 @@ void Logger::notifySinks(Level level, const std::string& message)
     }
     --entry->calls;
   }
+
   t_inSink = false;
 }
 
@@ -201,18 +210,21 @@ void Logger::log(Level level,
     LastMessage& last = lastMessage();
     const std::lock_guard lock(last.mutex);
     const auto now = std::chrono::steady_clock::now();
+
     if (level == last.level && message == last.message &&
-        now - last.written < kRepeatWindow)
+        now - last.written < REPEAT_WINDOW)
     {
       ++last.repeats;
       return;
     }
+
     if (last.repeats > 0)
       repeats = formatMessage(last.level,
                               last.message + repeatNote(last.repeats),
                               last.file,
                               last.line,
                               last.func);
+
     repeatsLevel = last.level;
     last.level = level;
     last.message = message;
@@ -222,8 +234,10 @@ void Logger::log(Level level,
     last.repeats = 0;
     last.written = now;
   }
+
   if (!repeats.empty())
     write(repeatsLevel, repeats);
+
   write(level, formatMessage(level, message, file, line, func));
 }
 
@@ -244,10 +258,12 @@ void Logger::write(Level level, const std::string& formatted)
     std::cout << formatted << '\n';
     break;
   }
+
   // Warnings and errors may come just before a crash: whatever led up to
   // them is written out too.
   if (level >= Level::WARN)
     std::cout.flush();
+
   notifySinks(level, formatted);
 }
 
@@ -258,6 +274,7 @@ void Logger::flush()
   {
     LastMessage& last = lastMessage();
     const std::lock_guard lock(last.mutex);
+
     if (last.repeats > 0)
     {
       pending = formatMessage(last.level,
@@ -268,12 +285,15 @@ void Logger::flush()
       level = last.level;
       last.repeats = 0;
     }
+
     // Whatever comes next is new, even if it's the same message again.
     last.level = Level::DISABLED;
     last.message.clear();
   }
+
   if (!pending.empty())
     write(level, pending);
+
   std::cout.flush();
   std::cerr.flush();
 }
@@ -347,6 +367,7 @@ const char* Logger::toString(Logger::Level level)
   case Logger::Level::DISABLED:
     return "DISABLED";
   }
+
   return "UNKNOWN";
 }
 

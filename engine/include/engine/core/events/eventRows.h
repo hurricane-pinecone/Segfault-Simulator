@@ -1,6 +1,6 @@
 #pragma once
 
-#include "engine/core/ecs/entity.h"
+#include "engine/core/ecs/entityDeclaration.h"
 #include "engine/core/events/eventQueue.h"
 #include "engine/core/events/eventRules.h"
 #include "engine/core/events/keyed.h"
@@ -26,13 +26,13 @@ namespace sfs
 template <typename TEvent>
 struct KeyedRow
 {
+  /** The event alone. */
+  operator const TEvent&() const { return event; }
+
   /** The entity the event is about. */
   const Entity& entity;
   /** The event. */
   const TEvent& event;
-
-  /** The event alone. */
-  operator const TEvent&() const { return event; }
 };
 
 /**
@@ -70,17 +70,18 @@ struct PickAll
  */
 struct PickCurrent
 {
-  /** The keyed type's channel. */
-  const KeyedChannel* channel = nullptr;
-
   /** Whether event `i` of a segment is still its key's current one. */
   template <typename TEvent>
   bool accept(const EventSegment<TEvent>& part, std::size_t i) const
   {
     if (part.tickets)
       return channel->tickets->current(part.tickets[i], part.stamps[i]);
+
     return channel->current(part.keys[i].getId(), part.stamps[i]);
   }
+
+  /** The keyed type's channel. */
+  const KeyedChannel* channel = nullptr;
 };
 
 /** What a range of TEvent gives by default: every event. */
@@ -136,12 +137,6 @@ public:
 
     /** The row: `const E&`, a KeyedRow or a RequestRow. */
     reference operator*() const { return m_range->row(m_at); }
-    /** The event of an unkeyed type's row. */
-    const TEvent* operator->() const
-      requires(!detail::kKeyed<TEvent>)
-    {
-      return m_range->m_segment.events + m_at;
-    }
 
     iterator& operator++()
     {
@@ -154,6 +149,13 @@ public:
       iterator before = *this;
       ++*this;
       return before;
+    }
+
+    /** The event of an unkeyed type's row. */
+    const TEvent* operator->() const
+      requires(!detail::kKeyed<TEvent>)
+    {
+      return m_range->m_segment.events + m_at;
     }
 
     bool operator==(const iterator& other) const { return m_at == other.m_at; }
@@ -170,6 +172,7 @@ public:
     void settle()
     {
       const Segment& part = m_range->m_segment;
+
       while (m_at < part.count && !m_range->m_pick.accept(part, m_at))
         ++m_at;
     }
@@ -224,6 +227,7 @@ public:
       EventRange copy(other);
       *this = std::move(copy);
     }
+
     return *this;
   }
 
@@ -234,6 +238,7 @@ public:
     {
       if (m_queue)
         m_queue->endRead();
+
       m_segment = other.m_segment;
       m_pick = other.m_pick;
       m_channel = other.m_channel;
@@ -241,6 +246,7 @@ public:
       other.m_segment = {};
       other.m_queue = nullptr;
     }
+
     return *this;
   }
 
@@ -273,8 +279,10 @@ public:
     else
     {
       std::size_t count = 0;
+
       for (iterator it = begin(); it != end(); ++it)
         ++count;
+
       return count;
     }
   }
@@ -450,8 +458,10 @@ public:
   std::size_t size() const
   {
     std::size_t count = 0;
+
     for (iterator it = begin(); it != end(); ++it)
       ++count;
+
     return count;
   }
 
@@ -469,6 +479,7 @@ private:
   {
     if (m_ids[at] < m_first || m_ids[at] - m_first >= m_segment.count)
       return false;
+
     const std::size_t index = indexOf(at);
     const detail::RequestTickets& requests = *m_channel->tickets;
     return requests.current(

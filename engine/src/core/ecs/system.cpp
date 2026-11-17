@@ -1,9 +1,27 @@
-#include <engine/core/ecs/registry.h>
-#include <engine/core/ecs/system.h>
-#include <engine/core/logger/logger.h>
+#include "engine/core/ecs/system.h"
+
+#include "engine/core/ecs/entity.h"
+#include "engine/core/ecs/query.h"
+#include "engine/core/ecs/registry.h"
+#include "engine/core/logger/logger.h"
+#include "engine/core/util/typeKey.h"
+
+#include <cstddef>
+#include <string_view>
+#include <utility>
 
 namespace sfs
 {
+
+void System::addObserver(const QuerySignature& signature,
+                         EntityCallback added,
+                         EntityCallback removed)
+{
+  m_observers.push_back({signature, std::move(added), std::move(removed)});
+
+  if (registry && !m_lists.empty())
+    registry->follow(*this, m_observers.size());
+}
 
 const QuerySignature& System::getComponentSignature() const
 {
@@ -13,15 +31,6 @@ const QuerySignature& System::getComponentSignature() const
 const QuerySignature& System::signatureOf(std::size_t index) const
 {
   return index == 0 ? m_signature : m_observers[index - 1].signature;
-}
-
-void System::addObserver(const QuerySignature& signature,
-                         EntityCallback added,
-                         EntityCallback removed)
-{
-  m_observers.push_back({signature, std::move(added), std::move(removed)});
-  if (registry && !m_lists.empty())
-    registry->follow(*this, m_observers.size());
 }
 
 void System::tellJoined(std::size_t index, const Entity& entity)

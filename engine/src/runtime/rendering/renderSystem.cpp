@@ -7,31 +7,69 @@
 #include "engine/core/components/meshRendererComponent.h"
 #include "engine/core/components/pointLightComponent.h"
 #include "engine/core/components/transformComponent.h"
+#include "engine/core/ecs/moduleSettings.h"
+#include "engine/core/ecs/query.h"
 #include "engine/core/hierarchy/hierarchy.h"
 #include "engine/core/jobs/workerPool.h"
 #include "engine/core/logger/logger.h"
+#include "engine/core/rendering/aabb.h"
+#include "engine/core/rendering/ambientOcclusion.h"
+#include "engine/core/rendering/camera.h"
+#include "engine/core/rendering/colorGrading.h"
+#include "engine/core/rendering/emissionLights.h"
+#include "engine/core/rendering/fog.h"
+#include "engine/core/rendering/lighting.h"
+#include "engine/core/rendering/lightning.h"
 #include "engine/core/rendering/materialGraphCompiler.h"
+#include "engine/core/rendering/materialNodes.h"
+#include "engine/core/rendering/mesh.h"
+#include "engine/core/rendering/sky.h"
 #include "engine/core/rendering/sunShadow.h"
+#include "engine/core/sceneData/ambientLighting.h"
+#include "engine/core/sceneData/celestialBodies.h"
+#include "engine/core/sceneData/clouds.h"
+#include "engine/core/sceneData/directionalLighting.h"
+#include "engine/core/sceneData/rain.h"
+#include "engine/core/sceneData/shaderGlobals.h"
+#include "engine/core/sceneData/wind.h"
 #include "engine/core/util/clamp.h"
 #include "engine/core/util/cpuTiming.h"
 #include "engine/core/util/debugFeatures.h"
+#include "engine/runtime/rendering/commands.h"
 #include "engine/runtime/rendering/debug/colliderLines.h"
+#include "engine/runtime/rendering/frame.h"
 #include "engine/runtime/rendering/iRenderer.h"
 #include "engine/runtime/rendering/util/activeCamera.h"
-#include "glm/glm/ext/matrix_transform.hpp"
-#include "glm/glm/geometric.hpp"
-#include "glm/glm/matrix.hpp"
+
+#include <glm/glm/common.hpp>
+#include <glm/glm/ext/matrix_float3x3.hpp>
+#include <glm/glm/ext/matrix_transform.hpp>
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_float4.hpp>
+#include <glm/glm/geometric.hpp>
+#include <glm/glm/matrix.hpp>
+#include <glm/glm/trigonometric.hpp>
 
 #include <algorithm>
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <functional>
+#include <future>
 #include <limits>
+#include <map>
+#include <memory>
+#include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <tuple>
+#include <typeindex>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -42,11 +80,11 @@ namespace
 // (x its brightness), its cloud glow's, how bright its drawn channel is, how
 // far from what the camera looks at a strike casts a shadow, and the most
 // strikes flashing at once.
-constexpr float kLightningChannelLight = 60.0f;
-constexpr float kLightningCloudGlow = 0.18f;
-constexpr float kLightningChannelGlow = 40.0f;
-constexpr float kLightningShadowReach = 1200.0f;
-constexpr std::size_t kMostLightningStrikes = 4;
+constexpr float LIGHTNING_CHANNEL_LIGHT = 60.0f;
+constexpr float LIGHTNING_CLOUD_GLOW = 0.18f;
+constexpr float LIGHTNING_CHANNEL_GLOW = 40.0f;
+constexpr float LIGHTNING_SHADOW_REACH = 1200.0f;
+constexpr std::size_t MOST_LIGHTNING_STRIKES = 4;
 
 // The air of a scene without a Wind, and the sky of one without Clouds or
 // Rain.
@@ -83,6 +121,8 @@ RenderSystem::RenderSystem(IRenderer& renderer)
 {
 }
 
+RenderSystem::~RenderSystem() = default;
+
 void RenderSystem::create()
 {
   // What's on screen moves on in real time, however fast the game's going
@@ -101,6 +141,7 @@ void RenderSystem::create()
 void RenderSystem::update(double deltaTime)
 {
   float seconds = 0.0f;
+
   if (m_animating)
   {
     m_time += deltaTime;
@@ -109,16 +150,56 @@ void RenderSystem::update(double deltaTime)
     m_cloudDrift = driftClouds(m_cloudDrift, velocity, seconds);
     m_rainDrift.advance(velocity, seconds);
   }
+
   updateLightning(seconds);
   refreshMeshBounds();
   makeFeedPictures();
   updateModules(deltaTime);
 }
 
-const Wind& RenderSystem::sceneWind() const
+AmbientOcclusionSettings RenderSystem::effectiveAmbientOcclusion() const
 {
-  const Wind* wind = registry ? registry->sceneData<const Wind>() : nullptr;
-  return wind ? *wind : kStillAir;
+  return m_style && m_style->ambientOcclusion ? *m_style->ambientOcclusion
+                                              : m_ambientOcclusion;
+}
+
+BloomSettings RenderSystem::effectiveBloom() const
+{
+  if (m_style && m_style->bloom)
+    return *m_style->bloom;
+
+  const CameraComponent* camera = sceneCamera().getComponent<CameraComponent>();
+  return camera ? bloomOf(*camera) : m_bloom;
+}
+
+FogSettings RenderSystem::effectiveFog() const
+{
+  return m_style && m_style->fog ? *m_style->fog : m_fog;
+}
+
+ColorGrading RenderSystem::effectiveGrading() const
+{
+  return m_style ? m_style->grading : m_grading;
+}
+
+HazeSettings RenderSystem::effectiveHaze() const
+{
+  return m_style && m_style->haze ? *m_style->haze : m_haze;
+}
+
+ShadowSettings RenderSystem::effectiveShadows() const
+{
+  return m_style ? m_style->shadows(m_shadows) : m_shadows;
+}
+
+SkySettings RenderSystem::effectiveSky() const
+{
+  return m_style && m_style->sky ? *m_style->sky : m_sky;
+}
+
+Entity RenderSystem::sceneCamera() const
+{
+  return registry ? findActiveCamera(*registry) : Entity{};
 }
 
 const Clouds& RenderSystem::sceneClouds() const
@@ -134,11 +215,39 @@ const Rain& RenderSystem::sceneRain() const
   return rain ? *rain : kDry;
 }
 
-RenderSystem::~RenderSystem() = default;
-
-Entity RenderSystem::sceneCamera() const
+const Wind& RenderSystem::sceneWind() const
 {
-  return registry ? findActiveCamera(*registry) : Entity{};
+  const Wind* wind = registry ? registry->sceneData<const Wind>() : nullptr;
+  return wind ? *wind : kStillAir;
+}
+
+bool RenderSystem::setVisualStyle(std::string_view name)
+{
+  std::string chosen(name); // `name` may be m_styleName itself
+  m_style.reset();
+
+  if (!chosen.empty())
+  {
+    if (m_styleSource)
+      m_style = m_styleSource(chosen);
+    else
+      LOG_ERROR("No visual styles to load '" + chosen + "' from");
+  }
+
+  m_styleName = std::move(chosen);
+  m_meshes.setMaterialVariant(m_style ? m_style->materialVariant : "");
+  m_meshes.setMaterialOverrides(m_style ? m_style->materials
+                                        : std::map<std::string, std::string>{});
+  return m_styleName.empty() || m_style.has_value();
+}
+
+void RenderSystem::setVisualStyle(std::string_view name,
+                                  const VisualStyle& style)
+{
+  m_styleName = std::string(name);
+  m_style = style;
+  m_meshes.setMaterialVariant(style.materialVariant);
+  m_meshes.setMaterialOverrides(style.materials);
 }
 
 glm::vec3 RenderSystem::stepCamera()
@@ -158,8 +267,10 @@ glm::vec3 RenderSystem::stepCamera()
   static const char* const kStep = std::getenv("SFS_CAMERA_STEP");
   static const char* const kTour = std::getenv("SFS_CAMERA_TOUR");
   ++m_renderedFrames;
+
   if ((!kStep && !kTour) || m_space2D)
     return glm::vec3(0.0f);
+
   static const auto setting = [](const char* name, int fallback)
   {
     const char* value = std::getenv(name);
@@ -168,6 +279,7 @@ glm::vec3 RenderSystem::stepCamera()
   static const int first = setting("SFS_SCREENSHOT_FRAME", 60);
   static const int every = std::max(setting("SFS_SCREENSHOT_EVERY", 0), 1);
   static const int count = std::max(setting("SFS_SCREENSHOT_COUNT", 1), 1);
+
   if (kTour)
   {
     static const std::vector<std::pair<glm::vec3, glm::vec3>> tour = []
@@ -175,11 +287,13 @@ glm::vec3 RenderSystem::stepCamera()
       std::vector<std::pair<glm::vec3, glm::vec3>> views;
       std::string text(kTour);
       std::size_t at = 0;
+
       while (at <= text.size())
       {
         const std::size_t end =
             std::min(text.find_first_of(";|", at), text.size());
         glm::vec3 eye(0.0f), target(0.0f);
+
         if (std::sscanf(text.substr(at, end - at).c_str(),
                         "%f,%f,%f,%f,%f,%f",
                         &eye.x,
@@ -189,12 +303,16 @@ glm::vec3 RenderSystem::stepCamera()
                         &target.y,
                         &target.z) == 6)
           views.emplace_back(eye, target);
+
         at = end + 1;
       }
+
       return views;
     }();
+
     if (tour.empty())
       return glm::vec3(0.0f);
+
     const int shot = std::clamp((m_renderedFrames - first + every / 2) / every,
                                 0,
                                 static_cast<int>(tour.size()) - 1);
@@ -203,6 +321,7 @@ glm::vec3 RenderSystem::stepCamera()
         eye, target - eye, glm::max(glm::distance(eye, target), 0.1f));
     return glm::vec3(0.0f);
   }
+
   float step[6] = {};
   std::sscanf(kStep,
               "%f,%f,%f,%f,%f,%f",
@@ -224,77 +343,13 @@ glm::vec3 RenderSystem::stepCamera()
   const glm::vec3 eye = m_camera.position();
   m_camera.yaw += glm::radians(step[3] * n);
   m_camera.target = eye + m_camera.viewDirection() * m_camera.distance;
+
   if (step[5] != 1.0f)
     return glm::vec3(0.0f);
+
   const glm::vec3 offset = m_camera.position() - held.position();
   m_camera = held;
   return offset;
-}
-
-bool RenderSystem::setVisualStyle(std::string_view name)
-{
-  std::string chosen(name); // `name` may be m_styleName itself
-  m_style.reset();
-  if (!chosen.empty())
-  {
-    if (m_styleSource)
-      m_style = m_styleSource(chosen);
-    else
-      LOG_ERROR("No visual styles to load '" + chosen + "' from");
-  }
-  m_styleName = std::move(chosen);
-  m_meshes.setMaterialVariant(m_style ? m_style->materialVariant : "");
-  m_meshes.setMaterialOverrides(m_style ? m_style->materials
-                                        : std::map<std::string, std::string>{});
-  return m_styleName.empty() || m_style.has_value();
-}
-
-void RenderSystem::setVisualStyle(std::string_view name,
-                                  const VisualStyle& style)
-{
-  m_styleName = std::string(name);
-  m_style = style;
-  m_meshes.setMaterialVariant(style.materialVariant);
-  m_meshes.setMaterialOverrides(style.materials);
-}
-
-ColorGrading RenderSystem::effectiveGrading() const
-{
-  return m_style ? m_style->grading : m_grading;
-}
-
-BloomSettings RenderSystem::effectiveBloom() const
-{
-  if (m_style && m_style->bloom)
-    return *m_style->bloom;
-  const CameraComponent* camera = sceneCamera().getComponent<CameraComponent>();
-  return camera ? bloomOf(*camera) : m_bloom;
-}
-
-HazeSettings RenderSystem::effectiveHaze() const
-{
-  return m_style && m_style->haze ? *m_style->haze : m_haze;
-}
-
-ShadowSettings RenderSystem::effectiveShadows() const
-{
-  return m_style ? m_style->shadows(m_shadows) : m_shadows;
-}
-
-SkySettings RenderSystem::effectiveSky() const
-{
-  return m_style && m_style->sky ? *m_style->sky : m_sky;
-}
-
-FogSettings RenderSystem::effectiveFog() const
-{
-  return m_style && m_style->fog ? *m_style->fog : m_fog;
-}
-
-AmbientOcclusionSettings RenderSystem::effectiveAmbientOcclusion() const
-{
-  return m_style && m_style->ambientOcclusion ? *m_style->ambientOcclusion
-                                              : m_ambientOcclusion;
 }
 
 namespace
@@ -306,65 +361,15 @@ std::optional<bool> drawCollidersFromEnvironment()
   static const std::optional<bool> value = []() -> std::optional<bool>
   {
     const char* text = std::getenv("SFS_DRAW_COLLIDERS");
+
     if (!text || !*text)
       return std::nullopt;
+
     return std::string_view(text) != "0";
   }();
   return value;
 }
 } // namespace
-
-bool RenderSystem::effectiveDrawColliders() const
-{
-  if (!debugFeatures::enabled())
-  {
-    static bool told = false;
-    if (!told && (drawCollidersFromEnvironment().value_or(false) ||
-                  m_forcedDrawColliders.value_or(false) || m_drawColliders))
-    {
-      told = true;
-      LOG_INFO("Draw colliders ignored: debug features are off in a release "
-               "build");
-    }
-    return false;
-  }
-  if (m_forcedDrawColliders)
-    return *m_forcedDrawColliders;
-  if (const std::optional<bool> environment = drawCollidersFromEnvironment())
-    return *environment;
-  return m_drawColliders;
-}
-
-bool RenderSystem::effectiveTemporalAntiAliasing() const
-{
-  if (m_forcedTemporalAntiAliasing)
-    return *m_forcedTemporalAntiAliasing;
-  return m_style && m_style->temporalAntiAliasing
-             ? *m_style->temporalAntiAliasing
-             : m_temporalAntiAliasing;
-}
-
-ContactShadowSettings RenderSystem::effectiveContactShadows() const
-{
-  return m_style && m_style->contactShadows ? *m_style->contactShadows
-                                            : m_contactShadows;
-}
-
-RainSettings RenderSystem::effectiveRain() const
-{
-  return m_style && m_style->rain ? *m_style->rain : m_rain;
-}
-
-Ray RenderSystem::screenRay(const glm::vec2& pixel) const
-{
-  // The size the scene was last drawn at: between frames a backend may report
-  // another (the window, while the scene draws into an editor viewport).
-  glm::ivec2 size = m_context.viewportSize;
-  if (size.x <= 0 || size.y <= 0)
-    size = m_renderer.viewportSize();
-  return m_camera.screenRay(
-      pixel, glm::vec2(std::max(size.x, 1), std::max(size.y, 1)));
-}
 
 void RenderSystem::render()
 {
@@ -379,10 +384,12 @@ void RenderSystem::render()
         const auto* lens = camera.getComponent<CameraComponent>())
     {
       glm::vec2 point = hierarchy::cachedWorldTransform(camera).position2D();
+
       if (CameraFollowComponent* cameraFollow =
               camera.getComponent<CameraFollowComponent>())
         point +=
             cameraFollow->shakeOffset * glm::vec2(1.0f, m_space2D->ySign());
+
       const glm::vec3 centre = m_space2D->place(point);
       const float back = std::max(lens->farPlane * 0.5f, 1.0f);
       m_camera.setPose(glm::vec3(centre.x, centre.y, back),
@@ -402,14 +409,14 @@ void RenderSystem::render()
     {
       // No camera entity: the view the scene was saved with, over the same
       // point and as zoomed in, but always straight at the plane.
-      constexpr float kBack = 50000.0f;
-      m_camera.setPose(glm::vec3(m_camera.target.x, m_camera.target.y, kBack),
+      constexpr float BACK = 50000.0f;
+      m_camera.setPose(glm::vec3(m_camera.target.x, m_camera.target.y, BACK),
                        glm::vec3(0.0f, 0.0f, -1.0f),
-                       kBack,
+                       BACK,
                        glm::vec3(0.0f, 1.0f, 0.0f));
       m_camera.projection = Camera::Projection::Orthographic;
       m_camera.nearPlane = 1.0f;
-      m_camera.farPlane = kBack * 2.0f;
+      m_camera.farPlane = BACK * 2.0f;
     }
   }
   else if (m_followSceneCamera)
@@ -429,6 +436,7 @@ void RenderSystem::render()
         m_camera.target += right * shake.x + up * shake.y;
       }
     }
+
   const glm::vec3 grassCameraOffset = stepCamera();
 
   if (!buildContext(m_renderer.viewportSize()))
@@ -436,9 +444,11 @@ void RenderSystem::render()
     m_debugLines.clear();
     return;
   }
+
   const std::optional<FeedView> feed = chooseFeed();
 
   m_commands.clear();
+
   for (auto& [type, module] : m_modules)
   {
     const cpuTiming::Scope timed(
@@ -446,6 +456,7 @@ void RenderSystem::render()
                              : nullptr);
     module->emit(m_context, m_commands);
   }
+
   emitLightning();
 
   // Opaque before transparent; within a pass, group by mesh so a backend can
@@ -455,9 +466,11 @@ void RenderSystem::render()
   {
     if (const auto* mesh = std::get_if<MeshDrawCommand>(&command))
       return std::tuple(static_cast<int>(mesh->pass), 0, mesh->mesh.id);
+
     if (const auto* grass = std::get_if<GrassDrawCommand>(&command))
       return std::tuple(
           static_cast<int>(RenderPass::Opaque), 1, grass->grass.id);
+
     // UI last (it's drawn over the finished frame anyway).
     return std::tuple(std::numeric_limits<int>::max(), 0, 0u);
   };
@@ -485,8 +498,10 @@ void RenderSystem::render()
   // The look: the scene's own, or its visual style's.
   frame.bloom = effectiveBloom();
   frame.grading = effectiveGrading();
+
   if (m_style)
     frame.lightBalance = m_style->lightBalance();
+
   frame.lighting = m_worldLighting;
   frame.wind = sceneWind();
   frame.sway = registry && registry->sceneData<const Wind>()
@@ -497,8 +512,10 @@ void RenderSystem::render()
   gatherShaderGlobals(
       registry ? registry->sceneData<const ShaderGlobals>() : nullptr,
       frame.globals);
+
   for (const std::size_t slot : {kShaderGlobalWetness, kShaderGlobalPuddles})
     frame.globals[slot].x = unitInterval(frame.globals[slot].x);
+
   frame.rainDrift = m_rainDrift.drift;
   frame.rainWind =
       m_rainDrift.started ? m_rainDrift.wind : windVelocity(frame.wind);
@@ -510,6 +527,7 @@ void RenderSystem::render()
   // So are height fog, ambient occlusion, contact shadows and rain: a 3D
   // world's.
   frame.rain.enabled = false;
+
   if (!m_space2D)
   {
     frame.fog = effectiveFog();
@@ -518,10 +536,12 @@ void RenderSystem::render()
     frame.rain = effectiveRain();
     frame.temporalAntiAliasing = effectiveTemporalAntiAliasing();
   }
+
   // Depth of field, like bloom, is the scene camera's; focused where the view
   // is (the editor's orbit target, while it looks around freely).
   if (const CameraComponent* lens = camera.getComponent<CameraComponent>())
     frame.depthOfField = depthOfFieldOf(*lens);
+
   frame.focusDistance = m_camera.distance;
   frame.pointLights = m_pointLights;
   frame.shadows = effectiveShadows();
@@ -532,31 +552,41 @@ void RenderSystem::render()
   // Held at a moment (SFS_HOLD_TIME=<seconds>), so the wind's still from
   // frame to frame: for comparing screenshots.
   static const char* const kHoldTime = std::getenv("SFS_HOLD_TIME");
+
   if (kHoldTime)
     frame.time = static_cast<float>(std::atof(kHoldTime));
+
   frame.sky = m_frameSky;
 
   m_renderer.beginFrame(frame);
+
   if (feed && m_feedFilming)
     m_renderer.beginFeed(*feed, m_feedFilming->texture());
+
   {
     SFS_CPU_SCOPE("render/submit commands");
+
     for (const AnyRenderCommand& command : m_commands)
       std::visit([this](const auto& concrete) { submit(concrete); }, command);
   }
+
   // Debug lines (debug features only): the game's, and the colliders.
   if (debugFeatures::enabled())
   {
     SFS_CPU_SCOPE("render/debug lines");
+
     if (effectiveDrawColliders() && registry)
       m_stats.colliders =
           colliderLines::appendAll(*registry, m_space2D, m_debugLines);
+
     m_stats.debugLines = m_debugLines.lineCount();
+
     if (!m_debugLines.empty())
       m_renderer.drawLines(m_debugLines.vertices());
   }
   else
     effectiveDrawColliders(); // says once that it's ignored, if it's asked for
+
   m_debugLines.clear();
   {
     SFS_CPU_SCOPE("render/renderer end frame");
@@ -564,6 +594,66 @@ void RenderSystem::render()
   }
 
   m_stats.pointLights = m_pointLights.size();
+}
+
+ContactShadowSettings RenderSystem::effectiveContactShadows() const
+{
+  return m_style && m_style->contactShadows ? *m_style->contactShadows
+                                            : m_contactShadows;
+}
+
+bool RenderSystem::effectiveDrawColliders() const
+{
+  if (!debugFeatures::enabled())
+  {
+    static bool told = false;
+
+    if (!told && (drawCollidersFromEnvironment().value_or(false) ||
+                  m_forcedDrawColliders.value_or(false) || m_drawColliders))
+    {
+      told = true;
+      LOG_INFO("Draw colliders ignored: debug features are off in a release "
+               "build");
+    }
+
+    return false;
+  }
+
+  if (m_forcedDrawColliders)
+    return *m_forcedDrawColliders;
+
+  if (const std::optional<bool> environment = drawCollidersFromEnvironment())
+    return *environment;
+
+  return m_drawColliders;
+}
+
+RainSettings RenderSystem::effectiveRain() const
+{
+  return m_style && m_style->rain ? *m_style->rain : m_rain;
+}
+
+bool RenderSystem::effectiveTemporalAntiAliasing() const
+{
+  if (m_forcedTemporalAntiAliasing)
+    return *m_forcedTemporalAntiAliasing;
+
+  return m_style && m_style->temporalAntiAliasing
+             ? *m_style->temporalAntiAliasing
+             : m_temporalAntiAliasing;
+}
+
+Ray RenderSystem::screenRay(const glm::vec2& pixel) const
+{
+  // The size the scene was last drawn at: between frames a backend may report
+  // another (the window, while the scene draws into an editor viewport).
+  glm::ivec2 size = m_context.viewportSize;
+
+  if (size.x <= 0 || size.y <= 0)
+    size = m_renderer.viewportSize();
+
+  return m_camera.screenRay(
+      pixel, glm::vec2(std::max(size.x, 1), std::max(size.y, 1)));
 }
 
 namespace
@@ -575,58 +665,107 @@ std::shared_ptr<RenderTexture> pictureFor(const CameraFeedComponent& feed)
 }
 } // namespace
 
+bool RenderSystem::buildContext(const glm::ivec2& viewport)
+{
+  if (viewport.x <= 0 || viewport.y <= 0)
+    return false;
+
+  const float aspect =
+      static_cast<float>(viewport.x) / static_cast<float>(viewport.y);
+
+  m_context.viewportSize = viewport;
+  m_context.space2D = m_space2D ? &*m_space2D : nullptr;
+  m_context.camera = &m_camera;
+  m_context.viewProjection = m_camera.viewProjection(aspect);
+  m_context.frustum = Frustum::fromViewProjection(m_context.viewProjection);
+
+  // The scene's light; a physical sky's sun and moon where its celestial
+  // bodies are.
+  const bool physicalSky = !m_space2D && effectiveSky().physical();
+  m_worldLighting =
+      sceneLighting(sceneDataOf<DirectionalLighting>(),
+                    sceneDataOf<AmbientLighting>(),
+                    sceneDataOf<Clouds>(),
+                    physicalSky ? sceneDataOf<CelestialBodies>() : nullptr);
+
+  // A visual style tints the sky (its sun and ambient light are re-balanced
+  // as they light each surface: FrameParams::lightBalance).
+  if (m_style)
+    m_worldLighting.skyColor *= m_style->skyScale();
+
+  // A 2D game's sun shines from a direction of its own space (its plane's x
+  // and y, and z up from it): into the world's.
+  if (m_space2D)
+  {
+    const glm::vec3 sun = m_space2D->direction(m_worldLighting.sun.direction);
+
+    if (glm::dot(sun, sun) > 0.0f)
+      m_worldLighting.sun.direction = glm::normalize(sun);
+  }
+
+  const glm::vec3 sun = m_worldLighting.sun.direction;
+  m_toSun = glm::dot(sun, sun) > 1e-12f ? glm::normalize(sun)
+                                        : glm::vec3(0.0f, 0.0f, 1.0f);
+
+  // Clouds dim the sun. Once it has set, the moon (a 3D world's) is the
+  // light that shines and casts shadows, fading in through twilight.
+  const float clear = clearSky(m_worldLighting.cloudCover);
+  m_worldLighting.sun.diffuseStrength *= clear;
+  m_moonShare = m_space2D ? 0.0f : moonlight(m_worldLighting);
+  m_moonLit = m_moonShare > 0.0f && m_toSun.z <= 0.0f;
+
+  if (m_moonLit)
+  {
+    const MoonLight& moon = m_worldLighting.moon;
+    m_worldLighting.sun.direction = glm::normalize(moon.direction);
+    m_worldLighting.sun.color = moon.color;
+    m_worldLighting.sun.diffuseStrength = moon.diffuseStrength * m_moonShare;
+  }
+
+  // A sun (or moon) below the horizon casts nothing, so skip the shadow pass
+  // entirely.
+  m_context.shadowsEnabled =
+      m_shadows.enabled && m_worldLighting.sun.direction.z > 0.0f;
+  m_cascades = {};
+
+  if (m_context.shadowsEnabled)
+    fitShadows(effectiveShadows(), aspect);
+
+  updateSky();
+
+  placeLightning();
+  gatherPointLights();
+  m_context.lighting = &m_worldLighting;
+  m_context.pointLights = &m_pointLights;
+  m_context.shadowedLights = &m_shadowedLights;
+  m_context.meshes = &m_meshes;
+  return true;
+}
+
 std::shared_ptr<const RenderTexture> RenderSystem::cameraFeed(Entity entity)
 {
   CameraFeedComponent* lens = entity.getComponent<CameraFeedComponent>();
+
   if (!lens)
     return nullptr;
+
   if (!lens->picture)
     lens->picture = pictureFor(*lens);
+
   return lens->picture;
-}
-
-void RenderSystem::makeFeedPictures()
-{
-  if (!registry)
-    return;
-  for (CameraFeedComponent& feed : registry->query<CameraFeedComponent>())
-  {
-    if (!feed.picture)
-      feed.picture = pictureFor(feed);
-  }
-}
-
-void RenderSystem::refreshMeshBounds()
-{
-  if (!registry)
-    return;
-  for (MeshRendererComponent& renderer :
-       registry->query<MeshRendererComponent>())
-  {
-    if (renderer.mesh == renderer.boundsOf)
-      continue;
-    if (const Aabb* bounds = m_meshes.bounds(renderer.mesh))
-    {
-      renderer.bounds = *bounds;
-      renderer.boundsOf = renderer.mesh;
-    }
-    else
-    {
-      // Not loaded yet: tried again next update.
-      renderer.bounds = Aabb{};
-      renderer.boundsOf = MeshHandle{};
-    }
-  }
 }
 
 std::optional<FeedView> RenderSystem::chooseFeed()
 {
   m_context.feedOn = false;
   m_feedFilming = nullptr;
+
   if (!registry)
     return std::nullopt;
+
   if (m_space2D)
     return std::nullopt;
+
   SFS_CPU_SCOPE("render/camera feed");
   const double now = std::chrono::duration<double>(
                          std::chrono::steady_clock::now().time_since_epoch())
@@ -636,19 +775,25 @@ std::optional<FeedView> RenderSystem::chooseFeed()
   Entity chosen;
   CameraFeedComponent* chosenFeed = nullptr;
   double mostLate = -1.0;
+
   for (auto [entity, transform, feed] :
        registry->query<TransformComponent, CameraFeedComponent>())
   {
     if (!feed.picture)
       continue;
+
     const auto& lens = feed;
     const glm::ivec2 size = glm::max(glm::ivec2(lens.width, lens.height), 1);
+
     if (feed.picture->size() != size)
       feed.picture->resize(size);
+
     if (!lens.enabled || !m_renderer.textureShown(feed.picture->texture().id))
       continue;
+
     const double late =
         now - feed.filmed - 1.0 / std::max(double(lens.rate), 0.1);
+
     if (late >= 0.0 && late > mostLate)
     {
       mostLate = late;
@@ -656,8 +801,10 @@ std::optional<FeedView> RenderSystem::chooseFeed()
       chosenFeed = &feed;
     }
   }
+
   if (!chosenFeed)
     return std::nullopt;
+
   // (Not let fall behind further than a frame: a feed shown again after a
   // while starts its beat afresh.)
   const CameraFeedComponent* lens = chosenFeed;
@@ -694,74 +841,12 @@ std::optional<FeedView> RenderSystem::chooseFeed()
   return view;
 }
 
-bool RenderSystem::buildContext(const glm::ivec2& viewport)
+void RenderSystem::finishSkyWork()
 {
-  if (viewport.x <= 0 || viewport.y <= 0)
-    return false;
+  if (m_skyJob.valid())
+    m_skyJob.wait();
 
-  const float aspect =
-      static_cast<float>(viewport.x) / static_cast<float>(viewport.y);
-
-  m_context.viewportSize = viewport;
-  m_context.space2D = m_space2D ? &*m_space2D : nullptr;
-  m_context.camera = &m_camera;
-  m_context.viewProjection = m_camera.viewProjection(aspect);
-  m_context.frustum = Frustum::fromViewProjection(m_context.viewProjection);
-
-  // The scene's light; a physical sky's sun and moon where its celestial
-  // bodies are.
-  const bool physicalSky = !m_space2D && effectiveSky().physical();
-  m_worldLighting =
-      sceneLighting(sceneDataOf<DirectionalLighting>(),
-                    sceneDataOf<AmbientLighting>(),
-                    sceneDataOf<Clouds>(),
-                    physicalSky ? sceneDataOf<CelestialBodies>() : nullptr);
-  // A visual style tints the sky (its sun and ambient light are re-balanced
-  // as they light each surface: FrameParams::lightBalance).
-  if (m_style)
-    m_worldLighting.skyColor *= m_style->skyScale();
-  // A 2D game's sun shines from a direction of its own space (its plane's x
-  // and y, and z up from it): into the world's.
-  if (m_space2D)
-  {
-    const glm::vec3 sun = m_space2D->direction(m_worldLighting.sun.direction);
-    if (glm::dot(sun, sun) > 0.0f)
-      m_worldLighting.sun.direction = glm::normalize(sun);
-  }
-  const glm::vec3 sun = m_worldLighting.sun.direction;
-  m_toSun = glm::dot(sun, sun) > 1e-12f ? glm::normalize(sun)
-                                        : glm::vec3(0.0f, 0.0f, 1.0f);
-
-  // Clouds dim the sun. Once it has set, the moon (a 3D world's) is the
-  // light that shines and casts shadows, fading in through twilight.
-  const float clear = clearSky(m_worldLighting.cloudCover);
-  m_worldLighting.sun.diffuseStrength *= clear;
-  m_moonShare = m_space2D ? 0.0f : moonlight(m_worldLighting);
-  m_moonLit = m_moonShare > 0.0f && m_toSun.z <= 0.0f;
-  if (m_moonLit)
-  {
-    const MoonLight& moon = m_worldLighting.moon;
-    m_worldLighting.sun.direction = glm::normalize(moon.direction);
-    m_worldLighting.sun.color = moon.color;
-    m_worldLighting.sun.diffuseStrength = moon.diffuseStrength * m_moonShare;
-  }
-
-  // A sun (or moon) below the horizon casts nothing, so skip the shadow pass
-  // entirely.
-  m_context.shadowsEnabled =
-      m_shadows.enabled && m_worldLighting.sun.direction.z > 0.0f;
-  m_cascades = {};
-  if (m_context.shadowsEnabled)
-    fitShadows(effectiveShadows(), aspect);
-  updateSky();
-
-  placeLightning();
-  gatherPointLights();
-  m_context.lighting = &m_worldLighting;
-  m_context.pointLights = &m_pointLights;
-  m_context.shadowedLights = &m_shadowedLights;
-  m_context.meshes = &m_meshes;
-  return true;
+  m_skyFinished = true;
 }
 
 void RenderSystem::fitShadows(const ShadowSettings& shadows, float aspect)
@@ -773,6 +858,7 @@ void RenderSystem::fitShadows(const ShadowSettings& shadows, float aspect)
                 : std::min({shadows.cascades,
                             m_renderer.capabilities().sunShadowCascades,
                             kMaxShadowCascades});
+
   if (cascades <= 1)
   {
     m_lightViewProjection = fitSunShadow(m_worldLighting.sun.direction,
@@ -788,6 +874,7 @@ void RenderSystem::fitShadows(const ShadowSettings& shadows, float aspect)
   view.position = m_camera.position();
   view.forward = m_camera.viewDirection();
   view.perspective = m_camera.projection == Camera::Projection::Perspective;
+
   if (view.perspective)
   {
     const float up = std::tan(m_camera.fieldOfView * 0.5f);
@@ -795,6 +882,7 @@ void RenderSystem::fitShadows(const ShadowSettings& shadows, float aspect)
   }
   else
     view.halfExtent = glm::vec2(aspect, 1.0f) * (m_camera.orthoHeight * 0.5f);
+
   view.nearPlane = m_camera.nearPlane;
   view.farPlane = m_camera.farPlane;
   m_cascades = fitSunCascades(m_worldLighting.sun.direction,
@@ -808,9 +896,47 @@ void RenderSystem::fitShadows(const ShadowSettings& shadows, float aspect)
       cascadeBounds(m_worldLighting.sun.direction, m_cascades));
 }
 
+void RenderSystem::makeFeedPictures()
+{
+  if (!registry)
+    return;
+
+  for (CameraFeedComponent& feed : registry->query<CameraFeedComponent>())
+  {
+    if (!feed.picture)
+      feed.picture = pictureFor(feed);
+  }
+}
+
+void RenderSystem::refreshMeshBounds()
+{
+  if (!registry)
+    return;
+
+  for (MeshRendererComponent& renderer :
+       registry->query<MeshRendererComponent>())
+  {
+    if (renderer.mesh == renderer.boundsOf)
+      continue;
+
+    if (const Aabb* bounds = m_meshes.bounds(renderer.mesh))
+    {
+      renderer.bounds = *bounds;
+      renderer.boundsOf = renderer.mesh;
+    }
+    else
+    {
+      // Not loaded yet: tried again next update.
+      renderer.bounds = Aabb{};
+      renderer.boundsOf = MeshHandle{};
+    }
+  }
+}
+
 void RenderSystem::updateSky()
 {
   const SkySettings settings = effectiveSky();
+
   if (!settings.physical() || m_space2D)
   {
     m_frameSky.physical.reset();
@@ -818,11 +944,13 @@ void RenderSystem::updateSky()
   }
 
   const bool rebuilt = !m_physicalSky || settings != m_physicalSkySettings;
+
   if (rebuilt)
   {
     m_physicalSky = std::make_shared<const PhysicalSky>(settings);
     m_physicalSkySettings = settings;
   }
+
   const glm::vec3 toSun = m_toSun;
   const float night = PhysicalSky::nightScale(m_moonShare);
   const SkyClouds clouds{std::clamp(m_worldLighting.cloudCover, 0.0f, 1.0f),
@@ -865,11 +993,13 @@ void RenderSystem::updateSky()
                               (at - m_skyCame) / m_skyEasing, 0.0, 1.0))
                         : 1.0f;
     SkyLight light = m_skyTo;
+
     for (std::size_t i = 0; i < light.irradiance.coefficients.size(); ++i)
       light.irradiance.coefficients[i] =
           glm::mix(m_skyFrom.irradiance.coefficients[i],
                    m_skyTo.irradiance.coefficients[i],
                    t);
+
     light.groundLight = glm::mix(m_skyFrom.groundLight, m_skyTo.groundLight, t);
     light.clearSkyLight =
         glm::mix(m_skyFrom.clearSkyLight, m_skyTo.clearSkyLight, t);
@@ -881,6 +1011,7 @@ void RenderSystem::updateSky()
     m_skySun = light.toSun;
     m_skyNight = light.night;
     m_skyClouds = light.clouds;
+
     if (ease)
     {
       // Over a little longer than it was since the last was asked for (the
@@ -896,17 +1027,21 @@ void RenderSystem::updateSky()
       m_skyFrom = light;
       m_skyEasing = 0.0;
     }
+
     m_skyTo = light;
     m_skyCame = now;
   };
+
   if (m_skyJob.valid() &&
       m_skyJob.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
   {
     const SkyLight light = m_skyJob.get();
+
     // (Unless the sky it was for has gone since.)
     if (light.model == m_physicalSky)
       use(light, m_frameSky.physical != nullptr);
   }
+
   // (Waited for: shown at once.)
   if (m_skyFinished)
   {
@@ -914,7 +1049,9 @@ void RenderSystem::updateSky()
     m_skyEasing = 0.0;
     m_skyFinished = false;
   }
+
   const bool fresh = rebuilt || !m_frameSky.physical;
+
   if (fresh)
   {
     SkyLight light = workOut(m_physicalSky, toSun, night, clouds);
@@ -923,18 +1060,19 @@ void RenderSystem::updateSky()
   }
   else
   {
-    constexpr float kResky = 0.99999048f;     // cos(0.25 degrees)
-    constexpr float kResskyLow = 0.99999848f; // cos(0.1 degrees)
+    constexpr float RESKY = 0.99999048f;      // cos(0.25 degrees)
+    constexpr float RESSKY_LOW = 0.99999848f; // cos(0.1 degrees)
     const bool low = std::min(std::abs(toSun.z), std::abs(m_skySun.z)) < 0.17f;
-    const bool moved =
-        glm::dot(toSun, m_skySun) < (low ? kResskyLow : kResky) ||
-        std::abs(night - m_skyNight) > 0.03f * m_skyNight ||
-        std::abs(clouds.cover - m_skyClouds.cover) > 0.01f ||
-        std::abs(clouds.darkness - m_skyClouds.darkness) > 0.01f;
+    const bool moved = glm::dot(toSun, m_skySun) < (low ? RESSKY_LOW : RESKY) ||
+                       std::abs(night - m_skyNight) > 0.03f * m_skyNight ||
+                       std::abs(clouds.cover - m_skyClouds.cover) > 0.01f ||
+                       std::abs(clouds.darkness - m_skyClouds.darkness) > 0.01f;
+
     if (moved && !m_skyJob.valid())
     {
       if (!m_skyWorker)
         m_skyWorker = std::make_unique<WorkerPool>(1);
+
       auto job = std::make_shared<std::packaged_task<SkyLight()>>(
           [workOut, model = m_physicalSky, toSun, night, clouds, now]
           {
@@ -946,6 +1084,7 @@ void RenderSystem::updateSky()
       m_skyWorker->submit([job] { (*job)(); });
     }
   }
+
   const SkyLight light = shown(now);
   m_clearSkyLight = light.clearSkyLight;
   m_frameSky.toSun = toSun;
@@ -955,11 +1094,12 @@ void RenderSystem::updateSky()
   // The sky's textures, drawn again (on the GPU: a fraction of a
   // millisecond) once the sun's moved a twentieth of a degree, or their
   // light or the clouds changed a little: often enough not to step.
-  constexpr float kRedraw = 0.99999962f; // cos(0.05 degrees)
+  constexpr float REDRAW = 0.99999962f; // cos(0.05 degrees)
   auto luminance = [](glm::vec3 c)
   { return 0.2126f * c.r + 0.7152f * c.g + 0.0722f * c.b; };
   const float ground = luminance(light.groundLight);
-  if (fresh || glm::dot(toSun, m_skyDrawnSun) < kRedraw ||
+
+  if (fresh || glm::dot(toSun, m_skyDrawnSun) < REDRAW ||
       std::abs(ground - m_skyDrawnGround) > 0.02f * m_skyDrawnGround ||
       std::abs(light.night - m_skyDrawnNight) > 0.01f * m_skyDrawnNight ||
       std::abs(clouds.cover - m_skyDrawnCover) > 0.005f)
@@ -970,6 +1110,7 @@ void RenderSystem::updateSky()
     m_skyDrawnCover = clouds.cover;
     ++m_frameSky.revision;
   }
+
   m_frameSky.physical = m_physicalSky;
   // The sun itself, every frame (it's cheap), so it sets smoothly; once it
   // has, the moon. Then what eyes adapt to: the light as it would be without
@@ -1001,6 +1142,7 @@ void RenderSystem::updateSky()
   // (The sun's lights them still for a moment after the moon takes over,
   // from where it is: they don't go dark at once.)
   const glm::vec3 cloudSun = m_physicalSky->cloudSunLight(toSun);
+
   if (m_moonLit)
   {
     const glm::vec3 cloudMoon =
@@ -1016,25 +1158,20 @@ void RenderSystem::updateSky()
     m_frameSky.cloudBase =
         PhysicalSky::cloudBase(cloudSun, toSun, m_clearSkyLight, clouds);
   }
+
   // The sky's textures draw the clouds as they are where the camera is: again
   // once they've drifted (or it's moved) 30 m.
   if (clouds.cover > 0.0f)
   {
     const glm::vec2 origin =
         glm::vec2(m_camera.position()) * 0.001f + m_cloudDrift;
+
     if (glm::length(origin - m_skyCloudOrigin) > 0.03f)
     {
       m_skyCloudOrigin = origin;
       ++m_frameSky.revision;
     }
   }
-}
-
-void RenderSystem::finishSkyWork()
-{
-  if (m_skyJob.valid())
-    m_skyJob.wait();
-  m_skyFinished = true;
 }
 
 namespace
@@ -1049,6 +1186,7 @@ glm::vec3 glowAt(const MeshMaterial& material,
   const materialGraph::SurfaceValues surface = material.shader->evaluate(
       point, material.shaderParameters, material.shaderTextures);
   const glm::vec3 emission = glm::max(surface.emission, glm::vec3(0.0f));
+
   switch (material.alphaMode)
   {
   case AlphaMode::Opaque:
@@ -1059,6 +1197,7 @@ glm::vec3 glowAt(const MeshMaterial& material,
   case AlphaMode::Additive:
     return emission * std::clamp(surface.alpha, 0.0f, 1.0f);
   }
+
   return emission;
 }
 
@@ -1074,12 +1213,15 @@ glm::vec3 glowLeaving(const MeshMaterial& material,
 {
   if (!viewDependent)
     return glowAt(material, point);
+
   const glm::vec3 normal = point.normal;
   glm::vec3 sum(0.0f);
+
   for (int ring = 0; ring < 2; ++ring)
   {
     const float out = ring == 0 ? 0.8660254f : 0.5f;  // cos 30, cos 60
     const float side = ring == 0 ? 0.5f : 0.8660254f; // sin
+
     for (int k = 0; k < 4; ++k)
     {
       const float angle = 1.5707963f * (static_cast<float>(k) + 0.5f * ring);
@@ -1089,6 +1231,7 @@ glm::vec3 glowLeaving(const MeshMaterial& material,
       sum += glowAt(material, point);
     }
   }
+
   return sum / 8.0f;
 }
 
@@ -1097,10 +1240,13 @@ materialGraph::PointInputs glowReads(const MeshMaterial& material)
 {
   using namespace materialGraph;
   PointInputs reads = material.shader->reads(kEmission);
+
   if (material.alphaMode != AlphaMode::Opaque)
     reads |= material.shader->reads(kAlpha);
+
   if (material.alphaMode == AlphaMode::Mask)
     reads |= material.shader->reads(kAlphaClip);
+
   return reads;
 }
 
@@ -1110,27 +1256,244 @@ namespace
 {
 
 // The point-shadow choices settings() offers.
-constexpr std::array<uint32_t, 5> kPointShadowCounts{0, 4, 8, 16, 32};
-constexpr std::array<uint32_t, 4> kPointShadowResolutions{128, 256, 512, 1024};
+constexpr std::array<uint32_t, 5> POINT_SHADOW_COUNTS{0, 4, 8, 16, 32};
+constexpr std::array<uint32_t, 4> POINT_SHADOW_RESOLUTIONS{128, 256, 512, 1024};
 
 // The choice nearest `value` (it may have been set from code to another).
 template <std::size_t N>
 int choiceOf(const std::array<uint32_t, N>& choices, uint32_t value)
 {
   int best = 0;
+
   for (std::size_t i = 1; i < N; ++i)
     if (std::abs(int64_t(choices[i]) - int64_t(value)) <
         std::abs(int64_t(choices[best]) - int64_t(value)))
       best = static_cast<int>(i);
+
   return best;
 }
 
 } // namespace
 
+std::vector<ModuleSetting> RenderSystem::settings()
+{
+  std::vector<ModuleSetting> out = {
+      settings::boolean(
+          "Sun shadows",
+          [this] { return m_shadows.enabled; },
+          [this](bool v) { m_shadows.enabled = v; }),
+      settings::boolean(
+          "Temporal anti-aliasing",
+          [this] { return m_temporalAntiAliasing; },
+          [this](bool v) { m_temporalAntiAliasing = v; }),
+      settings::floatRange(
+          "Shadow softness",
+          0.0f,
+          4.0f,
+          [this] { return m_shadows.softness; },
+          [this](float v) { m_shadows.softness = v; }),
+      settings::floatRange(
+          "Shadow bias",
+          0.0f,
+          0.01f,
+          [this] { return m_shadows.depthBias; },
+          [this](float v) { m_shadows.depthBias = v; }),
+      settings::enumChoice(
+          "Point light shadows",
+          {"None", "4", "8", "16", "32"},
+          [this]
+          { return choiceOf(POINT_SHADOW_COUNTS, m_shadows.pointLights); },
+          [this](int v) { m_shadows.pointLights = POINT_SHADOW_COUNTS[v]; }),
+      settings::enumChoice(
+          "Point shadow detail",
+          {"128", "256", "512", "1024"},
+          [this] {
+            return choiceOf(
+                POINT_SHADOW_RESOLUTIONS, m_shadows.pointResolution);
+          },
+          [this](int v)
+          { m_shadows.pointResolution = POINT_SHADOW_RESOLUTIONS[v]; }),
+  };
+
+  // One shadow map covers a distance around what the camera looks at;
+  // cascades (Scene Settings' Sky & Shadows) reach along the view instead.
+  if (m_shadows.cascades <= 1 || m_space2D)
+    out.insert(out.begin() + 1,
+               settings::floatRange(
+                   "Shadow distance",
+                   5.0f,
+                   200.0f,
+                   [this] { return m_shadows.distance; },
+                   [this](float v) { m_shadows.distance = v; }));
+
+  // Haze is a 3D world's.
+  if (!m_space2D)
+    out.insert(out.end(),
+               {
+                   settings::floatRange(
+                       "Haze",
+                       0.0f,
+                       1.0f,
+                       [this] { return m_haze.strength; },
+                       [this](float v) { m_haze.strength = v; }),
+                   settings::floatRange(
+                       "Haze distance",
+                       5.0f,
+                       1000.0f,
+                       [this] { return m_haze.distance; },
+                       [this](float v) { m_haze.distance = v; }),
+               });
+
+  out.push_back(settings::enumChoice(
+      "Projection",
+      {"Perspective", "Orthographic"},
+      [this] { return static_cast<int>(m_camera.projection); },
+      [this](int v)
+      { m_camera.projection = static_cast<Camera::Projection>(v); }));
+  return out;
+}
+
+void RenderSystem::chooseShadowedLights()
+{
+  // Of the lights that cast shadows and reach into view, the ones nearest
+  // what the camera looks at (nearer the more they reach), up to the budget.
+  // The rest cast none this frame.
+  m_shadowedLights.clear();
+  std::vector<std::size_t>& candidates = m_shadowCandidates;
+  candidates.clear();
+
+  for (std::size_t i = 0; i < m_pointLights.size(); ++i)
+  {
+    PointLight& light = m_pointLights[i];
+
+    if (!light.castsShadow)
+      continue;
+
+    // By day, under a physical sky, a lamp too dim to see casts nothing
+    // either.
+    if (m_frameSky.physical &&
+        PhysicalSky::lampShadow(light.intensity, m_frameSky.lampScale) <= 0.0f)
+    {
+      light.castsShadow = false;
+      continue;
+    }
+
+    const glm::vec4 bounds = lightBounds(light);
+    const glm::vec3 reach(bounds.w);
+
+    if (!m_context.frustum.intersects(
+            Aabb{glm::vec3(bounds) - reach, glm::vec3(bounds) + reach}))
+    {
+      light.castsShadow = false;
+      continue;
+    }
+
+    candidates.push_back(i);
+  }
+
+  const std::size_t budget = m_shadows.pointLights;
+
+  if (candidates.size() > budget)
+  {
+    const glm::vec3 focus = m_camera.target;
+    const auto score = [&](std::size_t i)
+    {
+      const PointLight& light = m_pointLights[i];
+      return glm::distance(light.position, focus) - light.radius;
+    };
+    std::nth_element(candidates.begin(),
+                     candidates.begin() + static_cast<std::ptrdiff_t>(budget),
+                     candidates.end(),
+                     [&](std::size_t a, std::size_t b)
+                     { return score(a) < score(b); });
+
+    for (std::size_t k = budget; k < candidates.size(); ++k)
+      m_pointLights[candidates[k]].castsShadow = false;
+
+    candidates.resize(budget);
+  }
+
+  for (const std::size_t i : candidates)
+    m_shadowedLights.push_back(m_pointLights[i]);
+
+  m_stats.shadowedLights = m_shadowedLights.size();
+}
+
+void RenderSystem::emitLightning()
+{
+  if (m_space2D || !registry)
+    return;
+
+  // As bright to the eye by day as at night (emission is drawn x the
+  // lamps' scale): far brighter than anything else in view, so it blooms.
+  const float lamp =
+      m_frameSky.physical ? std::max(m_frameSky.lampScale, 0.1f) : 1.0f;
+
+  for (auto [entity, strike, transform] :
+       registry->query<LightningComponent, TransformComponent>())
+  {
+    if (strike.finished || !strike.shaped)
+      continue;
+
+    const LightningStrike shape = strikeOf(entity, strike);
+    const float age = shownAge(strike);
+    const float light = lightningChannelBrightness(shape, age) *
+                        std::max(strike.intensity, 0.0f) *
+                        (LIGHTNING_CHANNEL_GLOW / lamp);
+
+    if (light <= 0.0f)
+      continue;
+
+    // One striking further off than the camera sees is drawn nearer,
+    // smaller: the same on the screen (over everything nearer than it, as
+    // it would be). (A near one's top may reach past it, into the cloud.)
+    glm::mat4 model(1.0f);
+    const glm::vec3 eye = m_camera.position();
+    const float within = m_camera.farPlane * 0.8f;
+    const float farthest = glm::distance(eye, shape.position);
+
+    if (farthest > within)
+    {
+      const float shrink = within / farthest;
+      model = glm::translate(glm::mat4(1.0f), eye) *
+              glm::scale(glm::mat4(1.0f), glm::vec3(shrink)) *
+              glm::translate(glm::mat4(1.0f), -eye);
+    }
+
+    // Branches are lit by the first stroke; the later ones mostly follow
+    // the main channel.
+    const float branches =
+        light * (1.0f - 0.8f * std::clamp((age - 0.03f) / 0.07f, 0.0f, 1.0f));
+
+    for (const auto& [mesh, glow] : {std::pair(strike.channel, light),
+                                     std::pair(strike.branches, branches)})
+    {
+      if (!mesh.valid())
+        continue;
+
+      MeshDrawCommand command;
+      command.pass = RenderPass::Transparent;
+      command.mesh = mesh;
+      command.instances.push_back(
+          MeshInstance{model, glm::vec4(glm::vec3(glow), 1.0f)});
+      m_commands.push_back(std::move(command));
+    }
+  }
+}
+
+void RenderSystem::forEachModule(
+    const std::function<void(std::type_index, Module&, const RenderContext&)>&
+        fn)
+{
+  for (auto& [type, module] : m_modules)
+    fn(type, *module, m_context);
+}
+
 void RenderSystem::gatherEmissionLights()
 {
   using materialGraph::PointInputs;
   m_sharedEmission.clear();
+
   if (!registry)
     return;
 
@@ -1166,6 +1529,7 @@ void RenderSystem::gatherEmissionLights()
     if (!renderer.emitsLight || renderer.tint.a <= 0.0f ||
         renderer.lightStrength <= 0.0f || renderer.lightRange <= 0.0f)
       continue;
+
     const std::size_t sections = m_meshes.sectionCount(renderer.mesh);
 
     m_glow.clear();
@@ -1174,19 +1538,25 @@ void RenderSystem::gatherEmissionLights()
     glm::mat3 normals(1.0f);
     float areaScale =
         1.0f; // |det|: a sample's area scales by this x |normals x n|
+
     for (std::size_t s = 0; s < sections; ++s)
     {
       // The slot's material, as MeshModule draws it.
       const MeshMaterial* material = nullptr;
+
       if (s < renderer.materials.size())
         material =
             m_meshes.materialData(m_meshes.material(renderer.materials[s]));
+
       if (!material)
         material = m_meshes.sectionMaterial(renderer.mesh, s);
+
       if (!material || !material->shader)
         continue; // the standard surface gives off no light
+
       const std::span<const SurfaceSample> samples =
           m_meshes.surfaceSamples(renderer.mesh, s);
+
       if (samples.empty())
         continue;
 
@@ -1194,15 +1564,18 @@ void RenderSystem::gatherEmissionLights()
       const bool viewDependent = any(reads & PointInputs::ToView);
       const bool shared = !any(reads & materialGraph::kPlacedInputs);
       const std::vector<glm::vec3>* sharedGlow = nullptr;
+
       if (shared)
       {
         // Worked out once a frame for every object with these samples and
         // material; empty if none of it glows.
         auto [it, added] =
             m_sharedEmission.try_emplace(SampleKey{samples.data(), material});
+
         if (added)
         {
           std::vector<glm::vec3>& glow = it->second;
+
           if (!any(reads))
             glow.assign(
                 samples.size(),
@@ -1211,14 +1584,17 @@ void RenderSystem::gatherEmissionLights()
             for (const SurfaceSample& sample : samples)
               glow.push_back(glowLeaving(
                   *material, pointOf(sample, nullptr, nullptr), viewDependent));
+
           if (std::all_of(glow.begin(),
                           glow.end(),
                           [](const glm::vec3& g)
                           { return g == glm::vec3(0.0f); }))
             glow.clear();
         }
+
         if (it->second.empty())
           continue;
+
         sharedGlow = &it->second;
       }
 
@@ -1229,6 +1605,7 @@ void RenderSystem::gatherEmissionLights()
         normals = glm::transpose(glm::inverse(glm::mat3(model)));
         areaScale = std::abs(glm::determinant(glm::mat3(model)));
       }
+
       for (std::size_t i = 0; i < samples.size(); ++i)
       {
         const SurfaceSample& sample = samples[i];
@@ -1237,8 +1614,10 @@ void RenderSystem::gatherEmissionLights()
                        : glowLeaving(*material,
                                      pointOf(sample, &model, &normals),
                                      viewDependent);
+
         if (glow == glm::vec3(0.0f))
           continue;
+
         m_glow.push_back(GlowPoint{
             glm::vec3(model * glm::vec4(sample.position, 1.0f)),
             sample.area * areaScale * glm::length(normals * sample.normal),
@@ -1246,9 +1625,11 @@ void RenderSystem::gatherEmissionLights()
         });
       }
     }
+
     const std::size_t first = m_pointLights.size();
     emissionLights(
         m_glow, renderer.lightStrength, renderer.lightRange, m_pointLights);
+
     if (!renderer.lightCastsShadows)
       for (std::size_t i = first; i < m_pointLights.size(); ++i)
         m_pointLights[i].castsShadow = false;
@@ -1258,6 +1639,7 @@ void RenderSystem::gatherEmissionLights()
 void RenderSystem::gatherPointLights()
 {
   m_pointLights.clear();
+
   if (!registry)
     return;
 
@@ -1271,12 +1653,14 @@ void RenderSystem::gatherPointLights()
     // above it (offset z). A flat game's shine from in front of the plane.
     float radius = light.radius;
     glm::vec3 position;
+
     if (m_space2D)
     {
       radius *= m_space2D->scale();
       const TransformComponent transform =
           hierarchy::cachedWorldTransform(entity);
       const glm::vec2 offset(light.offset.x, light.offset.y);
+
       if (m_space2D->projection == Space2D::Projection::Isometric)
         position = m_space2D->place(transform.position2D() + offset,
                                     transform.position.z + light.offset.z);
@@ -1286,15 +1670,19 @@ void RenderSystem::gatherPointLights()
         position.z += std::max(light.offset.z, radius * 0.25f);
       }
     }
+
     // A 3D game's spots shine along their entity's +x.
     glm::vec3 spotDirection(0.0f);
+
     if (!m_space2D)
     {
       const glm::mat4 world = hierarchy::cachedWorldMatrix(entity);
       position = glm::vec3(world * glm::vec4(light.offset, 1.0f));
+
       if (light.spot)
         spotDirection = glm::vec3(world[0]);
     }
+
     PointLight gathered{
         position,
         light.color,
@@ -1304,10 +1692,13 @@ void RenderSystem::gatherPointLights()
         PointLight{}.shadowNear,
         light.sourceRadius,
     };
+
     if (light.spot)
       setSpot(gathered, spotDirection, light.innerAngle, light.outerAngle);
+
     m_pointLights.push_back(gathered);
   }
+
   const std::size_t placed = m_pointLights.size();
   gatherEmissionLights();
   m_stats.emissionLights = m_pointLights.size() - placed;
@@ -1339,10 +1730,12 @@ void RenderSystem::gatherPointLights()
     const glm::vec3 centre =
         lightningLightCentre(m_lightning.low, m_lightning.high, focus);
     const float away = glm::distance(centre, focus);
-    if (away < kLightningShadowReach)
+
+    if (away < LIGHTNING_SHADOW_REACH)
     {
       if (m_pointLights.size() >= kMaxPointLights)
         m_pointLights.resize(kMaxPointLights - 1);
+
       PointLight light;
       light.position = centre;
       light.color = glm::vec3(1.0f);
@@ -1354,180 +1747,38 @@ void RenderSystem::gatherPointLights()
       m_pointLights.push_back(light);
     }
   }
+
   chooseShadowedLights();
+
   if (m_lightning.shadowLight >= 0 &&
       !m_pointLights[static_cast<std::size_t>(m_lightning.shadowLight)]
            .castsShadow)
     m_lightning.shadowLight = -1;
 }
 
-void RenderSystem::chooseShadowedLights()
-{
-  // Of the lights that cast shadows and reach into view, the ones nearest
-  // what the camera looks at (nearer the more they reach), up to the budget.
-  // The rest cast none this frame.
-  m_shadowedLights.clear();
-  std::vector<std::size_t>& candidates = m_shadowCandidates;
-  candidates.clear();
-  for (std::size_t i = 0; i < m_pointLights.size(); ++i)
-  {
-    PointLight& light = m_pointLights[i];
-    if (!light.castsShadow)
-      continue;
-    // By day, under a physical sky, a lamp too dim to see casts nothing
-    // either.
-    if (m_frameSky.physical &&
-        PhysicalSky::lampShadow(light.intensity, m_frameSky.lampScale) <= 0.0f)
-    {
-      light.castsShadow = false;
-      continue;
-    }
-    const glm::vec4 bounds = lightBounds(light);
-    const glm::vec3 reach(bounds.w);
-    if (!m_context.frustum.intersects(
-            Aabb{glm::vec3(bounds) - reach, glm::vec3(bounds) + reach}))
-    {
-      light.castsShadow = false;
-      continue;
-    }
-    candidates.push_back(i);
-  }
-
-  const std::size_t budget = m_shadows.pointLights;
-  if (candidates.size() > budget)
-  {
-    const glm::vec3 focus = m_camera.target;
-    const auto score = [&](std::size_t i)
-    {
-      const PointLight& light = m_pointLights[i];
-      return glm::distance(light.position, focus) - light.radius;
-    };
-    std::nth_element(candidates.begin(),
-                     candidates.begin() + static_cast<std::ptrdiff_t>(budget),
-                     candidates.end(),
-                     [&](std::size_t a, std::size_t b)
-                     { return score(a) < score(b); });
-    for (std::size_t k = budget; k < candidates.size(); ++k)
-      m_pointLights[candidates[k]].castsShadow = false;
-    candidates.resize(budget);
-  }
-  for (const std::size_t i : candidates)
-    m_shadowedLights.push_back(m_pointLights[i]);
-  m_stats.shadowedLights = m_shadowedLights.size();
-}
-
-void RenderSystem::updateLightning(float seconds)
-{
-  if (!registry)
-    return;
-  std::size_t flashing = 0;
-  for (auto [entity, strike, transform] :
-       registry->query<LightningComponent, TransformComponent>())
-  {
-    if (strike.finished)
-      continue;
-    // Lightning is a 3D world's.
-    if (m_space2D)
-    {
-      strike.finished = true;
-      continue;
-    }
-    if (!strike.shaped)
-    {
-      const LightningStrike shape = strikeOf(entity, strike);
-      strike.shaped = true;
-      strike.age = 0.0f;
-      strike.duration = lightningDuration(shape);
-      const float cloudBase = PhysicalSky::kCloudAltitude * 1000.0f;
-      strike.top = shape.inCloud
-                       ? glm::vec3(glm::vec2(shape.position), cloudBase)
-                       : lightningTop(shape, cloudBase);
-      if (!shape.inCloud)
-      {
-        // Its ribbons face the camera (where it was last drawn from: a
-        // strike's over before it can move far), a few pixels wide however
-        // far off.
-        const glm::vec3 eye = m_camera.position();
-        const glm::vec3 nearest =
-            lightningLightCentre(shape.position, strike.top, eye);
-        strike.width = std::max(0.8f, glm::distance(eye, nearest) * 0.0013f);
-        const std::vector<LightningSegment> segments =
-            lightningChannel(shape, strike.top);
-        const MeshData channel =
-            lightningMesh(segments, eye, strike.width, false);
-        const MeshData branches =
-            lightningMesh(segments, eye, strike.width, true);
-        if (!channel.empty())
-          strike.channel = m_meshes.add(channel);
-        if (!branches.empty())
-          strike.branches = m_meshes.add(branches);
-      }
-    }
-    if (strike.hold < 0.0f)
-      strike.age += seconds;
-    if (strike.hold < 0.0f && strike.age > strike.duration)
-    {
-      releaseStrike(strike);
-      strike.finished = true;
-      continue;
-    }
-    ++flashing;
-  }
-
-  // One with nowhere to strike (no TransformComponent) is finished at once.
-  for (auto [entity, strike] :
-       registry->query<LightningComponent, Excluding<TransformComponent>>())
-  {
-    if (strike.finished)
-      continue;
-    strike.finished = true;
-    LOG_WARN("A lightning strike (entity " + std::to_string(entity.getId()) +
-             ") has no TransformComponent to strike at; finished it");
-  }
-
-  // A few at once: the oldest give way.
-  for (; flashing > kMostLightningStrikes; --flashing)
-  {
-    LightningComponent* oldest = nullptr;
-    for (LightningComponent& strike : registry->query<LightningComponent>())
-      if (!strike.finished && (!oldest || strike.age > oldest->age))
-        oldest = &strike;
-    if (!oldest)
-      break;
-    releaseStrike(*oldest);
-    oldest->finished = true;
-  }
-}
-
-void RenderSystem::releaseStrike(LightningComponent& strike)
-{
-  for (MeshHandle* mesh : {&strike.channel, &strike.branches})
-  {
-    if (mesh->valid())
-      m_meshes.remove(*mesh);
-    *mesh = {};
-  }
-}
-
 void RenderSystem::placeLightning()
 {
   m_lightning = {};
   m_lightningLight = 0.0f;
+
   if (m_space2D || !registry)
     return;
 
   // The brightest strike now lights the scene (they rarely overlap).
   Entity brightestEntity;
   const LightningComponent* brightest = nullptr;
+
   for (auto [entity, strike, transform] :
        registry->query<LightningComponent, TransformComponent>())
   {
     if (strike.finished || !strike.shaped)
       continue;
+
     m_lightning.active = true;
     const float light =
         lightningBrightness(strikeOf(entity, strike), shownAge(strike)) *
         std::max(strike.intensity, 0.0f);
+
     if (light > m_lightningLight)
     {
       m_lightningLight = light;
@@ -1535,6 +1786,7 @@ void RenderSystem::placeLightning()
       brightestEntity = entity;
     }
   }
+
   if (!brightest)
     return;
 
@@ -1547,64 +1799,24 @@ void RenderSystem::placeLightning()
   m_lightning.channel = !brightest->inCloud;
   m_lightning.low = strikeOf(brightestEntity, *brightest).position;
   m_lightning.high = brightest->top;
+
   if (m_lightning.channel)
     m_lightning.channelLight =
-        color * (kLightningChannelLight * m_lightningLight);
-  m_lightning.cloudGlow = color * (kLightningCloudGlow * m_lightningLight *
+        color * (LIGHTNING_CHANNEL_LIGHT * m_lightningLight);
+
+  m_lightning.cloudGlow = color * (LIGHTNING_CLOUD_GLOW * m_lightningLight *
                                    cloud * (brightest->inCloud ? 0.8f : 1.0f));
   m_lightning.glowRadius = brightest->inCloud ? 2500.0f : 1800.0f;
 }
 
-void RenderSystem::emitLightning()
+void RenderSystem::releaseStrike(LightningComponent& strike)
 {
-  if (m_space2D || !registry)
-    return;
-  // As bright to the eye by day as at night (emission is drawn x the
-  // lamps' scale): far brighter than anything else in view, so it blooms.
-  const float lamp =
-      m_frameSky.physical ? std::max(m_frameSky.lampScale, 0.1f) : 1.0f;
-  for (auto [entity, strike, transform] :
-       registry->query<LightningComponent, TransformComponent>())
+  for (MeshHandle* mesh : {&strike.channel, &strike.branches})
   {
-    if (strike.finished || !strike.shaped)
-      continue;
-    const LightningStrike shape = strikeOf(entity, strike);
-    const float age = shownAge(strike);
-    const float light = lightningChannelBrightness(shape, age) *
-                        std::max(strike.intensity, 0.0f) *
-                        (kLightningChannelGlow / lamp);
-    if (light <= 0.0f)
-      continue;
-    // One striking further off than the camera sees is drawn nearer,
-    // smaller: the same on the screen (over everything nearer than it, as
-    // it would be). (A near one's top may reach past it, into the cloud.)
-    glm::mat4 model(1.0f);
-    const glm::vec3 eye = m_camera.position();
-    const float within = m_camera.farPlane * 0.8f;
-    const float farthest = glm::distance(eye, shape.position);
-    if (farthest > within)
-    {
-      const float shrink = within / farthest;
-      model = glm::translate(glm::mat4(1.0f), eye) *
-              glm::scale(glm::mat4(1.0f), glm::vec3(shrink)) *
-              glm::translate(glm::mat4(1.0f), -eye);
-    }
-    // Branches are lit by the first stroke; the later ones mostly follow
-    // the main channel.
-    const float branches =
-        light * (1.0f - 0.8f * std::clamp((age - 0.03f) / 0.07f, 0.0f, 1.0f));
-    for (const auto& [mesh, glow] : {std::pair(strike.channel, light),
-                                     std::pair(strike.branches, branches)})
-    {
-      if (!mesh.valid())
-        continue;
-      MeshDrawCommand command;
-      command.pass = RenderPass::Transparent;
-      command.mesh = mesh;
-      command.instances.push_back(
-          MeshInstance{model, glm::vec4(glm::vec3(glow), 1.0f)});
-      m_commands.push_back(std::move(command));
-    }
+    if (mesh->valid())
+      m_meshes.remove(*mesh);
+
+    *mesh = {};
   }
 }
 
@@ -1619,6 +1831,7 @@ void RenderSystem::submit(const GrassDrawCommand& command)
 {
   if (!m_renderer.capabilities().grass)
     return;
+
   m_renderer.drawGrass(GrassBatch{command.grass,
                                   command.material,
                                   command.mesh,
@@ -1655,86 +1868,101 @@ void RenderSystem::submit(const MeshDrawCommand& command)
   m_stats.lightShadowInstances += command.lightShadowInstances.size();
 }
 
-std::vector<ModuleSetting> RenderSystem::settings()
+void RenderSystem::updateLightning(float seconds)
 {
-  std::vector<ModuleSetting> out = {
-      settings::boolean(
-          "Sun shadows",
-          [this] { return m_shadows.enabled; },
-          [this](bool v) { m_shadows.enabled = v; }),
-      settings::boolean(
-          "Temporal anti-aliasing",
-          [this] { return m_temporalAntiAliasing; },
-          [this](bool v) { m_temporalAntiAliasing = v; }),
-      settings::floatRange(
-          "Shadow softness",
-          0.0f,
-          4.0f,
-          [this] { return m_shadows.softness; },
-          [this](float v) { m_shadows.softness = v; }),
-      settings::floatRange(
-          "Shadow bias",
-          0.0f,
-          0.01f,
-          [this] { return m_shadows.depthBias; },
-          [this](float v) { m_shadows.depthBias = v; }),
-      settings::enumChoice(
-          "Point light shadows",
-          {"None", "4", "8", "16", "32"},
-          [this]
-          { return choiceOf(kPointShadowCounts, m_shadows.pointLights); },
-          [this](int v) { m_shadows.pointLights = kPointShadowCounts[v]; }),
-      settings::enumChoice(
-          "Point shadow detail",
-          {"128", "256", "512", "1024"},
-          [this] {
-            return choiceOf(kPointShadowResolutions, m_shadows.pointResolution);
-          },
-          [this](int v)
-          { m_shadows.pointResolution = kPointShadowResolutions[v]; }),
-  };
-  // One shadow map covers a distance around what the camera looks at;
-  // cascades (Scene Settings' Sky & Shadows) reach along the view instead.
-  if (m_shadows.cascades <= 1 || m_space2D)
-    out.insert(out.begin() + 1,
-               settings::floatRange(
-                   "Shadow distance",
-                   5.0f,
-                   200.0f,
-                   [this] { return m_shadows.distance; },
-                   [this](float v) { m_shadows.distance = v; }));
-  // Haze is a 3D world's.
-  if (!m_space2D)
-    out.insert(out.end(),
-               {
-                   settings::floatRange(
-                       "Haze",
-                       0.0f,
-                       1.0f,
-                       [this] { return m_haze.strength; },
-                       [this](float v) { m_haze.strength = v; }),
-                   settings::floatRange(
-                       "Haze distance",
-                       5.0f,
-                       1000.0f,
-                       [this] { return m_haze.distance; },
-                       [this](float v) { m_haze.distance = v; }),
-               });
-  out.push_back(settings::enumChoice(
-      "Projection",
-      {"Perspective", "Orthographic"},
-      [this] { return static_cast<int>(m_camera.projection); },
-      [this](int v)
-      { m_camera.projection = static_cast<Camera::Projection>(v); }));
-  return out;
-}
+  if (!registry)
+    return;
 
-void RenderSystem::forEachModule(
-    const std::function<void(std::type_index, Module&, const RenderContext&)>&
-        fn)
-{
-  for (auto& [type, module] : m_modules)
-    fn(type, *module, m_context);
+  std::size_t flashing = 0;
+
+  for (auto [entity, strike, transform] :
+       registry->query<LightningComponent, TransformComponent>())
+  {
+    if (strike.finished)
+      continue;
+
+    // Lightning is a 3D world's.
+    if (m_space2D)
+    {
+      strike.finished = true;
+      continue;
+    }
+
+    if (!strike.shaped)
+    {
+      const LightningStrike shape = strikeOf(entity, strike);
+      strike.shaped = true;
+      strike.age = 0.0f;
+      strike.duration = lightningDuration(shape);
+      const float cloudBase = PhysicalSky::kCloudAltitude * 1000.0f;
+      strike.top = shape.inCloud
+                       ? glm::vec3(glm::vec2(shape.position), cloudBase)
+                       : lightningTop(shape, cloudBase);
+
+      if (!shape.inCloud)
+      {
+        // Its ribbons face the camera (where it was last drawn from: a
+        // strike's over before it can move far), a few pixels wide however
+        // far off.
+        const glm::vec3 eye = m_camera.position();
+        const glm::vec3 nearest =
+            lightningLightCentre(shape.position, strike.top, eye);
+        strike.width = std::max(0.8f, glm::distance(eye, nearest) * 0.0013f);
+        const std::vector<LightningSegment> segments =
+            lightningChannel(shape, strike.top);
+        const MeshData channel =
+            lightningMesh(segments, eye, strike.width, false);
+        const MeshData branches =
+            lightningMesh(segments, eye, strike.width, true);
+
+        if (!channel.empty())
+          strike.channel = m_meshes.add(channel);
+
+        if (!branches.empty())
+          strike.branches = m_meshes.add(branches);
+      }
+    }
+
+    if (strike.hold < 0.0f)
+      strike.age += seconds;
+
+    if (strike.hold < 0.0f && strike.age > strike.duration)
+    {
+      releaseStrike(strike);
+      strike.finished = true;
+      continue;
+    }
+
+    ++flashing;
+  }
+
+  // One with nowhere to strike (no TransformComponent) is finished at once.
+  for (auto [entity, strike] :
+       registry->query<LightningComponent, Excluding<TransformComponent>>())
+  {
+    if (strike.finished)
+      continue;
+
+    strike.finished = true;
+    LOG_WARN("A lightning strike (entity " + std::to_string(entity.getId()) +
+             ") has no TransformComponent to strike at; finished it");
+  }
+
+  // A few at once: the oldest give way.
+  for (; flashing > MOST_LIGHTNING_STRIKES; --flashing)
+  {
+    LightningComponent* oldest = nullptr;
+
+    for (LightningComponent& strike : registry->query<LightningComponent>())
+      if (!strike.finished && (!oldest || strike.age > oldest->age))
+        oldest = &strike;
+
+    if (!oldest)
+      break;
+
+    releaseStrike(*oldest);
+    oldest->finished = true;
+  }
 }
 
 } // namespace sfs

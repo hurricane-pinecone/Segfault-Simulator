@@ -2,12 +2,15 @@
 
 #include "engine/core/rendering/materialGraph.h"
 #include "engine/core/rendering/materialGraphCompiler.h"
+#include "engine/core/rendering/materialNodes.h"
 
-#include "imgui.h"
+#include <imgui.h>
 
+#include <cstdint>
 #include <optional>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace sfs
@@ -40,6 +43,20 @@ public:
   using NodeId = sfs::materialGraph::NodeId;
 
   /**
+   * A gesture is under way (dragging nodes, a link or a box): the graph is
+   * mid-edit, so the panel waits before recording an undo step.
+   */
+  bool busy() const { return m_gesture != Gesture::None; }
+
+  void copySelection(const Graph& graph) const;
+
+  // Commands, for the panel's keys and menus. The Material Output isn't
+  // deleted or duplicated: a graph has the one. Copied with the rest (Ctrl+A,
+  // Ctrl+C), it pastes into another graph's: its links and values join that
+  // graph's output.
+  void deleteSelection(Graph& graph);
+
+  /**
    * Draw into the rest of the window, editing `graph`. `compiled` is the graph
    * as last compiled: its dynamic types colour the pins, its errors mark
    * nodes. `assets` names textures (and takes them dropped in).
@@ -48,14 +65,7 @@ public:
             const sfs::materialGraph::CompiledGraph& compiled,
             const sfs::AssetDatabase* assets);
 
-  /**
-   * A gesture is under way (dragging nodes, a link or a box): the graph is
-   * mid-edit, so the panel waits before recording an undo step.
-   */
-  bool busy() const { return m_gesture != Gesture::None; }
-
-  const std::set<NodeId>& selection() const { return m_selection; }
-  void select(NodeId node) { m_selection = {node}; }
+  void duplicateSelection(Graph& graph);
 
   /** Fit the view to every node (or, if any, the selected ones) next draw. */
   void frame() { m_frameRequested = true; }
@@ -63,15 +73,13 @@ public:
   /** The Add Node menu, where the mouse is. */
   void openAddMenu() { m_openAddMenu = true; }
 
-  // Commands, for the panel's keys and menus. The Material Output isn't
-  // deleted or duplicated: a graph has the one. Copied with the rest (Ctrl+A,
-  // Ctrl+C), it pastes into another graph's: its links and values join that
-  // graph's output.
-  void deleteSelection(Graph& graph);
-  void copySelection(const Graph& graph) const;
   void paste(Graph& graph);
-  void duplicateSelection(Graph& graph);
+
+  void select(NodeId node) { m_selection = {node}; }
+
   void selectAll(const Graph& graph);
+
+  const std::set<NodeId>& selection() const { return m_selection; }
 
 private:
   enum class Gesture
@@ -86,11 +94,11 @@ private:
   // A pin: a node's input or output.
   struct Pin
   {
+    bool operator==(const Pin&) const = default;
+
     NodeId node = 0;
     uint32_t index = 0;
     bool output = false;
-
-    bool operator==(const Pin&) const = default;
   };
 
   // Where a node and its pins are, in canvas units.
@@ -100,24 +108,18 @@ private:
     std::vector<ImVec2> inputs, outputs; // pin centres
   };
 
-  Layout layout(const sfs::materialGraph::Node& node,
-                const sfs::materialGraph::CompiledGraph& compiled,
-                const sfs::AssetDatabase* assets) const;
-  ImVec2 toScreen(ImVec2 canvas) const;
-  ImVec2 toCanvas(ImVec2 screen) const;
-  std::optional<Pin> pinAt(ImVec2 screen) const;
-  NodeId nodeAt(ImVec2 screen) const;
-  void fit(ImVec2 size);
+  void acceptTextureDrop(Graph& graph, const sfs::AssetDatabase* assets);
 
-  void handleMouse(Graph& graph);
-  // Lay every node out (selected ones last, on top), for hit tests and drawing.
-  void layoutNodes(const Graph& graph,
-                   const sfs::materialGraph::CompiledGraph& compiled,
-                   const sfs::AssetDatabase* assets);
-  // Where an added or pasted node goes: the mouse, if it's over the canvas,
-  // else the middle of the view (canvas units).
-  ImVec2 placement() const;
-  void finishLink(Graph& graph, ImVec2 mouse);
+  // Add a node where the Add Node menu opened, linked to the pin a link was
+  // dragged from (if any) at its first fitting pin.
+  void addNode(Graph& graph, const sfs::materialGraph::NodeType& type);
+  void drawAddMenu(Graph& graph);
+  // The colour picker a colour field opened, at normal size.
+  void drawColorPicker(Graph& graph);
+  // The node's value fields, on it (at zooms where they're usable).
+  void drawFields(sfs::materialGraph::Node& node,
+                  const Graph& graph,
+                  const sfs::materialGraph::CompiledGraph& compiled);
   void drawGrid(ImDrawList* draw, ImVec2 size) const;
   void drawLinks(ImDrawList* draw,
                  const Graph& graph,
@@ -127,22 +129,28 @@ private:
                 const Graph& graph,
                 const sfs::materialGraph::CompiledGraph& compiled,
                 const sfs::AssetDatabase* assets) const;
-  // The node's value fields, on it (at zooms where they're usable).
-  void drawFields(sfs::materialGraph::Node& node,
-                  const Graph& graph,
-                  const sfs::materialGraph::CompiledGraph& compiled);
-  // The colour picker a colour field opened, at normal size.
-  void drawColorPicker(Graph& graph);
-  bool fieldsShown() const;
-  void drawAddMenu(Graph& graph);
   void drawNodeMenu(Graph& graph);
-  void acceptTextureDrop(Graph& graph, const sfs::AssetDatabase* assets);
+  bool fieldsShown() const;
+  void finishLink(Graph& graph, ImVec2 mouse);
+  void fit(ImVec2 size);
 
-  // Add a node where the Add Node menu opened, linked to the pin a link was
-  // dragged from (if any) at its first fitting pin.
-  void addNode(Graph& graph, const sfs::materialGraph::NodeType& type);
+  void handleMouse(Graph& graph);
+  Layout layout(const sfs::materialGraph::Node& node,
+                const sfs::materialGraph::CompiledGraph& compiled,
+                const sfs::AssetDatabase* assets) const;
+  // Lay every node out (selected ones last, on top), for hit tests and drawing.
+  void layoutNodes(const Graph& graph,
+                   const sfs::materialGraph::CompiledGraph& compiled,
+                   const sfs::AssetDatabase* assets);
+  NodeId nodeAt(ImVec2 screen) const;
   // Paste nodes saved by copySelection(), with their top left at `at`.
   void pasteJson(Graph& graph, const std::string& text, ImVec2 at);
+  std::optional<Pin> pinAt(ImVec2 screen) const;
+  // Where an added or pasted node goes: the mouse, if it's over the canvas,
+  // else the middle of the view (canvas units).
+  ImVec2 placement() const;
+  ImVec2 toCanvas(ImVec2 screen) const;
+  ImVec2 toScreen(ImVec2 canvas) const;
 
   // The view: canvas point (0, 0) sits at m_origin + m_pan on screen.
   ImVec2 m_origin{0.0f, 0.0f};

@@ -1,6 +1,5 @@
 #pragma once
 #include <sfs/sfs.h>
-
 #include "components/Drone.h"
 #include "components/Hazard.h"
 #include "components/JumpPad.h"
@@ -66,8 +65,10 @@ public:
   {
     const auto* transform = orb.getComponent<sfs::TransformComponent>();
     const Orb* value = orb.getComponent<Orb>();
+
     if (!sfs::expect(transform, orb) || !sfs::expect(value, orb))
       return;
+
     const glm::vec2 at = transform->position2D();
     bump(value->value);
     particles().spawnBurst("spark", at);
@@ -77,8 +78,10 @@ public:
   void destroyDrone(const sfs::Entity& drone)
   {
     const auto* transform = drone.getComponent<sfs::TransformComponent>();
+
     if (!sfs::expect(transform, drone))
       return;
+
     const glm::vec2 at = transform->position2D();
     bump(50);
     particles().spawnBurst("boom", at);
@@ -109,6 +112,7 @@ public:
   {
     if (m_over)
       return;
+
     m_over = true;
     m_overClock = 0.0f;
     s_best = std::max(s_best, m_score);
@@ -141,6 +145,7 @@ protected:
     // far behind.
     if (!m_started)
       m_started = runner.x > m_startX + kTile * 0.5f || m_clock > 4.0f;
+
     if (m_over)
     {
       if ((m_overClock += dt) > 1.4f)
@@ -151,9 +156,11 @@ protected:
       m_wallSpeed =
           std::min(m_wallSpeed + wallAcceleration * step, wallTopSpeed);
       m_wallX = std::max(m_wallX + m_wallSpeed * step, runner.x - wallMaxLag);
+
       if (runner.x - 20.0f < m_wallX)
         end(runner);
     }
+
     placeWall(runner);
 
     animate(step);
@@ -217,6 +224,7 @@ private:
         sprite({left + (column + 0.5f) * kTile, top + (row + 0.5f) * kTile},
                row == 0 ? 0 : 1,
                0);
+
     sfs::Entity solid = scene().createEntity();
     const glm::vec2 half(tiles * kTile * 0.5f, depth * kTile * 0.5f);
     solid.addComponent<sfs::TransformComponent>(
@@ -231,6 +239,7 @@ private:
   {
     sfs::Entity entity = sprite(at, 3, 1, glm::vec2(0.75f));
     entity.addComponent<Orb>();
+
     if (lit)
       entity.addComponent<sfs::PointLightComponent>(
           glm::vec3(1.0f, 0.8f, 0.3f),
@@ -320,6 +329,7 @@ private:
              {left - kTile * 0.5f, top - kTile},
              kTile * (1.5f + gap * 0.3f),
              gap + 1);
+
       if (gap >= 3 && chance(0.25f + hard * 0.5f))
         drone({(m_cursor + left) * 0.5f, std::min(m_top, top) - kTile * 2.5f});
 
@@ -327,10 +337,13 @@ private:
       {
         const int tiles = roll(4, 9);
         platform(left, top, tiles, 3);
+
         if (tiles >= 6 && chance(0.3f + hard * 0.5f))
           spikes(left + roll(2, tiles - 3) * kTile, top, roll(1, 2));
+
         if (chance(0.35f))
           beacon({left + kTile * 1.5f, top});
+
         m_cursor = left + tiles * kTile;
         m_top = top;
       }
@@ -338,6 +351,7 @@ private:
       {
         float x = left;
         float y = top;
+
         for (int step = 0; step < 3; ++step)
         {
           platform(x, y, 2, 1);
@@ -345,6 +359,7 @@ private:
           x += kTile * (2 + roll(2, 3));
           y -= kTile * roll(0, 2);
         }
+
         m_cursor = x - kTile * 2;
         m_top = y + kTile;
       }
@@ -379,6 +394,7 @@ private:
     {
       if (m_spawned.front().second.isValid())
         scene().destroyEntity(m_spawned.front().second);
+
       m_spawned.pop_front();
     }
   }
@@ -393,6 +409,7 @@ private:
       orb.spin += step * 10.0f;
       sprite.frame = 3 + static_cast<int>(orb.spin) % 4;
     }
+
     for (auto [entity, drone, transform] :
          scene().query<Drone, sfs::TransformComponent>())
     {
@@ -402,6 +419,7 @@ private:
           glm::vec2(
               std::sin(drone.clock * drone.speed * 0.5f) * drone.amplitude,
               std::sin(drone.clock * drone.speed) * drone.amplitude * 0.5f));
+
       if (sfs::SpriteComponent* sprite =
               entity.getComponent<sfs::SpriteComponent>())
         sprite->frame = 7 + static_cast<int>(drone.clock * 12.0f) % 2;
@@ -412,8 +430,10 @@ private:
   {
     auto* transform = m_wall.getComponent<sfs::TransformComponent>();
     auto* sprite = m_wall.getComponent<sfs::SpriteComponent>();
+
     if (!transform || !sprite)
       return;
+
     transform->setPosition2D({m_wallX - kTile, runner.y - kTile * 2.0f});
     sprite->frame = static_cast<int>(m_clock * 16.0f) % 2;
   }
@@ -460,6 +480,7 @@ inline void RunDirector::onCreate(sfs::Scene& scene)
   {
     const auto* transform = start.getComponent<sfs::TransformComponent>();
     const auto* box = start.getComponent<sfs::BoxCollider2D>();
+
     if (sfs::expect(transform, start) && sfs::expect(box, start))
     {
       m_cursor = transform->position.x + box->half.x;

@@ -1,6 +1,5 @@
 #include "../../testHarness.h"
-
-#include <engine/core/ecs/ecs.h>
+#include "engine/core/ecs/ecs.h"
 
 #include <algorithm>
 #include <chrono>
@@ -11,6 +10,7 @@
 #include <limits>
 #include <map>
 #include <random>
+#include <ratio>
 #include <set>
 #include <sstream>
 #include <string>
@@ -44,44 +44,11 @@ namespace
 
 volatile uint64_t g_sink = 0;
 
-constexpr int kPasses = 3;
+constexpr int PASSES = 3;
 
 // One result per case and entity count: the best pass's.
 using Results = std::map<std::pair<std::string, int>, double>;
 Results g_results;
-
-void record(const std::string& name, int entities, double ns)
-{
-  const auto [at, made] = g_results.try_emplace({name, entities}, ns);
-  if (!made)
-    at->second = std::min(at->second, ns);
-}
-
-void printResults()
-{
-  for (const auto& [key, ns] : g_results)
-    std::printf("bench %s %d %.3f\n", key.first.c_str(), key.second, ns);
-}
-
-// The best time of `rounds` rounds, each running `body` (which returns a
-// checksum) `repeats` times, in ns per one of `rows` (a run's).
-template <typename TBody>
-double bestNs(int rounds, int repeats, std::size_t rows, TBody&& body)
-{
-  double best = std::numeric_limits<double>::max();
-  for (int r = 0; r < rounds; ++r)
-  {
-    uint64_t sum = 0;
-    const auto start = std::chrono::steady_clock::now();
-    for (int i = 0; i < repeats; ++i)
-      sum += body();
-    const auto end = std::chrono::steady_clock::now();
-    g_sink = g_sink + sum;
-    best = std::min(
-        best, std::chrono::duration<double, std::nano>(end - start).count());
-  }
-  return rows ? best / (static_cast<double>(rows) * repeats) : 0.0;
-}
 
 struct BenchA
 {
@@ -113,31 +80,42 @@ struct World
     std::mt19937 random(12345u + static_cast<unsigned>(count));
     std::vector<Entity> made;
     made.reserve(count);
+
     for (int i = 0; i < count; ++i)
       made.push_back(reg.createEntity());
+
     reg.flushEntities();
 
     std::vector<Entity> stale = made;
     std::shuffle(stale.begin(), stale.end(), random);
     stale.resize(count / 4);
+
     for (const Entity& entity : stale)
       reg.destroyEntity(entity);
+
     reg.flushEntities();
+
     for (int i = 0; i < count / 4; ++i)
       reg.createEntity();
+
     reg.flushEntities();
 
     const std::vector<Entity> living = reg.entities();
+
     for (Entity entity : living)
     {
       const Entity::EntityId id = entity.getId();
       entity.addComponent<BenchA>();
+
       if (id % 2 == 0)
         entity.addComponent<BenchB>();
+
       if (id % 3 == 0)
         entity.addComponent<BenchC>();
+
       (id % 2 == 0 ? withB : withoutB).push_back(entity);
     }
+
     reg.flushEntities();
 
     mixed = living;
@@ -149,6 +127,78 @@ struct World
 };
 
 constexpr int kRounds = 200;
+
+constexpr int TYPES = 40;
+constexpr int LISTS = 120;
+constexpr int SYSTEMS = 60;
+constexpr int ENTITIES = 2000;
+// Named by about 40% of the lists, as a transform is.
+constexpr int COMMON = 0;
+// Named by a few lists.
+constexpr int RARE = 36;
+// Named by no list.
+constexpr int UNNAMED = TYPES;
+
+template <int N>
+struct Part
+{
+};
+
+// A system per N, working on two parts.
+template <int N>
+class BenchSystem : public System
+{
+protected:
+  void create() override
+  {
+    registerComponent<Part<(N % 2 == 0) ? COMMON : 1 + N % (TYPES - 4)>>();
+    registerComponent<Part<1 + (N * 11) % (TYPES - 4)>>();
+  }
+  void onEntityAdded(const Entity&) override { ++joined; }
+  void onEntityRemoved(const Entity&) override { ++left; }
+
+public:
+  int joined = 0;
+  int left = 0;
+};
+
+void record(const std::string& name, int entities, double ns)
+{
+  const auto [at, made] = g_results.try_emplace({name, entities}, ns);
+
+  if (!made)
+    at->second = std::min(at->second, ns);
+}
+
+void printResults()
+{
+  for (const auto& [key, ns] : g_results)
+    std::printf("bench %s %d %.3f\n", key.first.c_str(), key.second, ns);
+}
+
+// The best time of `rounds` rounds, each running `body` (which returns a
+// checksum) `repeats` times, in ns per one of `rows` (a run's).
+template <typename TBody>
+double bestNs(int rounds, int repeats, std::size_t rows, TBody&& body)
+{
+  double best = std::numeric_limits<double>::max();
+
+  for (int r = 0; r < rounds; ++r)
+  {
+    uint64_t sum = 0;
+    const auto start = std::chrono::steady_clock::now();
+
+    for (int i = 0; i < repeats; ++i)
+      sum += body();
+
+    const auto end = std::chrono::steady_clock::now();
+    g_sink = g_sink + sum;
+    best = std::min(
+        best, std::chrono::duration<double, std::nano>(end - start).count());
+  }
+
+  return rows ? best / (static_cast<double>(rows) * repeats) : 0.0;
+}
 
 void benchLookups(int count)
 {
@@ -172,8 +222,10 @@ void benchLookups(int count)
                 [&]
                 {
                   uint64_t sum = 0;
+
                   for (const Entity& entity : two)
                     sum += entity.getId();
+
                   return sum;
                 }));
   record("entity-loop-view",
@@ -184,8 +236,10 @@ void benchLookups(int count)
                 [&]
                 {
                   uint64_t sum = 0;
+
                   for (const Entity& entity : twoView)
                     sum += entity.getId();
+
                   return sum;
                 }));
 
@@ -197,8 +251,10 @@ void benchLookups(int count)
                 [&]
                 {
                   uint64_t sum = 0;
+
                   for (auto [entity, a, b] : twoView)
                     sum += a.value + b.value;
+
                   return sum;
                 }));
   record("rows-3",
@@ -209,8 +265,10 @@ void benchLookups(int count)
                 [&]
                 {
                   uint64_t sum = 0;
+
                   for (auto [entity, a, b, c] : threeView)
                     sum += a.value + b.value + c.value;
+
                   return sum;
                 }));
 
@@ -225,8 +283,10 @@ void benchLookups(int count)
                 [&]
                 {
                   uint64_t sum = 0;
+
                   for (auto [entity, a] : oneView)
                     sum += a.value;
+
                   return sum;
                 }));
   record("component-1",
@@ -237,8 +297,10 @@ void benchLookups(int count)
                 [&]
                 {
                   uint64_t sum = 0;
+
                   for (const BenchA& a : oneView)
                     sum += a.value;
+
                   return sum;
                 }));
   record("components-2",
@@ -249,8 +311,10 @@ void benchLookups(int count)
                 [&]
                 {
                   uint64_t sum = 0;
+
                   for (auto [a, b] : twoView.components())
                     sum += a.value + b.value;
+
                   return sum;
                 }));
   record("components-3",
@@ -261,8 +325,10 @@ void benchLookups(int count)
                 [&]
                 {
                   uint64_t sum = 0;
+
                   for (auto [a, b, c] : threeView.components())
                     sum += a.value + b.value + c.value;
+
                   return sum;
                 }));
 
@@ -274,9 +340,11 @@ void benchLookups(int count)
                 [&]
                 {
                   uint64_t sum = 0;
+
                   for (const Entity& entity : two)
                     sum += entity.getComponent<BenchA>()->value +
                            entity.getComponent<BenchB>()->value;
+
                   return sum;
                 }));
   record("finder-loop-2",
@@ -289,8 +357,10 @@ void benchLookups(int count)
                   uint64_t sum = 0;
                   const auto a = reg.finder<BenchA>();
                   const auto b = reg.finder<BenchB>();
+
                   for (const Entity& entity : two)
                     sum += a(entity.getId())->value + b(entity.getId())->value;
+
                   return sum;
                 }));
 
@@ -302,10 +372,12 @@ void benchLookups(int count)
                 [&]
                 {
                   uint64_t sum = 0;
+
                   for (const Entity& entity : three)
                     sum += entity.getComponent<BenchA>()->value +
                            entity.getComponent<BenchB>()->value +
                            entity.getComponent<BenchC>()->value;
+
                   return sum;
                 }));
   record("finder-loop-3",
@@ -319,11 +391,13 @@ void benchLookups(int count)
                   const auto a = reg.finder<BenchA>();
                   const auto b = reg.finder<BenchB>();
                   const auto c = reg.finder<BenchC>();
+
                   for (const Entity& entity : three)
                   {
                     const Entity::EntityId id = entity.getId();
                     sum += a(id)->value + b(id)->value + c(id)->value;
                   }
+
                   return sum;
                 }));
 
@@ -335,8 +409,10 @@ void benchLookups(int count)
                 [&]
                 {
                   uint64_t sum = 0;
+
                   for (const Entity& entity : world.withB)
                     sum += entity.getComponent<BenchB>()->value;
+
                   return sum;
                 }));
   record("hasComponent-miss",
@@ -347,8 +423,10 @@ void benchLookups(int count)
                 [&]
                 {
                   uint64_t sum = 0;
+
                   for (const Entity& entity : world.withoutB)
                     sum += entity.hasComponent<BenchB>() ? 1 : 0;
+
                   return sum;
                 }));
   record("getComponent-miss",
@@ -359,8 +437,10 @@ void benchLookups(int count)
                 [&]
                 {
                   uint64_t sum = 0;
+
                   for (const Entity& entity : world.withoutB)
                     sum += entity.getComponent<BenchB>() ? 1 : 0;
+
                   return sum;
                 }));
   record("has-get-pair",
@@ -371,10 +451,12 @@ void benchLookups(int count)
                 [&]
                 {
                   uint64_t sum = 0;
+
                   for (const Entity& entity : world.withB)
                     // sfs-ignore-next-line(has-then-get)
                     if (entity.hasComponent<BenchB>())
                       sum += entity.getComponent<BenchB>()->value;
+
                   return sum;
                 }));
 
@@ -386,46 +468,33 @@ void benchLookups(int count)
                 [&]
                 {
                   uint64_t sum = 0;
+
                   for (const Entity& entity : world.mixed)
                     sum += entity.isValid() ? 1 : 0;
+
                   return sum;
                 }));
 }
-
-constexpr int kTypes = 40;
-constexpr int kLists = 120;
-constexpr int kSystems = 60;
-constexpr int kEntities = 2000;
-// Named by about 40% of the lists, as a transform is.
-constexpr int kCommon = 0;
-// Named by a few lists.
-constexpr int kRare = 36;
-// Named by no list.
-constexpr int kUnnamed = kTypes;
-
-template <int N>
-struct Part
-{
-};
 
 // List I: a common part in 40% of them, two others spread over the types,
 // and an Excluding group in every fourth.
 template <int I>
 void askForList(Registry& reg, std::set<const std::vector<Entity>*>& lists)
 {
-  constexpr int n = kTypes - 4;
-  constexpr int a = 1 + I % n;
-  constexpr int b = 1 + (I / n * 7 + I * 13 + 5) % n;
-  constexpr int c = 1 + (I / n + I * 3 + 11) % n;
+  constexpr int n = TYPES - 4;
+  constexpr int A = 1 + I % n;
+  constexpr int B = 1 + (I / n * 7 + I * 13 + 5) % n;
+  constexpr int C = 1 + (I / n + I * 3 + 11) % n;
+
   if constexpr (I % 5 < 2 && I % 4 == 0)
     lists.insert(
-        &reg.query<Part<kCommon>, Part<a>, Excluding<Part<b>>>().entities());
+        &reg.query<Part<COMMON>, Part<A>, Excluding<Part<B>>>().entities());
   else if constexpr (I % 5 < 2)
-    lists.insert(&reg.query<Part<kCommon>, Part<a>>().entities());
+    lists.insert(&reg.query<Part<COMMON>, Part<A>>().entities());
   else if constexpr (I % 4 == 0)
-    lists.insert(&reg.query<Part<a>, Any<Part<b>, Part<c>>>().entities());
+    lists.insert(&reg.query<Part<A>, Any<Part<B>, Part<C>>>().entities());
   else
-    lists.insert(&reg.query<Part<a>, Part<b>>().entities());
+    lists.insert(&reg.query<Part<A>, Part<B>>().entities());
 }
 
 template <int... Is>
@@ -436,44 +505,26 @@ void askForLists(Registry& reg,
   (askForList<Is>(reg, lists), ...);
 }
 
-// A system per N, working on two parts.
-template <int N>
-class BenchSystem : public System
-{
-protected:
-  void create() override
-  {
-    registerComponent<Part<(N % 2 == 0) ? kCommon : 1 + N % (kTypes - 4)>>();
-    registerComponent<Part<1 + (N * 11) % (kTypes - 4)>>();
-  }
-  void onEntityAdded(const Entity&) override { ++joined; }
-  void onEntityRemoved(const Entity&) override { ++left; }
-
-public:
-  int joined = 0;
-  int left = 0;
-};
-
 template <int... Ns>
 void addSystems(Registry& reg, std::integer_sequence<int, Ns...>)
 {
   (reg.addSystem<BenchSystem<Ns>>(), ...);
 }
 
-// Gives entity `i` part N one time in three, never kRare.
+// Gives entity `i` part N one time in three, never RARE.
 template <int N>
 void maybeGivePart(Entity& entity, int i)
 {
-  if (N != kRare && (i * 31 + N * 17) % 3 == 0)
+  if (N != RARE && (i * 31 + N * 17) % 3 == 0)
     entity.addComponent<Part<N>>();
 }
 
-// Gives entity `i` kCommon and about a third of the other parts.
+// Gives entity `i` COMMON and about a third of the other parts.
 template <int... Ns>
 void giveParts(Entity& entity, int i, std::integer_sequence<int, Ns...>)
 {
   (maybeGivePart<Ns>(entity, i), ...);
-  entity.addComponent<Part<kCommon>>();
+  entity.addComponent<Part<COMMON>>();
 }
 
 // Toggles TPart on and off across the entities, twice a round so a round
@@ -494,6 +545,7 @@ double timeToggles(std::vector<Entity>& entities, int rounds)
                       else
                         entity.addComponent<TPart>();
                     }
+
                   return uint64_t{0};
                 });
 }
@@ -504,10 +556,13 @@ Results readBaseline()
 {
   Results baseline;
   const char* path = std::getenv("SFS_BENCH_BASELINE");
+
   if (!path || !*path)
     return baseline;
+
   std::ifstream file(path);
   std::string line;
+
   while (std::getline(file, line))
   {
     std::istringstream words(line);
@@ -515,11 +570,14 @@ Results readBaseline()
     std::string name;
     int entities = 0;
     double ns = 0.0;
+
     if (words >> tag >> name >> entities >> ns && tag == "bench")
       baseline[{name, entities}] = ns;
   }
+
   if (baseline.empty())
     std::printf("  no results read from %s\n", path);
+
   return baseline;
 }
 
@@ -531,6 +589,7 @@ void gate(const std::string& what, int entities, double now, double limit)
     std::printf("  gate %-56s %6d: not measured\n", what.c_str(), entities);
     return;
   }
+
   const bool met = now <= limit;
   std::printf("  gate %-56s %6d: %.3f against %.3f: %s\n",
               what.c_str(),
@@ -556,7 +615,9 @@ void checkGates(const Results& before)
     std::printf("  no baseline (SFS_BENCH_BASELINE): gates not checked\n");
     return;
   }
+
   const Results& now = g_results;
+
   for (const int count : {2000, 50000})
   {
     const double vector = resultOf(now, "entity-loop-vector", count);
@@ -567,6 +628,7 @@ void checkGates(const Results& before)
          count,
          resultOf(now, "component-1", count),
          1.05 * resultOf(now, "rows-1", count));
+
     for (const std::string width : {"2", "3"})
     {
       const double rows = resultOf(now, "rows-" + width, count);
@@ -583,6 +645,7 @@ void checkGates(const Results& before)
            rows,
            resultOf(now, "finder-loop-" + width, count));
     }
+
     gate("3 getComponent hit <= today's",
          count,
          resultOf(now, "getComponent-hit", count),
@@ -596,14 +659,15 @@ void checkGates(const Results& before)
          resultOf(now, "isValid", count),
          0.5 * resultOf(before, "isValid-and-isAlive", count));
   }
+
   // Only an upper bound: the smaller handle makes list inserts and erases
   // cheaper, so changes may well get faster.
   for (const std::string kind :
        {"change-named-by-none", "change-named-by-few", "change-named-by-many"})
     gate("5 " + kind + " <= today's + 5%",
-         kEntities,
-         resultOf(now, kind, kEntities),
-         resultOf(before, kind, kEntities) * 1.05);
+         ENTITIES,
+         resultOf(now, kind, ENTITIES),
+         resultOf(before, kind, ENTITIES) * 1.05);
 }
 
 } // namespace
@@ -614,7 +678,7 @@ int main()
 
   TEST("lookups and loops should cost no more than their fetches")
   {
-    for (int pass = 0; pass < kPasses; ++pass)
+    for (int pass = 0; pass < PASSES; ++pass)
     {
       benchLookups(2000);
       benchLookups(50000);
@@ -623,44 +687,46 @@ int main()
 
   TEST("one component change should cost little with many lists and systems")
   {
-    for (int pass = 0; pass < kPasses; ++pass)
+    for (int pass = 0; pass < PASSES; ++pass)
     {
       Registry reg;
       std::set<const std::vector<Entity>*> lists;
-      askForLists(reg, lists, std::make_integer_sequence<int, kLists>());
-      addSystems(reg, std::make_integer_sequence<int, kSystems>());
+      askForLists(reg, lists, std::make_integer_sequence<int, LISTS>());
+      addSystems(reg, std::make_integer_sequence<int, SYSTEMS>());
       std::vector<Entity> entities;
-      entities.reserve(kEntities);
-      for (int i = 0; i < kEntities; ++i)
+      entities.reserve(ENTITIES);
+
+      for (int i = 0; i < ENTITIES; ++i)
       {
         entities.push_back(reg.createEntity());
-        giveParts(
-            entities.back(), i, std::make_integer_sequence<int, kTypes>());
+        giveParts(entities.back(), i, std::make_integer_sequence<int, TYPES>());
       }
+
       reg.flushEntities();
 
       constexpr int rounds = 20;
       // Warm up, then time each kind.
-      timeToggles<Part<kUnnamed>>(entities, 1);
+      timeToggles<Part<UNNAMED>>(entities, 1);
       record("change-named-by-none",
-             kEntities,
-             timeToggles<Part<kUnnamed>>(entities, rounds));
+             ENTITIES,
+             timeToggles<Part<UNNAMED>>(entities, rounds));
       record("change-named-by-few",
-             kEntities,
-             timeToggles<Part<kRare>>(entities, rounds));
+             ENTITIES,
+             timeToggles<Part<RARE>>(entities, rounds));
       record("change-named-by-many",
-             kEntities,
-             timeToggles<Part<kCommon>>(entities, rounds));
+             ENTITIES,
+             timeToggles<Part<COMMON>>(entities, rounds));
+
       if (pass == 0)
         std::printf("  %zu lists, %d systems, %d entities\n",
                     lists.size(),
-                    kSystems,
-                    kEntities);
+                    SYSTEMS,
+                    ENTITIES);
 
-      // Every entity has kCommon again (an even number of passes).
-      CHECK((reg.query<Part<kCommon>>().size() == kEntities));
-      CHECK((reg.query<Part<kUnnamed>>().empty()));
-      CHECK((reg.query<Part<kRare>>().empty()));
+      // Every entity has COMMON again (an even number of passes).
+      CHECK((reg.query<Part<COMMON>>().size() == ENTITIES));
+      CHECK((reg.query<Part<UNNAMED>>().empty()));
+      CHECK((reg.query<Part<RARE>>().empty()));
     }
   }
 

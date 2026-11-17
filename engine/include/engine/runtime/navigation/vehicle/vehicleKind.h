@@ -1,11 +1,16 @@
 #pragma once
 
 #include "engine/runtime/navigation/agentKind.h"
+#include "engine/runtime/navigation/geometry.h"
+#include "engine/runtime/navigation/traffic.h"
 #include "engine/runtime/navigation/vehicle/planner.h"
 #include "engine/runtime/navigation/vehicle/vehicleModel.h"
 #include "engine/runtime/navigation/vehicle/vehiclePath.h"
 
+#include <functional>
 #include <memory>
+#include <optional>
+#include <vector>
 
 namespace sfs
 {
@@ -51,6 +56,7 @@ class VehicleAgentPath : public AgentPath
 {
 public:
   explicit VehicleAgentPath(VehiclePath path);
+
   VehiclePath path;
 };
 
@@ -69,14 +75,14 @@ VehiclePath tail(const VehiclePath& path, float fromS);
 class VehicleKind : public AgentKind
 {
 public:
+  std::vector<Footprint>
+  footprint(const AgentSpec& agent, Pose2 pose, float hitch) const override;
+  std::unique_ptr<AgentMotion>
+  makeFollower(const AgentSpec& agent) const override;
   AgentPlan
   plan(const AgentSpec& agent,
        const PlanAsk& ask,
        const std::function<void(const AgentPlan&)>& onPartial) const override;
-  std::unique_ptr<AgentMotion>
-  makeFollower(const AgentSpec& agent) const override;
-  std::vector<Footprint>
-  footprint(const AgentSpec& agent, Pose2 pose, float hitch) const override;
   std::optional<Pose2>
   towedPose(const AgentSpec& agent, Pose2 pose, float hitch) const override;
 };

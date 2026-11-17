@@ -1,9 +1,11 @@
 #include "engine/core/particles/decalSplatter.h"
 
-#include "glm/glm/common.hpp"
-#include "glm/glm/exponential.hpp"
-#include "glm/glm/geometric.hpp"
-#include "glm/glm/trigonometric.hpp"
+#include <glm/glm/common.hpp>
+#include <glm/glm/exponential.hpp>
+#include <glm/glm/geometric.hpp>
+#include <glm/glm/trigonometric.hpp>
+
+#include <cstdint>
 
 namespace sfs
 {
@@ -57,6 +59,7 @@ public:
         1,
         sp.streakMaxCount);
     const float spread = glm::mix(1.4f, 0.45f, drift);
+
     for (int k = 0; k < streaks && out.count < SplatPattern::kMax; ++k)
     {
       const float a = base + (randf(rng) - 0.5f) * 2.0f * spread;

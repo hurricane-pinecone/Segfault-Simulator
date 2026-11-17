@@ -2,6 +2,8 @@
 
 #include "engine/runtime/navigation/geometry.h"
 
+#include <glm/glm/ext/vector_float2.hpp>
+
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -40,7 +42,19 @@ CheckStats& checkStats();
 class Space
 {
 public:
+  struct Hit
+  {
+    uint64_t id = 0;
+    glm::vec2 point{0.0f};
+  };
+
   virtual ~Space() = default;
+  /** Where there's anything at all (a search never needs to go further). */
+  virtual Rect bounds() const = 0;
+  /** Whether prepared shapes at `pose` touch nothing. */
+  virtual bool fits(const void* prepared, Pose2 pose) const = 0;
+  /** What they touch there, if anything. */
+  virtual std::optional<Hit> hit(const void* prepared, Pose2 pose) const = 0;
   /**
    * Shapes prepared once for many queries: `boxes` grown `grow` all round,
    * stretched `extend` more at both ends and `widen` more at both sides (a
@@ -50,15 +64,6 @@ public:
                                               float grow,
                                               float extend,
                                               float widen = 0.0f) const = 0;
-  /** Whether prepared shapes at `pose` touch nothing. */
-  virtual bool fits(const void* prepared, Pose2 pose) const = 0;
-  struct Hit
-  {
-    uint64_t id = 0;
-    glm::vec2 point{0.0f};
-  };
-  /** What they touch there, if anything. */
-  virtual std::optional<Hit> hit(const void* prepared, Pose2 pose) const = 0;
   /**
    * The solid cells of a raster (row-major, `width` x `height` from
    * `origin`): 1 where something solid comes within `inflate` of the cell's
@@ -71,8 +76,6 @@ public:
                       int height,
                       float inflate,
                       std::vector<uint8_t>& out) const = 0;
-  /** Where there's anything at all (a search never needs to go further). */
-  virtual Rect bounds() const = 0;
 };
 
 /**
@@ -91,21 +94,21 @@ public:
     bool circle = false;
     uint64_t id = 0;
   };
-  explicit BoxSpace(std::vector<Solid> solids);
 
+  explicit BoxSpace(std::vector<Solid> solids);
+  Rect bounds() const override { return m_bounds; }
+  bool fits(const void* prepared, Pose2 pose) const override;
+  std::optional<Hit> hit(const void* prepared, Pose2 pose) const override;
   std::shared_ptr<const void> prepare(std::span<const Box3> boxes,
                                       float grow,
                                       float extend,
                                       float widen) const override;
-  bool fits(const void* prepared, Pose2 pose) const override;
-  std::optional<Hit> hit(const void* prepared, Pose2 pose) const override;
   void raster(glm::vec2 origin,
               float cell,
               int width,
               int height,
               float inflate,
               std::vector<uint8_t>& out) const override;
-  Rect bounds() const override { return m_bounds; }
 
 private:
   std::vector<Solid> m_solids;
@@ -121,20 +124,19 @@ class SpaceWithSolids : public Space
 public:
   SpaceWithSolids(std::shared_ptr<const Space> base,
                   std::vector<BoxSpace::Solid> solids);
-
+  Rect bounds() const override;
+  bool fits(const void* prepared, Pose2 pose) const override;
+  std::optional<Hit> hit(const void* prepared, Pose2 pose) const override;
   std::shared_ptr<const void> prepare(std::span<const Box3> boxes,
                                       float grow,
                                       float extend,
                                       float widen) const override;
-  bool fits(const void* prepared, Pose2 pose) const override;
-  std::optional<Hit> hit(const void* prepared, Pose2 pose) const override;
   void raster(glm::vec2 origin,
               float cell,
               int width,
               int height,
               float inflate,
               std::vector<uint8_t>& out) const override;
-  Rect bounds() const override;
 
 private:
   std::shared_ptr<const Space> m_base;

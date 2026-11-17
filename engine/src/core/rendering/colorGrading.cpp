@@ -1,8 +1,14 @@
 #include "engine/core/rendering/colorGrading.h"
 
-#include "glm/glm/matrix.hpp"
+#include <glm/glm/ext/matrix_float3x3.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
+#include <glm/glm/matrix.hpp>
+#include <nlohmann/json.hpp>
 
 #include <array>
+#include <optional>
+#include <string>
+#include <string_view>
 
 namespace sfs
 {
@@ -41,31 +47,44 @@ glm::mat3 fromRows(const std::array<float, 9>& m)
 
 } // namespace
 
-const char* toneMapperName(ToneMapper mapper)
+ColorGrading ColorGrading::fromJson(const nlohmann::json& json)
 {
-  switch (mapper)
-  {
-  case ToneMapper::Aces:
-    return "aces";
-  case ToneMapper::AgX:
-    return "agx";
-  case ToneMapper::Neutral:
-    return "neutral";
-  case ToneMapper::None:
-    break;
-  }
-  return "none";
+  return fromJson(json, ColorGrading{});
 }
 
-std::optional<ToneMapper> toneMapperFromName(std::string_view name)
+ColorGrading ColorGrading::fromJson(const nlohmann::json& json,
+                                    const ColorGrading& defaults)
 {
-  for (const ToneMapper mapper : {ToneMapper::None,
-                                  ToneMapper::Aces,
-                                  ToneMapper::AgX,
-                                  ToneMapper::Neutral})
-    if (name == toneMapperName(mapper))
-      return mapper;
-  return std::nullopt;
+  ColorGrading out = defaults;
+
+  if (!json.is_object())
+    return out;
+
+  if (const auto it = json.find("toneMapper");
+      it != json.end() && it->is_string())
+    out.toneMapper =
+        toneMapperFromName(it->get<std::string>()).value_or(out.toneMapper);
+
+  read(json, "exposure", out.exposure);
+  read(json, "temperature", out.temperature);
+  read(json, "tint", out.tint);
+  read(json, "contrast", out.contrast);
+  read(json, "saturation", out.saturation);
+  readVec3(json, "lift", out.lift);
+  readVec3(json, "gamma", out.gamma);
+  readVec3(json, "gain", out.gain);
+  read(json, "vignette", out.vignette);
+  read(json, "vignetteSoftness", out.vignetteSoftness);
+
+  if (const auto it = json.find("autoExposure");
+      it != json.end() && it->is_boolean())
+    out.autoExposure = it->get<bool>();
+
+  read(json, "exposureTarget", out.exposureTarget);
+  read(json, "exposureDarken", out.exposureDarken);
+  read(json, "exposureBrighten", out.exposureBrighten);
+  read(json, "exposureSpeed", out.exposureSpeed);
+  return out;
 }
 
 nlohmann::json ColorGrading::toJson() const
@@ -90,39 +109,33 @@ nlohmann::json ColorGrading::toJson() const
   };
 }
 
-ColorGrading ColorGrading::fromJson(const nlohmann::json& json)
+const char* toneMapperName(ToneMapper mapper)
 {
-  return fromJson(json, ColorGrading{});
+  switch (mapper)
+  {
+  case ToneMapper::Aces:
+    return "aces";
+  case ToneMapper::AgX:
+    return "agx";
+  case ToneMapper::Neutral:
+    return "neutral";
+  case ToneMapper::None:
+    break;
+  }
+
+  return "none";
 }
 
-ColorGrading ColorGrading::fromJson(const nlohmann::json& json,
-                                    const ColorGrading& defaults)
+std::optional<ToneMapper> toneMapperFromName(std::string_view name)
 {
-  ColorGrading out = defaults;
-  if (!json.is_object())
-    return out;
-  if (const auto it = json.find("toneMapper");
-      it != json.end() && it->is_string())
-    out.toneMapper =
-        toneMapperFromName(it->get<std::string>()).value_or(out.toneMapper);
-  read(json, "exposure", out.exposure);
-  read(json, "temperature", out.temperature);
-  read(json, "tint", out.tint);
-  read(json, "contrast", out.contrast);
-  read(json, "saturation", out.saturation);
-  readVec3(json, "lift", out.lift);
-  readVec3(json, "gamma", out.gamma);
-  readVec3(json, "gain", out.gain);
-  read(json, "vignette", out.vignette);
-  read(json, "vignetteSoftness", out.vignetteSoftness);
-  if (const auto it = json.find("autoExposure");
-      it != json.end() && it->is_boolean())
-    out.autoExposure = it->get<bool>();
-  read(json, "exposureTarget", out.exposureTarget);
-  read(json, "exposureDarken", out.exposureDarken);
-  read(json, "exposureBrighten", out.exposureBrighten);
-  read(json, "exposureSpeed", out.exposureSpeed);
-  return out;
+  for (const ToneMapper mapper : {ToneMapper::None,
+                                  ToneMapper::Aces,
+                                  ToneMapper::AgX,
+                                  ToneMapper::Neutral})
+    if (name == toneMapperName(mapper))
+      return mapper;
+
+  return std::nullopt;
 }
 
 glm::mat3 whiteBalanceMatrix(float temperature, float tint)

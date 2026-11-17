@@ -1,21 +1,29 @@
 #include "../../testHarness.h"
+#include "engine/core/components/cameraComponent.h"
+#include "engine/core/components/pointLightComponent.h"
+#include "engine/core/components/spriteComponent.h"
+#include "engine/core/components/transformComponent.h"
+#include "engine/core/ecs/entity.h"
+#include "engine/core/hierarchy/hierarchy.h"
+#include "engine/core/particles/decal.h"
+#include "engine/core/particles/particleEffect.h"
+#include "engine/core/rendering/camera.h"
+#include "engine/core/rendering/mesh.h"
+#include "engine/core/types/blendMode.h"
+#include "engine/runtime/assetStore/assetStore.h"
+#include "engine/runtime/rendering/frame.h"
+#include "engine/runtime/rendering/meshLibrary.h"
+#include "engine/runtime/rendering/modules/decalModule.h"
+#include "engine/runtime/rendering/modules/particleModule.h"
+#include "engine/runtime/rendering/modules/spriteModule.h"
+#include "engine/runtime/rendering/picking.h"
+#include "engine/runtime/rendering/renderSystem.h"
+#include "engine/runtime/rendering/space2D.h"
+#include "engine/runtime/sceneManager/scene.h"
 #include "mockRenderer.h"
 
-#include <engine/core/components/cameraComponent.h>
-#include <engine/core/components/pointLightComponent.h>
-#include <engine/core/components/spriteComponent.h>
-#include <engine/core/components/transformComponent.h>
-#include <engine/core/hierarchy/hierarchy.h>
-#include <engine/core/particles/decal.h>
-#include <engine/core/particles/particleEffect.h>
-#include <engine/runtime/assetStore/assetStore.h>
-#include <engine/runtime/rendering/meshLibrary.h>
-#include <engine/runtime/rendering/modules/decalModule.h>
-#include <engine/runtime/rendering/modules/particleModule.h>
-#include <engine/runtime/rendering/modules/spriteModule.h>
-#include <engine/runtime/rendering/picking.h>
-#include <engine/runtime/rendering/renderSystem.h>
-#include <engine/runtime/sceneManager/scene.h>
+#include <glm/glm/geometric.hpp>
+#include <glm/glm/trigonometric.hpp>
 
 using namespace sfs;
 using sfs::testing3d::MockRenderer;
@@ -280,8 +288,10 @@ int main()
     h.frame(0.5);
 
     CHECK(h.renderer.drawn.size() == 1u);
+
     if (h.renderer.drawn.empty())
       continue;
+
     const MeshInstance& mark = h.renderer.drawn.front();
     CHECK(testing::approx(glm::length(glm::vec3(mark.model[0])), 2.0f));
     CHECK(testing::approx(mark.uvRect.x, 0.25f));
@@ -308,8 +318,10 @@ int main()
 
     CHECK(h.renderer.batches.size() == 1u);
     CHECK(h.renderer.drawn.size() == 1u);
+
     if (h.renderer.drawn.empty())
       continue;
+
     const MeshInstance& mark = h.renderer.drawn.front();
     CHECK(testing::approx(mark.model[3].x, 2.0f));
     CHECK(testing::approx(mark.model[3].y, 3.0f));

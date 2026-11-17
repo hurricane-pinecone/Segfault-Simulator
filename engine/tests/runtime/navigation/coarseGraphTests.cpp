@@ -1,11 +1,23 @@
 #include "../../testHarness.h"
+#include "engine/runtime/navigation/coarseGraph.h"
+#include "engine/runtime/navigation/geometry.h"
+#include "engine/runtime/navigation/space.h"
 
-#include <engine/runtime/navigation/coarseGraph.h>
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/geometric.hpp>
+
+#include <algorithm>
+#include <cmath>
+#include <cstddef>
+#include <cstdlib>
+#include <vector>
 
 using namespace sfs::nav;
 
 namespace
 {
+const Rect kArea{{-10.0f, -40.0f}, {50.0f, 40.0f}};
+
 // A fence across x = 20 (y from -30 to 30) with a gap `gap` wide round
 // y = `at`.
 BoxSpace fence(float gap, float at = 0.0f)
@@ -28,7 +40,6 @@ BoxSpace fence(float gap, float at = 0.0f)
                2});
   return BoxSpace(s);
 }
-const Rect kArea{{-10.0f, -40.0f}, {50.0f, 40.0f}};
 
 // Whether a polyline passes x = 20 within `tol` of y = `at`.
 bool crossesNear(const std::vector<glm::vec2>& line, float at, float tol)
@@ -36,12 +47,16 @@ bool crossesNear(const std::vector<glm::vec2>& line, float at, float tol)
   for (std::size_t i = 1; i < line.size(); ++i)
   {
     const glm::vec2 a = line[i - 1], b = line[i];
+
     if ((a.x - 20.0f) * (b.x - 20.0f) > 0.0f || a.x == b.x)
       continue;
+
     const float t = (20.0f - a.x) / (b.x - a.x);
+
     if (std::abs(a.y + t * (b.y - a.y) - at) <= tol)
       return true;
   }
+
   return false;
 }
 } // namespace
@@ -69,10 +84,12 @@ int main()
     CHECK(line.back() == glm::vec2(40.0f, 0.0f));
     // (The gate is tight: a pose in its middle, facing through it.)
     bool inGate = false;
+
     for (const Pose2& p : narrows)
       inGate =
           inGate || (glm::length(p.position - glm::vec2(20.0f, 12.0f)) < 0.4f &&
                      std::abs(std::cos(p.heading)) > 0.6f);
+
     CHECK(inGate);
   }
 
@@ -110,8 +127,10 @@ int main()
     g->addEdge({20.0f, 8.0f}, {40.0f, 0.0f}, 0.3f);
     const auto worn = g->route({0.0f, 0.0f}, {40.0f, 0.0f}, 1.0f);
     float far = 0.0f;
+
     for (const glm::vec2& p : worn)
       far = std::max(far, p.y);
+
     CHECK(far > 5.0f);
   }
 
@@ -136,16 +155,21 @@ int main()
     const auto viaUnder = g2->route({0.0f, 0.0f}, {40.0f, 0.0f}, 1.0f);
     const auto built = fresh->route({0.0f, 0.0f}, {40.0f, 0.0f}, 1.0f);
     float most = 0.0f, least = 0.0f;
+
     for (const glm::vec2& p : viaUp)
       most = std::max(most, p.y);
+
     for (const glm::vec2& p : viaUnder)
       least = std::min(least, p.y);
+
     CHECK(most > 5.0f);
     CHECK(least < -5.0f);
     CHECK(viaUnder.size() == built.size());
     bool same = viaUnder.size() == built.size();
+
     for (std::size_t k = 0; same && k < built.size(); ++k)
       same = glm::length(viaUnder[k] - built[k]) < 1e-5f;
+
     CHECK(same);
     CHECK(g2->edges().size() == 3u);
     // (The one it was made from as it was: open ground, straight there.)

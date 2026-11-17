@@ -416,7 +416,9 @@ words where the case changes, keeps an acronym whole (`kHTTPPort` becomes
 
 The fix renames the constant and its uses, for a constant only its own file
 can see: one in a function, or one at namespace scope in a source file (not
-`extern`). A header's constant, or a class's, may be used in other files, so the
+`extern`). A constant declared once in each branch of an `#if` is one constant:
+every branch's declaration is renamed with it, even in branches this build
+doesn't compile. A header's constant, or a class's, may be used in other files, so the
 warning names the new name and leaves the renaming to clangd's rename. There's
 no fix either when the new name is already used in the file, or when a use
 can't safely be renamed with it: one its own namespace qualifies
@@ -661,6 +663,15 @@ ln -sf ~/.local/share/sfs-clang-format/bin/clang-format ~/.local/bin/clang-forma
 ```
 
 Without a `.clang-format` above the file, clang-format leaves it as it is.
+
+Includes are sorted and grouped by clang-format too, from the `.clang-format`'s
+`IncludeBlocks: Regroup` and `IncludeCategories`. SFS's (copy it into your
+game's) gives the file's own header, then first-party includes (the engine's
+first, then the game's), then third-party packages, then the standard library
+and the OS, each group alphabetical, with a blank line between groups. A
+package's prelude leads its group (`Jolt/Jolt.h`, `windows.h`). Includes after
+an `#if` block are a run of their own, so keep platform `#if` blocks of
+includes last.
 Without clang-format at all, your editor gets a warning once and only the house
 passes run; the command line refuses.
 
@@ -769,21 +780,25 @@ with 1 when `--check` found one, or when a file couldn't be formatted or
 written; with 2 for bad arguments, paths with no C++ files under them, or no
 clang-format; and with 0 otherwise.
 
-A pre-commit hook can refuse unformatted files. This one isn't installed in SFS
-yet:
+### Pre-commit hook
+
+SFS's `.githooks/pre-commit` fixes and formats the C++ you commit: it formats
+the staged files, applies the `constexpr-name` and `else-after-return` fixes,
+formats them again and restages them. It works on the staged versions, so a
+partly staged file has only its staged part changed, and a fully staged file
+gets the same changes in your working copy. It covers the files under the
+repo's `.sfs-format`, minus its `exclude` folders, and does nothing in a repo
+without one, so a game copies it as it is into its own `.githooks/` and turns it
+on the same way:
 
 ```bash
-#!/usr/bin/env bash
-# .githooks/pre-commit: refuse a commit whose C++ files aren't formatted.
-files="$(git diff --cached --name-only --diff-filter=ACMR | grep -E '\.(cpp|h|hpp)$' || true)"
-[ -z "$files" ] && exit 0
-if ! sfs-lsp --format --check $files; then
-  echo "pre-commit: format these with sfs-lsp --format, then stage them again." >&2
-  exit 1
-fi
+git config core.hooksPath .githooks
 ```
 
-It checks the working copies: stage a file whole before you commit it.
+It runs the sfs-lsp named by `SFS_LSP`, else the one on your `PATH`, and the
+clang-format 17.0.6 on your `PATH` (or installs it into `.git/` once). Fixes
+it can't make, such as a constant in a header, stay as warnings in your editor.
+Skip it for one commit with `git commit --no-verify`.
 
 ## The .clangd files
 

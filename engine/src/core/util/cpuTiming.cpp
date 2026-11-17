@@ -1,14 +1,18 @@
 #include "engine/core/util/cpuTiming.h"
 
-#include "engine/core/ecs/component.h"
 #include "engine/core/logger/logger.h"
+#include "engine/core/util/typeKey.h"
 
 #include <algorithm>
+#include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <mutex>
+#include <ratio>
+#include <string>
 #include <typeinfo>
 #include <vector>
 
@@ -73,8 +77,10 @@ State& state()
 std::string readable(const std::type_info& type)
 {
   std::string name = detail::readableTypeName(type);
+
   if (name.rfind("sfs::", 0) == 0)
     name = name.substr(5);
+
   return name;
 }
 
@@ -90,6 +96,7 @@ void add(const char* name, double milliseconds)
 {
   State& s = state();
   const std::lock_guard lock(s.mutex);
+
   // (By its pointer first: a scope's name is a literal, the same pointer
   // every call; only a name not seen at that address yet is compared as
   // text. A scope's time includes the adds of those inside it: a text
@@ -103,6 +110,7 @@ void add(const char* name, double milliseconds)
       row.frame += milliseconds;
       return;
     }
+
   for (Row& row : s.rows)
     if (std::strcmp(row.name, name) == 0)
     {
@@ -111,6 +119,7 @@ void add(const char* name, double milliseconds)
       row.frame += milliseconds;
       return;
     }
+
   s.rows.push_back({name, milliseconds, 1, milliseconds});
 }
 
@@ -119,9 +128,11 @@ const char* label(const char* prefix, const std::string& name)
   State& s = state();
   const std::lock_guard lock(s.mutex);
   const std::string full = std::string(prefix) + name;
+
   for (const std::string& existing : s.labels)
     if (existing == full)
       return existing.c_str();
+
   return s.labels.emplace_back(full).c_str();
 }
 
@@ -130,6 +141,7 @@ const char* label(const char* prefix, const std::type_info& type)
   State& s = state();
   {
     const std::lock_guard lock(s.mutex);
+
     for (const State::Typed& known : s.typed)
       if (known.prefix == prefix && *known.type == type)
         return known.label;
@@ -144,6 +156,7 @@ void endFrame()
 {
   if (!enabled())
     return;
+
   State& s = state();
   const std::lock_guard lock(s.mutex);
   s.frames += 1;
@@ -152,12 +165,15 @@ void endFrame()
   const double frameMs =
       std::chrono::duration<double, std::milli>(now - s.frameEnded).count();
   s.frameEnded = now;
+
   if (slowFrameMs() > 0.0 && frameMs > slowFrameMs())
   {
     std::vector<const Row*> biggest;
+
     for (const Row& row : s.rows)
       if (row.frame >= 0.25)
         biggest.push_back(&row);
+
     std::sort(biggest.begin(),
               biggest.end(),
               [](const Row* a, const Row* b) { return a->frame > b->frame; });
@@ -169,21 +185,28 @@ void endFrame()
                   std::chrono::duration<double>(now - s.started).count(),
                   frameMs);
     std::string line = part;
+
     for (std::size_t i = 0; i < biggest.size() && i < 16; ++i)
     {
       std::snprintf(
           part, sizeof(part), " %s %.2f;", biggest[i]->name, biggest[i]->frame);
       line += part;
     }
+
     LOG_INFO(line);
   }
+
   for (Row& row : s.rows)
     row.frame = 0.0;
+
   if (!periodic())
     return;
+
   const double seconds = std::chrono::duration<double>(now - s.since).count();
+
   if (seconds < 5.0)
     return;
+
   const double frames = static_cast<double>(s.frames);
   char part[160];
   std::snprintf(part,
@@ -193,10 +216,12 @@ void endFrame()
                 frames / seconds,
                 seconds * 1000.0 / frames);
   std::string line = part;
+
   for (const Row& row : s.rows)
   {
     // Calls a frame, where not once.
     const double calls = static_cast<double>(row.calls) / frames;
+
     if (calls > 0.99 && calls < 1.01)
       std::snprintf(
           part, sizeof(part), " %s %.3f;", row.name, row.total / frames);
@@ -207,8 +232,10 @@ void endFrame()
                     row.name,
                     row.total / frames,
                     calls);
+
     line += part;
   }
+
   LOG_INFO(line);
   s.rows.clear();
   s.frames = 0;

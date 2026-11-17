@@ -1,6 +1,9 @@
 #include "engine/runtime/rendering/renderTexture.h"
 
-#include "glm/glm/common.hpp"
+#include "engine/runtime/rendering/uiDraw.h"
+
+#include <glm/glm/common.hpp>
+#include <glm/glm/ext/vector_int2.hpp>
 
 namespace sfs
 {

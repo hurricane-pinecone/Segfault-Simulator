@@ -9,13 +9,6 @@
 /** What fillProjectParts() found and did. */
 struct FillPartsReport
 {
-  /**
-   * Every prefab asked for could be read, and each changed one edited (and,
-   * when writing, written).
-   */
-  bool ok = false;
-  /** How many prefabs were read. */
-  std::size_t prefabs = 0;
   /** One prefab whose part fields changed. */
   struct ChangedPrefab
   {
@@ -24,6 +17,14 @@ struct FillPartsReport
     /** How many of its fields changed. */
     std::size_t fields = 0;
   };
+
+  /**
+   * Every prefab asked for could be read, and each changed one edited (and,
+   * when writing, written).
+   */
+  bool ok = false;
+  /** How many prefabs were read. */
+  std::size_t prefabs = 0;
   /** The prefabs whose part fields changed, in path order. */
   std::vector<ChangedPrefab> changed;
 };

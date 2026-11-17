@@ -2,7 +2,8 @@
 
 #include "engine/core/ecs/entity.h"
 #include "engine/runtime/scripting/sceneScripts.h"
-#include "nlohmann/json.hpp"
+
+#include <nlohmann/json.hpp>
 
 #include <cstdint>
 #include <filesystem>
@@ -144,76 +145,9 @@ struct FieldInfo;
 class SceneSerializer
 {
 public:
-  /** The scene file format this engine writes (and the newest it reads). */
-  static constexpr int kSceneFormatVersion = 3;
-  /** The prefab file format this engine writes. */
-  static constexpr int kPrefabFormatVersion = 2;
-
-  /**
-   * @param types  the reflected types to save/load (usually reflect::types())
-   * @param meshes resolves mesh fields to names and back (loading adds a
-   *               stand-in for a name it lacks); may be null if no saved
-   *               component holds a mesh
-   */
-  SceneSerializer(const reflect::TypeRegistry& types, MeshLibrary* meshes);
-
   /** A prefab's name ("asset:<id>") -> its file's contents; nothing if none. */
   using PrefabSource =
       std::function<std::optional<nlohmann::json>(std::string_view name)>;
-
-  /**
-   * Where prefabs come from. Without one, instances can't be expanded: they
-   * load as placeholders that save back unchanged.
-   */
-  void setPrefabSource(PrefabSource source) { m_prefabs = std::move(source); }
-
-  /**
-   * Create an instance of a prefab in `scene`, under `parent` (none: a root).
-   * `made`, when given, gets every entity created, parents first.
-   *
-   * @return its root, or a placeholder (logged) if the prefab can't be read
-   */
-  Entity instantiate(std::string_view prefab,
-                     Scene& scene,
-                     const Entity& parent = {},
-                     std::vector<Entity>* made = nullptr) const;
-
-  /**
-   * A prefab file's contents ({ "formatVersion", "root" }) made from an entity
-   * and everything below it: entities that came from a prefab keep their ids,
-   * the rest are given new ones (recorded on them, so they belong to the
-   * prefab from now on). Instances below the root are saved as instances. For
-   * an instance root (Apply), its prefab's root transform is kept rather than
-   * the instance's; otherwise the root is moved to the origin, unless
-   * `keepRootPlacement` (saving a prefab edited on its own).
-   */
-  nlohmann::json savePrefab(const Entity& root,
-                            bool keepRootPlacement = false) const;
-
-  /**
-   * How an instance differs from its prefab: its scene entry ($prefab,
-   * $overrides, $removed, $added, and its $sceneId if it has one), its
-   * references saved as a scene's. `root` must have a PrefabInstanceComponent.
-   */
-  nlohmann::json instanceEntry(const Entity& root) const;
-
-  /**
-   * An entity's path in the instance under `root` (see above): "" for the
-   * root itself; nothing if it isn't one of the instance's prefab entities
-   * (e.g. added to it). `root` is the path's boundary even when it isn't an
-   * instance root (a prefab's root while the prefab is edited on its own).
-   */
-  static std::optional<std::string> pathInInstance(const Entity& entity,
-                                                   const Entity& root);
-
-  /**
-   * The entity at a path under `root` (the inverse of pathInInstance()).
-   *
-   * @param root the instance root (or other boundary) the path starts at
-   * @param path "$id"s joined by "/" ("" is `root` itself)
-   * @return it, or an invalid entity if the path names none
-   */
-  static Entity entityAtPath(const Entity& root, std::string_view path);
 
   /**
    * An entity reference read from a file whose target wasn't made yet:
@@ -238,8 +172,6 @@ public:
      */
     std::string_view source;
   };
-  /** PendingRef::item of an Entity (not a list) field. */
-  static constexpr uint32_t kNoItem = ~0u;
 
   /**
    * Scene entries loaded one at a time with loadEntity() (a scene opened over
@@ -250,71 +182,9 @@ public:
   {
   private:
     friend class SceneSerializer;
+
     std::vector<PendingRef> m_refs;
   };
-
-  /**
-   * What a field's references kept from a load whose targets didn't exist
-   * (UnresolvedComponents::refs), to be saved back while the field (item)
-   * stays empty: a string, or for a list an array with null for each item
-   * that resolved. Setting null drops it at the next save.
-   *
-   * @param entity the entity holding the field
-   * @param type   the component's type
-   * @param field  the Entity or EntityList field
-   * @return it, or null if nothing is kept for the field
-   */
-  static nlohmann::json* keptReferences(const Entity& entity,
-                                        const reflect::TypeInfo& type,
-                                        const reflect::FieldInfo& field);
-
-  /**
-   * The saved value one reference kept (see keptReferences()).
-   *
-   * @param entity the entity holding the field
-   * @param type   the component's type
-   * @param field  the Entity or EntityList field
-   * @param item   the list's item, or kNoItem for an Entity field
-   * @return the value (a string), or null if none is kept
-   */
-  static const nlohmann::json* keptReference(const Entity& entity,
-                                             const reflect::TypeInfo& type,
-                                             const reflect::FieldInfo& field,
-                                             uint32_t item);
-
-  /** The nearest instance root at or above an entity; invalid if none. */
-  static Entity instanceRootOf(const Entity& entity);
-
-  /**
-   * The instance whose scene entry holds an entity's components (in its
-   * "$overrides" or "$added"), so its references are saved relative to it:
-   * the entity's nearest instance root, or the instance that root is part of
-   * in turn.
-   *
-   * @param entity the entity
-   * @return that instance's root; invalid if the entity is in none
-   */
-  static Entity entryRootOf(const Entity& entity);
-
-  /**
-   * The scene entry a scene-absolute reference names an entity through (the
-   * one whose "$sceneId" it starts with), and the entity's path in it.
-   *
-   * @param target the entity named
-   * @return the outermost instance root it has a path in and that path, or
-   *         the entity itself and ""
-   */
-  static std::pair<Entity, std::string> sceneHolderOf(const Entity& target);
-
-  /**
-   * The entities of a scene that have a scene id (SceneIdComponent), by it:
-   * what a scene-absolute reference's first segment names. Two with the same
-   * id are logged; the first is kept.
-   *
-   * @param scene the scene
-   * @return scene id -> entity
-   */
-  static std::unordered_map<uint32_t, Entity> sceneIdHolders(Scene& scene);
 
   /** One entity of an expanded prefab (see expandPrefab()). */
   struct ExpandedEntity
@@ -326,22 +196,6 @@ public:
     // references are keys of this expansion (relative to its root)
     nlohmann::json components;
   };
-
-  /**
-   * A prefab's entities as they'd be instantiated (nested prefabs expanded,
-   * their overrides applied), parents first, without making them: e.g. to
-   * draw a preview. Empty if the prefab can't be read.
-   */
-  std::vector<ExpandedEntity> expandPrefab(std::string_view prefab) const;
-
-  /**
-   * The entities a scene or prefab file entry makes (as expandPrefab(), for
-   * an instance entry with its own overrides, or a plain entry and the
-   * instances under it), parents first, without making them.
-   *
-   * @param entry an entry of a scene's "entities", or a prefab's "root"
-   */
-  std::vector<ExpandedEntity> expandEntry(const nlohmann::json& entry) const;
 
   /**
    * One string in a prefab or scene file that names a model node by its old
@@ -366,6 +220,161 @@ public:
     uint32_t toId = 0;
   };
 
+  // One entity of an expanded instance (internal to the serializer).
+  struct PrefabNode;
+
+  /**
+   * @param types  the reflected types to save/load (usually reflect::types())
+   * @param meshes resolves mesh fields to names and back (loading adds a
+   *               stand-in for a name it lacks); may be null if no saved
+   *               component holds a mesh
+   */
+  SceneSerializer(const reflect::TypeRegistry& types, MeshLibrary* meshes);
+
+  /**
+   * The entity at a path under `root` (the inverse of pathInInstance()).
+   *
+   * @param root the instance root (or other boundary) the path starts at
+   * @param path "$id"s joined by "/" ("" is `root` itself)
+   * @return it, or an invalid entity if the path names none
+   */
+  static Entity entityAtPath(const Entity& root, std::string_view path);
+
+  /**
+   * The instance whose scene entry holds an entity's components (in its
+   * "$overrides" or "$added"), so its references are saved relative to it:
+   * the entity's nearest instance root, or the instance that root is part of
+   * in turn.
+   *
+   * @param entity the entity
+   * @return that instance's root; invalid if the entity is in none
+   */
+  static Entity entryRootOf(const Entity& entity);
+
+  /**
+   * The entities a scene or prefab file entry makes (as expandPrefab(), for
+   * an instance entry with its own overrides, or a plain entry and the
+   * instances under it), parents first, without making them.
+   *
+   * @param entry an entry of a scene's "entities", or a prefab's "root"
+   */
+  std::vector<ExpandedEntity> expandEntry(const nlohmann::json& entry) const;
+
+  /**
+   * A prefab's entities as they'd be instantiated (nested prefabs expanded,
+   * their overrides applied), parents first, without making them: e.g. to
+   * draw a preview. Empty if the prefab can't be read.
+   */
+  std::vector<ExpandedEntity> expandPrefab(std::string_view prefab) const;
+
+  /**
+   * Resolve the scene-absolute references the loadEntity() calls of a session
+   * held back, now that every entry is in. The session is empty after.
+   *
+   * @param session the session the loadEntity() calls were given
+   * @param scene   the scene they loaded into
+   */
+  void finish(LoadSession& session, Scene& scene) const;
+
+  /**
+   * How an instance differs from its prefab: its scene entry ($prefab,
+   * $overrides, $removed, $added, and its $sceneId if it has one), its
+   * references saved as a scene's. `root` must have a PrefabInstanceComponent.
+   */
+  nlohmann::json instanceEntry(const Entity& root) const;
+
+  /** The nearest instance root at or above an entity; invalid if none. */
+  static Entity instanceRootOf(const Entity& entity);
+
+  /**
+   * Create an instance of a prefab in `scene`, under `parent` (none: a root).
+   * `made`, when given, gets every entity created, parents first.
+   *
+   * @return its root, or a placeholder (logged) if the prefab can't be read
+   */
+  Entity instantiate(std::string_view prefab,
+                     Scene& scene,
+                     const Entity& parent = {},
+                     std::vector<Entity>* made = nullptr) const;
+
+  /**
+   * One value as writeJsonFile() writes it, for editing a file in place.
+   *
+   * @param value the value
+   * @param depth how deep it sits in the file (the root is 0, a member of the
+   *              root 1, ...): what its inner lines are indented by
+   * @return its text, without a trailing newline
+   */
+  static std::string jsonText(const nlohmann::json& value, int depth);
+
+  /**
+   * The saved value one reference kept (see keptReferences()).
+   *
+   * @param entity the entity holding the field
+   * @param type   the component's type
+   * @param field  the Entity or EntityList field
+   * @param item   the list's item, or kNoItem for an Entity field
+   * @return the value (a string), or null if none is kept
+   */
+  static const nlohmann::json* keptReference(const Entity& entity,
+                                             const reflect::TypeInfo& type,
+                                             const reflect::FieldInfo& field,
+                                             uint32_t item);
+
+  /**
+   * What a field's references kept from a load whose targets didn't exist
+   * (UnresolvedComponents::refs), to be saved back while the field (item)
+   * stays empty: a string, or for a list an array with null for each item
+   * that resolved. Setting null drops it at the next save.
+   *
+   * @param entity the entity holding the field
+   * @param type   the component's type
+   * @param field  the Entity or EntityList field
+   * @return it, or null if nothing is kept for the field
+   */
+  static nlohmann::json* keptReferences(const Entity& entity,
+                                        const reflect::TypeInfo& type,
+                                        const reflect::FieldInfo& field);
+
+  /**
+   * Add the saved entities to `scene` (existing entities are kept) and apply
+   * the saved render settings. The saved game system and service names go to
+   * `scripts` when given (none when the file lists none).
+   *
+   * @return false (logged) if `json` isn't a scene this version understands.
+   */
+  bool load(const nlohmann::json& json,
+            Scene& scene,
+            SceneScripts* scripts = nullptr) const;
+
+  /**
+   * Create an entity, and the children nested in it, in `scene` from
+   * saveEntity() output (e.g. to duplicate a branch) or a scene file entry,
+   * under `parent` (none: a root). Unknown component types are kept, as in
+   * load(). Its references resolve at its end, except scene-absolute ones
+   * with a `session`, which wait for finish().
+   *
+   * @return the top entity created
+   */
+  Entity loadEntity(const nlohmann::json& entry,
+                    Scene& scene,
+                    const Entity& parent = {},
+                    LoadSession* session = nullptr) const;
+
+  /** Load from a file. @return false (logged) on failure. */
+  bool loadFile(const std::filesystem::path& path,
+                Scene& scene,
+                SceneScripts* scripts = nullptr) const;
+
+  /**
+   * Apply saveObject() output to an object. Fields missing from `fields` keep
+   * their current values; values of the wrong type are logged and skipped.
+   * Entity fields are left as they are (only a load resolves references).
+   */
+  void loadObject(const reflect::TypeInfo& type,
+                  void* object,
+                  const nlohmann::json& fields) const;
+
   /**
    * The edits that upgrade a prefab or scene file to stable model node ids:
    * each "$overrides" key, "$removed" path and "$added" "$parent" that names
@@ -385,8 +394,18 @@ public:
   nodeIdEdits(const nlohmann::json& file,
               std::vector<std::string>* unreadable = nullptr) const;
 
-  // One entity of an expanded instance (internal to the serializer).
-  struct PrefabNode;
+  /**
+   * An entity's path in the instance under `root` (see above): "" for the
+   * root itself; nothing if it isn't one of the instance's prefab entities
+   * (e.g. added to it). `root` is the path's boundary even when it isn't an
+   * instance root (a prefab's root while the prefab is edited on its own).
+   */
+  static std::optional<std::string> pathInInstance(const Entity& entity,
+                                                   const Entity& root);
+
+  /** Read a JSON file. @return nothing (logged) if missing or invalid. */
+  static std::optional<nlohmann::json>
+  readJsonFile(const std::filesystem::path& path);
 
   /**
    * The scene in scene-file form (see above).
@@ -406,15 +425,18 @@ public:
                       bool prefabContent = false) const;
 
   /**
-   * Add the saved entities to `scene` (existing entities are kept) and apply
-   * the saved render settings. The saved game system and service names go to
-   * `scripts` when given (none when the file lists none).
-   *
-   * @return false (logged) if `json` isn't a scene this version understands.
+   * One entity and everything below it, in the same form as a scene file's
+   * entries (its children nested under "children"), to make a copy with
+   * loadEntity(): references inside the branch are "#n", and those outside it
+   * scene-absolute, giving their targets scene ids where they have none.
+   * Writes no "$sceneId": a copy takes none of the original's.
    */
-  bool load(const nlohmann::json& json,
-            Scene& scene,
-            SceneScripts* scripts = nullptr) const;
+  nlohmann::json saveEntity(const Entity& entity) const;
+
+  /** Save to a file (pretty-printed). @return false (logged) on failure. */
+  bool saveFile(Scene& scene,
+                const std::filesystem::path& path,
+                const SceneScripts& scripts = {}) const;
 
   /**
    * One object's reflected fields as JSON ({ "field": value, ... }), the form
@@ -425,55 +447,42 @@ public:
   nlohmann::json saveObject(const reflect::TypeInfo& type, void* object) const;
 
   /**
-   * Apply saveObject() output to an object. Fields missing from `fields` keep
-   * their current values; values of the wrong type are logged and skipped.
-   * Entity fields are left as they are (only a load resolves references).
+   * A prefab file's contents ({ "formatVersion", "root" }) made from an entity
+   * and everything below it: entities that came from a prefab keep their ids,
+   * the rest are given new ones (recorded on them, so they belong to the
+   * prefab from now on). Instances below the root are saved as instances. For
+   * an instance root (Apply), its prefab's root transform is kept rather than
+   * the instance's; otherwise the root is moved to the origin, unless
+   * `keepRootPlacement` (saving a prefab edited on its own).
    */
-  void loadObject(const reflect::TypeInfo& type,
-                  void* object,
-                  const nlohmann::json& fields) const;
+  nlohmann::json savePrefab(const Entity& root,
+                            bool keepRootPlacement = false) const;
 
   /**
-   * One entity and everything below it, in the same form as a scene file's
-   * entries (its children nested under "children"), to make a copy with
-   * loadEntity(): references inside the branch are "#n", and those outside it
-   * scene-absolute, giving their targets scene ids where they have none.
-   * Writes no "$sceneId": a copy takes none of the original's.
-   */
-  nlohmann::json saveEntity(const Entity& entity) const;
-
-  /**
-   * Create an entity, and the children nested in it, in `scene` from
-   * saveEntity() output (e.g. to duplicate a branch) or a scene file entry,
-   * under `parent` (none: a root). Unknown component types are kept, as in
-   * load(). Its references resolve at its end, except scene-absolute ones
-   * with a `session`, which wait for finish().
+   * The scene entry a scene-absolute reference names an entity through (the
+   * one whose "$sceneId" it starts with), and the entity's path in it.
    *
-   * @return the top entity created
+   * @param target the entity named
+   * @return the outermost instance root it has a path in and that path, or
+   *         the entity itself and ""
    */
-  Entity loadEntity(const nlohmann::json& entry,
-                    Scene& scene,
-                    const Entity& parent = {},
-                    LoadSession* session = nullptr) const;
+  static std::pair<Entity, std::string> sceneHolderOf(const Entity& target);
 
   /**
-   * Resolve the scene-absolute references the loadEntity() calls of a session
-   * held back, now that every entry is in. The session is empty after.
+   * The entities of a scene that have a scene id (SceneIdComponent), by it:
+   * what a scene-absolute reference's first segment names. Two with the same
+   * id are logged; the first is kept.
    *
-   * @param session the session the loadEntity() calls were given
-   * @param scene   the scene they loaded into
+   * @param scene the scene
+   * @return scene id -> entity
    */
-  void finish(LoadSession& session, Scene& scene) const;
+  static std::unordered_map<uint32_t, Entity> sceneIdHolders(Scene& scene);
 
-  /** Save to a file (pretty-printed). @return false (logged) on failure. */
-  bool saveFile(Scene& scene,
-                const std::filesystem::path& path,
-                const SceneScripts& scripts = {}) const;
-
-  /** Load from a file. @return false (logged) on failure. */
-  bool loadFile(const std::filesystem::path& path,
-                Scene& scene,
-                SceneScripts* scripts = nullptr) const;
+  /**
+   * Where prefabs come from. Without one, instances can't be expanded: they
+   * load as placeholders that save back unchanged.
+   */
+  void setPrefabSource(PrefabSource source) { m_prefabs = std::move(source); }
 
   /**
    * Write JSON the way scene files are written: indented, with short arrays
@@ -482,19 +491,12 @@ public:
   static bool writeJsonFile(const nlohmann::json& json,
                             const std::filesystem::path& path);
 
-  /**
-   * One value as writeJsonFile() writes it, for editing a file in place.
-   *
-   * @param value the value
-   * @param depth how deep it sits in the file (the root is 0, a member of the
-   *              root 1, ...): what its inner lines are indented by
-   * @return its text, without a trailing newline
-   */
-  static std::string jsonText(const nlohmann::json& value, int depth);
-
-  /** Read a JSON file. @return nothing (logged) if missing or invalid. */
-  static std::optional<nlohmann::json>
-  readJsonFile(const std::filesystem::path& path);
+  /** The scene file format this engine writes (and the newest it reads). */
+  static constexpr int kSceneFormatVersion = 3;
+  /** The prefab file format this engine writes. */
+  static constexpr int kPrefabFormatVersion = 2;
+  /** PendingRef::item of an Entity (not a list) field. */
+  static constexpr uint32_t kNoItem = ~0u;
 
 private:
   // Which entities a saved branch writes the prefab "$id" of: none, all (a
@@ -549,48 +551,37 @@ private:
     std::vector<Entity>* entries = nullptr;
   };
 
-  nlohmann::json
-  saveSubtree(const Entity& entity, SavedIds ids, const RefContext& refs) const;
-  // An entity's components (reflected and unresolved), without children.
-  nlohmann::json saveComponents(const Entity& entity,
-                                const RefContext& refs) const;
-  // How an instance differs from its prefab, its references saved in `refs`.
-  nlohmann::json instanceEntry(const Entity& root,
-                               const RefContext& refs) const;
-  // The context an instance's entry is saved in, within `outer`'s.
-  static RefContext instanceContext(const Entity& root,
-                                    const RefContext& outer);
-  // The context the components of a scene's entity are saved in.
-  static RefContext sceneContext(const Entity& entity, SaveOp& op);
   // The entities added to an instance (not its prefab's), each the top of
   // what's added there, in the order its entry lists them.
   std::vector<Entity> addedTops(const Entity& root) const;
-  // One object's fields; an Entity field's value saved in `refs` for
-  // `entity` (null without a context).
-  nlohmann::json saveFields(const reflect::TypeInfo& type,
-                            void* object,
-                            const Entity& entity,
-                            const RefContext* refs) const;
+  // What an entry alone gives (for an instance entry, its prefab and its own
+  // overrides): path -> (parent path, components), with every known
+  // component's fields filled in, for comparing an instance against.
+  std::vector<PrefabNode> expandBase(const nlohmann::json& entry) const;
   // Drop the values UnresolvedComponents::refs keeps for a field's items
   // that are set now (or gone), as a save writes them.
   void forgetSetRefs(const Entity& entity,
                      const reflect::TypeInfo& type,
                      const reflect::FieldInfo& field,
                      void* object) const;
-  // One Entity value, or the saved value kept for an empty one.
-  nlohmann::json saveRef(const Entity& target,
-                         const RefContext& refs,
-                         const Entity& entity,
-                         const reflect::TypeInfo& type,
-                         const reflect::FieldInfo& field,
-                         uint32_t item) const;
-  // An entity's scene id. One without is given a new one by a save (random,
-  // 31 bits, not in use in the scene: two branches of a scene that each add
-  // one don't clash when merged), and gets none from a read (no `op`).
-  static std::optional<uint32_t> sceneIdFor(const Entity& holder, SaveOp* op);
   // Give every entity a scene's references name scene-absolutely its
   // SceneIdComponent, before any entry is written.
   void giveSceneIds(Scene& scene, SaveOp& op) const;
+  // The context an instance's entry is saved in, within `outer`'s.
+  static RefContext instanceContext(const Entity& root,
+                                    const RefContext& outer);
+  // How an instance differs from its prefab, its references saved in `refs`.
+  nlohmann::json instanceEntry(const Entity& root,
+                               const RefContext& refs) const;
+  void loadComponents(const nlohmann::json& components,
+                      Entity& entity,
+                      std::set<std::string>* unresolvedTypes,
+                      std::vector<PendingRef>& pending,
+                      std::string_view source) const;
+  Entity loadEntity(const nlohmann::json& entry,
+                    Scene& scene,
+                    const Entity& parent,
+                    LoadOp& op) const;
   // Apply one object's fields; Entity values become `pending`.
   void loadFields(const reflect::TypeInfo& type,
                   void* object,
@@ -598,17 +589,6 @@ private:
                   const Entity& entity,
                   std::vector<PendingRef>* pending,
                   std::string_view source) const;
-  // The scene's scene data, by type name, the unresolved kept included
-  // (empty when it has none).
-  nlohmann::json saveSceneData(Scene& scene) const;
-  // A scene file's "sceneData": each type the scene hasn't got yet added and
-  // loaded; an unregistered type's kept, unresolved.
-  void loadSceneData(const nlohmann::json& data, Scene& scene) const;
-  void loadComponents(const nlohmann::json& components,
-                      Entity& entity,
-                      std::set<std::string>* unresolvedTypes,
-                      std::vector<PendingRef>& pending,
-                      std::string_view source) const;
   // Expand an instance entry and create its entities, resolving the
   // references inside it; the rest go to `op`.
   Entity loadInstance(const nlohmann::json& entry,
@@ -616,6 +596,9 @@ private:
                       const Entity& parent,
                       LoadOp& op,
                       std::vector<Entity>* made = nullptr) const;
+  // A scene file's "sceneData": each type the scene hasn't got yet added and
+  // loaded; an unregistered type's kept, unresolved.
+  void loadSceneData(const nlohmann::json& data, Scene& scene) const;
   // Resolve references, emptying `refs`: paths into an instance through
   // `made` (its entities by expansion key), "#n" through `entries` (a
   // loadEntity() call's), scene-absolute ones through the scene's
@@ -626,15 +609,33 @@ private:
                    const std::vector<Entity>* entries,
                    const std::unordered_map<std::string, Entity>* made,
                    std::vector<PendingRef>* defer) const;
-  // What an entry alone gives (for an instance entry, its prefab and its own
-  // overrides): path -> (parent path, components), with every known
-  // component's fields filled in, for comparing an instance against.
-  std::vector<PrefabNode> expandBase(const nlohmann::json& entry) const;
-
-  Entity loadEntity(const nlohmann::json& entry,
-                    Scene& scene,
-                    const Entity& parent,
-                    LoadOp& op) const;
+  // An entity's components (reflected and unresolved), without children.
+  nlohmann::json saveComponents(const Entity& entity,
+                                const RefContext& refs) const;
+  // One object's fields; an Entity field's value saved in `refs` for
+  // `entity` (null without a context).
+  nlohmann::json saveFields(const reflect::TypeInfo& type,
+                            void* object,
+                            const Entity& entity,
+                            const RefContext* refs) const;
+  // One Entity value, or the saved value kept for an empty one.
+  nlohmann::json saveRef(const Entity& target,
+                         const RefContext& refs,
+                         const Entity& entity,
+                         const reflect::TypeInfo& type,
+                         const reflect::FieldInfo& field,
+                         uint32_t item) const;
+  // The scene's scene data, by type name, the unresolved kept included
+  // (empty when it has none).
+  nlohmann::json saveSceneData(Scene& scene) const;
+  nlohmann::json
+  saveSubtree(const Entity& entity, SavedIds ids, const RefContext& refs) const;
+  // The context the components of a scene's entity are saved in.
+  static RefContext sceneContext(const Entity& entity, SaveOp& op);
+  // An entity's scene id. One without is given a new one by a save (random,
+  // 31 bits, not in use in the scene: two branches of a scene that each add
+  // one don't clash when merged), and gets none from a read (no `op`).
+  static std::optional<uint32_t> sceneIdFor(const Entity& holder, SaveOp* op);
 
   const reflect::TypeRegistry& m_types;
   MeshLibrary* m_meshes;

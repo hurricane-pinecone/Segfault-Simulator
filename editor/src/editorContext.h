@@ -1,10 +1,10 @@
 #pragma once
 
-#include "project/project.h"
-
 #include "engine/core/assets/assetDatabase.h"
 #include "engine/core/ecs/entity.h"
-#include "glm/glm/ext/vector_int4.hpp"
+#include "project/project.h"
+
+#include <glm/glm/ext/vector_int4.hpp>
 
 #include <algorithm>
 #include <cstdint>
@@ -27,6 +27,36 @@ class SceneDocument;
 // being edited, and the current selection.
 struct EditorContext
 {
+  bool hasSelection() const { return selection.isValid(); }
+
+  /** Whether an entity is among the selected. */
+  bool isSelected(const sfs::Entity& entity) const
+  {
+    const std::vector<sfs::Entity> all = selected();
+    return std::find(all.begin(), all.end(), entity) != all.end();
+  }
+
+  /** Everything selected (alive), `selection` first; empty if nothing is. */
+  std::vector<sfs::Entity> selected() const
+  {
+    std::vector<sfs::Entity> all;
+
+    if (!hasSelection())
+      return all;
+
+    all.push_back(selection);
+
+    if (std::find(selectionGroup.begin(), selectionGroup.end(), selection) ==
+        selectionGroup.end())
+      return all;
+
+    for (const sfs::Entity& entity : selectionGroup)
+      if (entity != selection && entity.isValid())
+        all.push_back(entity);
+
+    return all;
+  }
+
   std::optional<Project> project;
 
   EditorScene* scene = nullptr;
@@ -106,29 +136,4 @@ struct EditorContext
   // The asset selected in the Assets panel (invalid when none). The Inspector
   // shows it while no entity is selected; selecting an entity clears it.
   sfs::AssetId selectedAsset;
-
-  bool hasSelection() const { return selection.isValid(); }
-
-  /** Everything selected (alive), `selection` first; empty if nothing is. */
-  std::vector<sfs::Entity> selected() const
-  {
-    std::vector<sfs::Entity> all;
-    if (!hasSelection())
-      return all;
-    all.push_back(selection);
-    if (std::find(selectionGroup.begin(), selectionGroup.end(), selection) ==
-        selectionGroup.end())
-      return all;
-    for (const sfs::Entity& entity : selectionGroup)
-      if (entity != selection && entity.isValid())
-        all.push_back(entity);
-    return all;
-  }
-
-  /** Whether an entity is among the selected. */
-  bool isSelected(const sfs::Entity& entity) const
-  {
-    const std::vector<sfs::Entity> all = selected();
-    return std::find(all.begin(), all.end(), entity) != all.end();
-  }
 };

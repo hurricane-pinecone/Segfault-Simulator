@@ -1,11 +1,13 @@
 #include "engine/runtime/scripting/scriptRegistry.h"
 
 #include "engine/core/components/scriptComponent.h"
+#include "engine/core/ecs/entity.h"
 #include "engine/core/logger/logger.h"
 #include "engine/core/reflection/reflection.h"
 #include "engine/runtime/animation/animationSystem.h"
 #include "engine/runtime/game/gameObject.h"
 #include "engine/runtime/sceneManager/scene.h"
+#include "engine/runtime/scripting/sceneScripts.h"
 #include "engine/runtime/serialization/sceneSerializer.h"
 #include "engine/runtime/systems/cameraSystem.h"
 #include "engine/runtime/systems/navigationSystem.h"
@@ -13,6 +15,11 @@
 #include "engine/runtime/systems/physicsSystem3D.h"
 
 #include <algorithm>
+#include <memory>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
 
 namespace sfs
 {
@@ -23,16 +30,11 @@ void ScriptRegistry::add(ScriptType type)
       std::find_if(m_types.begin(),
                    m_types.end(),
                    [&](const ScriptType& t) { return t.name == type.name; });
+
   if (existing != m_types.end())
     *existing = std::move(type);
   else
     m_types.push_back(std::move(type));
-}
-
-void ScriptRegistry::removeModule(std::string_view module)
-{
-  std::erase_if(
-      m_types, [&](const ScriptType& type) { return type.module == module; });
 }
 
 const ScriptType* ScriptRegistry::find(std::string_view name) const
@@ -42,6 +44,12 @@ const ScriptType* ScriptRegistry::find(std::string_view name) const
                    m_types.end(),
                    [&](const ScriptType& type) { return type.name == name; });
   return it != m_types.end() ? &*it : nullptr;
+}
+
+void ScriptRegistry::removeModule(std::string_view module)
+{
+  std::erase_if(
+      m_types, [&](const ScriptType& type) { return type.module == module; });
 }
 
 namespace
@@ -106,14 +114,17 @@ void startScripts(Scene& scene,
   for (const std::string& name : scripts.systems)
   {
     const ScriptType* type = sfs::scripts().find(name);
+
     if (type && type->kind == ScriptType::Kind::System)
       type->addSystem(scene);
     else
       LOG_ERROR("Play: no game system named '" + name + "'");
   }
+
   for (const std::string& name : scripts.services)
   {
     const ScriptType* type = sfs::scripts().find(name);
+
     if (type && type->kind == ScriptType::Kind::Service)
       type->addService(scene);
     else
@@ -131,6 +142,7 @@ void startObjects(Scene& scene,
 
   // Entities first, then attach: onCreate may create more entities.
   std::vector<Entity> scripted;
+
   for (const Entity& entity : entities)
     if (ScriptComponent* script = entity.getComponent<ScriptComponent>();
         script && !script->script.empty())
@@ -140,9 +152,12 @@ void startObjects(Scene& scene,
   {
     // An earlier onCreate may have destroyed it.
     const ScriptComponent* component = entity.getComponent<ScriptComponent>();
+
     if (!component)
       continue;
+
     const ScriptType* type = scripts().find(component->script);
+
     if (!type || type->kind != ScriptType::Kind::GameObject ||
         !type->createObject)
     {
@@ -152,10 +167,12 @@ void startObjects(Scene& scene,
     }
 
     std::unique_ptr<GameObject> object = type->createObject();
+
     // This entity's field values, from the editor, before onCreate sees them.
     if (const reflect::TypeInfo* info =
             reflect::types().find(component->script))
       serializer.loadObject(*info, object.get(), component->fields);
+
     scene.adoptObject(std::move(object), entity);
   }
 }

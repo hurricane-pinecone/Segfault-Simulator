@@ -17,12 +17,6 @@ namespace sfs
 class ModuleHost
 {
 public:
-  ModuleHost() = default;
-  ~ModuleHost() { unload(); }
-
-  ModuleHost(const ModuleHost&) = delete;
-  ModuleHost& operator=(const ModuleHost&) = delete;
-
   enum class Load
   {
     InPlace,
@@ -32,6 +26,14 @@ public:
     // rebuild and reload.
     FromCopy,
   };
+
+  ModuleHost() = default;
+
+  ModuleHost(const ModuleHost&) = delete;
+
+  ~ModuleHost() { unload(); }
+
+  ModuleHost& operator=(const ModuleHost&) = delete;
 
   /**
    * Load `module` and register its types under `moduleName`.
@@ -43,12 +45,6 @@ public:
             const std::string& moduleName,
             Load mode = Load::InPlace);
 
-  /**
-   * Unregister the module's types and unload it, forgetting the loaded
-   * scriptable objects of its types first. No-op when none is loaded.
-   */
-  void unload();
-
   bool loaded() const { return m_handle != nullptr; }
 
   /**
@@ -56,6 +52,12 @@ public:
    * often.
    */
   void setQuiet(bool quiet) { m_quiet = quiet; }
+
+  /**
+   * Unregister the module's types and unload it, forgetting the loaded
+   * scriptable objects of its types first. No-op when none is loaded.
+   */
+  void unload();
 
 private:
   void* m_handle = nullptr;

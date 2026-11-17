@@ -7,9 +7,11 @@
 #include "engine/core/particles/particle.h"
 #include "engine/core/particles/particleEffect.h"
 #include "engine/core/types/blendMode.h"
-#include "glm/glm/common.hpp"
-#include "glm/glm/ext/vector_float2.hpp"
-#include "glm/glm/ext/vector_int2.hpp"
+
+#include <glm/glm/common.hpp>
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_float4.hpp>
+
 #include <cstdint>
 #include <string>
 #include <unordered_map>
@@ -66,14 +68,6 @@ struct ParticleSpriteBatch
 class ParticleEngine
 {
 public:
-  // The registry the entity-emitter sync reads from (set by the owning module).
-  void setRegistry(Registry* r) { registry = r; }
-
-  // Register (or replace) an effect under a name. The name keys spawnBurst()
-  // and ParticleEmitterComponent::effect.
-  void registerEffect(const std::string& name, const ParticleEffectDesc& desc);
-  bool hasEffect(const std::string& name) const;
-
   // The registered effect's description, or nullptr if unknown. Lets a live
   // editor read a desc, tweak fields, and re-register it (registerEffect
   // replaces by name) to reconfigure the running game.
@@ -83,17 +77,21 @@ public:
   // what can be spawned/configured).
   std::vector<std::string> effectNames() const;
 
-  // Fire a one-shot burst at a world tile position sitting on the given ground
-  // elevation level. The optional spawn params inject impact
-  // momentum/direction. Returns false if the effect name is unknown.
-  bool spawnBurst(const std::string& effect,
-                  glm::vec2 worldPos,
-                  float elevation = 0.0f,
-                  const ParticleSpawnParams& spawn = {});
+  // Ground elevation at a world position, from the collision source (0 if none
+  // is set). Lets a caller spawn a burst on the terrain without its own lookup.
+  float groundElevationAt(glm::vec2 worldPos) const
+  {
+    return m_collisionSource ? m_collisionSource->groundElevation(worldPos)
+                             : 0.0f;
+  }
 
-  // Optional decal sink. When set, particles whose effect has leavesDecal stamp
-  // a persistent mark on the surface they hit.
-  void setDecalSink(IDecalSink* sink) { m_decalSink = sink; }
+  bool hasEffect(const std::string& name) const;
+
+  int liveParticleCount() const;
+
+  // Register (or replace) an effect under a name. The name keys spawnBurst()
+  // and ParticleEmitterComponent::effect.
+  void registerEffect(const std::string& name, const ParticleEffectDesc& desc);
 
   // The surface particles collide with and stick to (terrain heightfield or
   // scene colliders). When set, world particles with a GroundBehavior stick to
@@ -104,35 +102,39 @@ public:
     m_collisionSource = source;
   }
 
-  int liveParticleCount() const;
+  // Optional decal sink. When set, particles whose effect has leavesDecal stamp
+  // a persistent mark on the surface they hit.
+  void setDecalSink(IDecalSink* sink) { m_decalSink = sink; }
 
   // Global ceiling on total live particles across every emitter + burst. Once
   // reached, new emissions are dropped (graceful) so stacked effects can't run
   // the particle count -- and the frame cost -- away.
   void setMaxParticles(int max) { m_maxParticles = max; }
 
-  // Ground elevation at a world position, from the collision source (0 if none
-  // is set). Lets a caller spawn a burst on the terrain without its own lookup.
-  float groundElevationAt(glm::vec2 worldPos) const
-  {
-    return m_collisionSource ? m_collisionSource->groundElevation(worldPos)
-                             : 0.0f;
-  }
-
-  // Advance every emitter and burst.
-  void simulate(double deltaTime);
+  // The registry the entity-emitter sync reads from (set by the owning module).
+  void setRegistry(Registry* r) { registry = r; }
 
   // How fast particles' time runs (1 as it is; 0 freezes them where they are
   // and stops emitting: a paused game).
   void setTimeScale(float scale) { m_timeScale = glm::max(scale, 0.0f); }
-  float timeScale() const { return m_timeScale; }
+
+  // Advance every emitter and burst.
+  void simulate(double deltaTime);
+
+  // Fire a one-shot burst at a world tile position sitting on the given ground
+  // elevation level. The optional spawn params inject impact
+  // momentum/direction. Returns false if the effect name is unknown.
+  bool spawnBurst(const std::string& effect,
+                  glm::vec2 worldPos,
+                  float elevation = 0.0f,
+                  const ParticleSpawnParams& spawn = {});
 
   // The live particles as drawn, a batch an effect instance.
   void sprites(std::vector<ParticleSpriteBatch>& out) const;
 
-private:
-  Registry* registry = nullptr;
+  float timeScale() const { return m_timeScale; }
 
+private:
   using EffectId = int;
 
   struct EmitterInstance
@@ -186,15 +188,20 @@ private:
     uint32_t rng = 0x9e3779b9u;
   };
 
-  EffectId effectIdOf(const std::string& name) const;
+  // The scene's wind this update (Wind: its velocity across the plane), and
+  // the enabled wind zones there (WindZoneComponent): where each is, how far
+  // it reaches and its wind. Rebuilt each update; its room is kept.
+  struct WindZoneArea
+  {
+    glm::vec2 center{0.0f};
+    float radius = 0.0f;
+    glm::vec2 wind{0.0f};
+  };
 
   static void applySpawnParams(EmitterInstance& inst,
                                const ParticleSpawnParams& spawn);
-  void emitParticles(EmitterInstance& inst,
-                     const ParticleEffectDesc& desc,
-                     int count);
-  void
-  stepInstance(EmitterInstance& inst, const ParticleEffectDesc& desc, float dt);
+
+  EffectId effectIdOf(const std::string& name) const;
 
   // Stamp the splatter for a collision: the shaper produces the marks, then the
   // hit's surface (ground/water vs wall) decides how they're placed.
@@ -202,8 +209,23 @@ private:
                  const ParticleEffectDesc& desc,
                  const Particle& p,
                  const ParticleHit& hit);
+
+  void emitParticles(EmitterInstance& inst,
+                     const ParticleEffectDesc& desc,
+                     int count);
+
+  // Read the scene's wind and its zones (none without a registry).
+  void gatherWind();
+
+  void
+  stepInstance(EmitterInstance& inst, const ParticleEffectDesc& desc, float dt);
+
   void syncComponentEmitters(float dt);
 
+  // The wind at a point of the plane: the scene's, and each zone's there.
+  glm::vec2 windAt(const glm::vec2& point) const;
+
+  Registry* registry = nullptr;
   const IParticleCollisionSource* m_collisionSource = nullptr;
   IDecalSink* m_decalSink = nullptr;
 
@@ -214,25 +236,8 @@ private:
   // fire-and-forget bursts. Both drain their particles before being dropped.
   std::unordered_map<Entity::EntityId, EmitterInstance> m_entityEmitters;
   std::vector<EmitterInstance> m_bursts;
-
-  // The scene's wind this update (Wind: its velocity across the plane), and
-  // the enabled wind zones there (WindZoneComponent): where each is, how far
-  // it reaches and its wind. Rebuilt each update; its room is kept.
-  struct WindZoneArea
-  {
-    glm::vec2 center{0.0f};
-    float radius = 0.0f;
-    glm::vec2 wind{0.0f};
-  };
   glm::vec2 m_wind{0.0f};
   std::vector<WindZoneArea> m_windZones;
-
-  // Read the scene's wind and its zones (none without a registry).
-  void gatherWind();
-
-  // The wind at a point of the plane: the scene's, and each zone's there.
-  glm::vec2 windAt(const glm::vec2& point) const;
-
   // Global live-particle ceiling (see setMaxParticles).
   int m_maxParticles = 6000;
   float m_timeScale = 1.0f;

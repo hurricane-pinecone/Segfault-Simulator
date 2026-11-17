@@ -5,12 +5,27 @@
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/ecs/registry.h"
 #include "engine/core/hierarchy/hierarchy.h"
+#include "engine/core/rendering/mesh.h"
 #include "engine/runtime/assetStore/assetStore.h"
+#include "engine/runtime/rendering/commands.h"
+#include "engine/runtime/rendering/frame.h"
 #include "engine/runtime/rendering/meshLibrary.h"
 #include "engine/runtime/rendering/modules/imageQuads.h"
-#include "glm/glm/geometric.hpp"
+#include "engine/runtime/rendering/renderContext.h"
+#include "engine/runtime/rendering/space2D.h"
 
-#include <algorithm>
+#include <glm/glm/common.hpp>
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
+#include <glm/glm/geometric.hpp>
+
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <optional>
+#include <unordered_map>
+#include <utility>
 
 namespace sfs
 {
@@ -22,9 +37,11 @@ namespace
 bool hasSoftEdges(const TextureData& texture)
 {
   std::size_t soft = 0;
+
   for (std::size_t i = 3; i < texture.rgba.size(); i += 4)
     if (texture.rgba[i] > 8 && texture.rgba[i] < 247)
       ++soft;
+
   return soft * 50 > texture.rgba.size() / 4; // over 2% of it
 }
 } // namespace
@@ -34,43 +51,21 @@ SpriteModule::SpriteModule(AssetStore& assets, Facing facing)
 {
 }
 
-MaterialHandle SpriteModule::material(MeshLibrary& meshes,
-                                      const std::string& sheet,
-                                      const std::string& normalSheet)
-{
-  // Made again if its image has been (its file or settings changed).
-  const std::string name = "sprite:" + sheet + "|" + normalSheet;
-  const std::shared_ptr<const TextureData> image = m_assets.imageTexture(sheet);
-  if (const auto it = m_materials.find(name);
-      it != m_materials.end() && it->second.image == image.get())
-    return it->second.handle;
-
-  const MeshMaterial material = imageMaterial(
-      m_assets,
-      sheet,
-      normalSheet,
-      image && hasSoftEdges(*image) ? AlphaMode::Blend : AlphaMode::Mask);
-  const MaterialHandle handle = meshes.setMaterial(name, material);
-  m_materials[name] = {handle, image.get()};
-  if (material.alphaMode == AlphaMode::Blend)
-    m_softMaterials.insert(handle.id);
-  else
-    m_softMaterials.erase(handle.id);
-  return handle;
-}
-
 void SpriteModule::computeCommands(const RenderContext& context)
 {
   flush();
   m_placed.clear();
+
   if (!m_registry || !context.meshes || !context.camera)
     return;
+
   const bool flat =
       m_facing == Facing::Flat || (m_facing == Facing::Auto && context.space2D);
   const Space2D space = context.space2D ? *context.space2D : Space2D{};
   const float defaultPixels =
       context.space2D ? space.pixelsPerUnit : m_pixelsPerUnit;
   MeshLibrary& meshes = *context.meshes;
+
   if (!m_quad.valid())
     m_quad = imageQuad(meshes);
 
@@ -80,15 +75,19 @@ void SpriteModule::computeCommands(const RenderContext& context)
   const glm::vec3 toward = glm::cross(across, up);
 
   std::unordered_map<uint32_t, std::size_t> byMaterial; // into m_commands
+
   for (auto [entity, sprite, local] :
        m_registry->query<SpriteComponent, TransformComponent>())
   {
     if (sprite.image.empty())
       continue;
+
     std::optional<AssetStore::SpriteFrame> found =
         m_assets.spriteFrame(sprite.image, sprite.frame);
+
     if (!found)
       continue;
+
     const AssetStore::SpriteFrame& frame = *found;
     const MaterialHandle look =
         material(meshes, sprite.image, sprite.normalMap);
@@ -113,6 +112,7 @@ void SpriteModule::computeCommands(const RenderContext& context)
     const glm::vec2 extent = glm::abs(size);
 
     MeshInstance instance;
+
     if (flat)
     {
       // Turned as the game's plane turns (the other way, if its y runs down).
@@ -141,38 +141,75 @@ void SpriteModule::computeCommands(const RenderContext& context)
       instance.model[3] = glm::vec4(
           transform.position + across * centre.x + up * centre.y, 1.0f);
     }
+
     instance.tint = sprite.tint;
     instance.uvRect = frame.uvRect;
+
     if (size.x < 0.0f)
       instance.uvRect = {instance.uvRect.x + instance.uvRect.z,
                          instance.uvRect.y,
                          -instance.uvRect.z,
                          instance.uvRect.w};
+
     if (size.y < 0.0f)
       instance.uvRect = {instance.uvRect.x,
                          instance.uvRect.y + instance.uvRect.w,
                          instance.uvRect.z,
                          -instance.uvRect.w};
+
     m_placed[entity.getId()] = instance.model;
 
     auto [at, added] = byMaterial.emplace(look.id, m_commands.size());
+
     if (added)
     {
       MeshDrawCommand command;
+
       if (m_softMaterials.contains(look.id))
         command.pass = RenderPass::Transparent;
+
       command.mesh = m_quad;
       command.materials = {look};
       m_commands.push_back(std::move(command));
     }
+
     MeshDrawCommand& command = m_commands[at->second];
     command.instances.push_back(instance);
+
     if (sprite.castsShadow)
     {
       command.shadowInstances.push_back(instance);
       command.lightShadowInstances.push_back(instance);
     }
   }
+}
+
+MaterialHandle SpriteModule::material(MeshLibrary& meshes,
+                                      const std::string& sheet,
+                                      const std::string& normalSheet)
+{
+  // Made again if its image has been (its file or settings changed).
+  const std::string name = "sprite:" + sheet + "|" + normalSheet;
+  const std::shared_ptr<const TextureData> image = m_assets.imageTexture(sheet);
+
+  if (const auto it = m_materials.find(name);
+      it != m_materials.end() && it->second.image == image.get())
+    return it->second.handle;
+
+  const MeshMaterial material = imageMaterial(
+      m_assets,
+      sheet,
+      normalSheet,
+      image && hasSoftEdges(*image) ? AlphaMode::Blend : AlphaMode::Mask);
+  const MaterialHandle handle = meshes.setMaterial(name, material);
+  m_materials[name] = {handle, image.get()};
+
+  if (material.alphaMode == AlphaMode::Blend)
+    m_softMaterials.insert(handle.id);
+  else
+    m_softMaterials.erase(handle.id);
+
+  return handle;
 }
 
 } // namespace sfs

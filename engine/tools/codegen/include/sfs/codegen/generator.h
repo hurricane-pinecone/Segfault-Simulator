@@ -2,6 +2,7 @@
 
 #include "sfs/codegen/model.h"
 
+#include <cstdint>
 #include <filesystem>
 #include <span>
 #include <string>
@@ -131,7 +132,8 @@ NameLookup lookUpName(std::string_view spelling,
  */
 std::string_view cppTypeOfKind(std::string_view kind);
 
-/** "castsShadow" -> "Casts Shadow", "MeshRendererComponent" -> "Mesh Renderer". */
+/** "castsShadow" -> "Casts Shadow", "MeshRendererComponent" -> "Mesh Renderer".
+ */
 std::string displayName(std::string_view identifier, bool stripComponentSuffix);
 
 } // namespace sfs::codegen

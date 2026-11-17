@@ -1,13 +1,14 @@
 #pragma once
 
 #include "component.h"
-#include "engine/core/ecs/entity.h"
+#include "engine/core/ecs/entityDeclaration.h"
 #include "engine/core/ecs/moduleSettings.h"
 #include "engine/core/ecs/query.h"
 #include "engine/core/events/eventVerbs.h"
 
-#include <cstdint>
+#include <cstddef>
 #include <functional>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -43,8 +44,25 @@ int systemLookupId()
 class System : public EventVerbs
 {
 public:
+  // How the scene's game time (Registry::timeScale()) reaches update().
+  // Stepped, the default: game time, in steps no longer than the registry's
+  // longest step (several a frame when the game runs fast), so what steers,
+  // follows a path or meets other moving things does the same at any speed.
+  // Frame: a frame's game time in one step (what only adds time up, or costs
+  // too much to run more than once a frame). Real: real time, whatever the
+  // time scale (rendering, cameras).
+  enum class TimeStep
+  {
+    Stepped,
+    Frame,
+    Real
+  };
+
   System() = default;
   virtual ~System() = default;
+
+  /** What an entity must match to be one of getEntities(). */
+  const QuerySignature& getComponentSignature() const;
 
   /**
    * The entities this system works on: the living, flushed entities that
@@ -63,37 +81,24 @@ public:
   template <typename... TTerms>
   QueryView<TTerms...> getEntities() const;
 
-  /** What an entity must match to be one of getEntities(). */
-  const QuerySignature& getComponentSignature() const;
-
-  // How the scene's game time (Registry::timeScale()) reaches update().
-  // Stepped, the default: game time, in steps no longer than the registry's
-  // longest step (several a frame when the game runs fast), so what steers,
-  // follows a path or meets other moving things does the same at any speed.
-  // Frame: a frame's game time in one step (what only adds time up, or costs
-  // too much to run more than once a frame). Real: real time, whatever the
-  // time scale (rendering, cameras).
-  enum class TimeStep
-  {
-    Stepped,
-    Frame,
-    Real
-  };
-  TimeStep timeStep() const { return m_timeStep; }
   void setTimeStep(TimeStep step) { m_timeStep = step; }
 
   // UI-agnostic descriptors for a system's debug settings, surfaced by the
   // debug panel the same way render modules expose theirs. Default: none.
   virtual std::vector<ModuleSetting> settings() { return {}; }
 
+  TimeStep timeStep() const { return m_timeStep; }
+
 protected:
+  /** A callback observe() calls with the entity joining or leaving. */
+  using EntityCallback = std::function<void(const Entity&)>;
+
   /**
    * Sets the system up, once, when it's added to a registry, with its
    * registry set: registers components and observers, sets its time step,
    * builds what it builds once. The constructor only initialises members.
    */
   virtual void create(){};
-  virtual void update(double deltatime){};
   /**
    * Runs once a frame after every game object's onUpdate() (Unity's
    * LateUpdate): for what must follow what the objects did, such as a camera
@@ -104,8 +109,20 @@ protected:
    * @param deltaTime the frame's time, as above
    */
   virtual void lateUpdate(double deltaTime){};
-  virtual void render(){};
-
+  /**
+   * Reacts as another kind of entity, those matching TTerms (components and
+   * filter groups, as Registry::query() takes them), joins or leaves (set
+   * something up for a new wheel, release it as it goes), with the same
+   * timing as onEntityAdded() and onEntityRemoved(). Read the list itself
+   * with registry->query<TTerms...>(). Call it where the components are
+   * registered, in create(). Only use it where a reaction is needed; to just
+   * read a list, query it.
+   * @param added called as one joins, e.g.
+   *   `[this](const sfs::Entity& wheel) { setUpWheel(wheel); }`
+   * @param removed called as one leaves (none: nothing to release)
+   */
+  template <typename... TTerms>
+  void observe(EntityCallback added, EntityCallback removed = {});
   /**
    * One of this system's entities (getEntities()) joined (onEntityAdded) or
    * left (onEntityRemoved). It joins when it is flushed (a new entity), gains
@@ -142,59 +159,9 @@ protected:
    */
   template <typename TTerm>
   void registerComponent();
+  virtual void render(){};
+  virtual void update(double deltatime){};
 
-  /** A callback observe() calls with the entity joining or leaving. */
-  using EntityCallback = std::function<void(const Entity&)>;
-
-  /**
-   * Reacts as another kind of entity, those matching TTerms (components and
-   * filter groups, as Registry::query() takes them), joins or leaves (set
-   * something up for a new wheel, release it as it goes), with the same
-   * timing as onEntityAdded() and onEntityRemoved(). Read the list itself
-   * with registry->query<TTerms...>(). Call it where the components are
-   * registered, in create(). Only use it where a reaction is needed; to just
-   * read a list, query it.
-   * @param added called as one joins, e.g.
-   *   `[this](const sfs::Entity& wheel) { setUpWheel(wheel); }`
-   * @param removed called as one leaves (none: nothing to release)
-   */
-  template <typename... TTerms>
-  void observe(EntityCallback added, EntityCallback removed = {});
-
-private:
-  void setRegistry(Registry* registry) { this->registry = registry; }
-
-  // Adds an observer; if the system is already in a registry, it follows it
-  // from now on (told of the entities already there).
-  void addObserver(const QuerySignature& signature,
-                   EntityCallback added,
-                   EntityCallback removed);
-  // A registerComponent() after the system was added to a registry: logged,
-  // as it can't change the list it already follows.
-  void warnLateRegister() const;
-  // A registerComponent() of a second Any<...> group (its type key, from
-  // detail::componentTypeKey()): logged and ignored.
-  void warnSecondAny(std::string_view groupKey) const;
-  // getEntities<...>() asked for terms the registered ones don't imply (the
-  // type key of the first it can't vouch for): logged.
-  void warnNotImplied(std::string_view termKey) const;
-  // registerComponent() of each of a Query list's terms (the pointer only
-  // carries the type).
-  template <typename... TTerms>
-  void registerEach(const Query<TTerms...>*)
-  {
-    (registerComponent<TTerms>(), ...);
-  }
-
-  // How many lists it follows (its entities, then each observer's) and the
-  // signature of list `index` (0: the registered entities, k: observer k-1).
-  std::size_t listCount() const { return 1 + m_observers.size(); }
-  const QuerySignature& signatureOf(std::size_t index) const;
-  // List `index` gained or lost an entity: the hook or callback for it.
-  void tellJoined(std::size_t index, const Entity& entity);
-  void tellLeft(std::size_t index, const Entity& entity);
-
-protected:
   Registry* registry = nullptr;
 
 private:
@@ -204,15 +171,45 @@ private:
     EntityCallback added;
     EntityCallback removed;
   };
+  friend class Registry;
+  friend class Scene;
+
+  // Adds an observer; if the system is already in a registry, it follows it
+  // from now on (told of the entities already there).
+  void addObserver(const QuerySignature& signature,
+                   EntityCallback added,
+                   EntityCallback removed);
+  // How many lists it follows (its entities, then each observer's) and the
+  // signature of list `index` (0: the registered entities, k: observer k-1).
+  std::size_t listCount() const { return 1 + m_observers.size(); }
+  // registerComponent() of each of a Query list's terms (the pointer only
+  // carries the type).
+  template <typename... TTerms>
+  void registerEach(const Query<TTerms...>*)
+  {
+    (registerComponent<TTerms>(), ...);
+  }
+  void setRegistry(Registry* registry) { this->registry = registry; }
+  const QuerySignature& signatureOf(std::size_t index) const;
+  // List `index` gained or lost an entity: the hook or callback for it.
+  void tellJoined(std::size_t index, const Entity& entity);
+  void tellLeft(std::size_t index, const Entity& entity);
+  // A registerComponent() after the system was added to a registry: logged,
+  // as it can't change the list it already follows.
+  void warnLateRegister() const;
+  // getEntities<...>() asked for terms the registered ones don't imply (the
+  // type key of the first it can't vouch for): logged.
+  void warnNotImplied(std::string_view termKey) const;
+  // A registerComponent() of a second Any<...> group (its type key, from
+  // detail::componentTypeKey()): logged and ignored.
+  void warnSecondAny(std::string_view groupKey) const;
+
   QuerySignature m_signature;        // registerComponent()'s
   std::vector<Observer> m_observers; // in declaration order
   // The registry's query list for m_signature, then for each observer, set
   // when the system is added to a registry.
   std::vector<const detail::QueryList*> m_lists;
   TimeStep m_timeStep = TimeStep::Stepped;
-
-  friend class Registry;
-  friend class Scene;
 };
 
 template <typename TTerm>
@@ -223,6 +220,7 @@ void System::registerComponent()
     warnLateRegister();
     return;
   }
+
   if constexpr (detail::isQueryList<TTerm>)
   {
     static_assert(detail::QueryTerm<TTerm>::anyGroups <= 1,

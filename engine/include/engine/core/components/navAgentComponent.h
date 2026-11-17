@@ -1,8 +1,9 @@
 #pragma once
 
 #include "engine/core/ecs/entity.h"
-#include "glm/glm/ext/matrix_float4x4.hpp"
-#include "glm/glm/ext/vector_float3.hpp"
+
+#include <glm/glm/ext/matrix_float4x4.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
 
 #include <cstdint>
 #include <limits>

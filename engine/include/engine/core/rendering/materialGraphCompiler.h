@@ -3,7 +3,11 @@
 #include "engine/core/rendering/materialGraph.h"
 #include "engine/core/rendering/materialNodes.h"
 
+#include <glm/glm/ext/vector_float3.hpp>
+#include <glm/glm/ext/vector_float4.hpp>
+
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <span>
@@ -52,11 +56,14 @@ struct SurfaceValues
 class MaterialShader
 {
 public:
-  const std::string& wgsl() const { return m_wgsl; }
-
-  /** How many vec4 parameters, and textures, a material of it supplies. */
-  std::size_t parameterCount() const { return m_parameterCount; }
-  std::size_t textureCount() const { return m_textureCount; }
+  /**
+   * The surface at a point, worked out on the CPU (for software previews).
+   * Missing parameters read 0 and missing textures white.
+   */
+  SurfaceValues
+  evaluate(const SurfacePoint& point,
+           std::span<const glm::vec4> parameters,
+           std::span<const std::shared_ptr<const TextureData>> textures) const;
 
   /**
    * What texture `index` reads while a material has no image for it: white,
@@ -68,6 +75,9 @@ public:
     return index < m_missingTextures.size() ? m_missingTextures[index]
                                             : glm::vec4(1.0f);
   }
+
+  /** How many vec4 parameters, and textures, a material of it supplies. */
+  std::size_t parameterCount() const { return m_parameterCount; }
 
   /**
    * What the Material Output's input `output` (kBaseColor..kBloom)
@@ -81,14 +91,9 @@ public:
                                          : PointInputs::None;
   }
 
-  /**
-   * The surface at a point, worked out on the CPU (for software previews).
-   * Missing parameters read 0 and missing textures white.
-   */
-  SurfaceValues
-  evaluate(const SurfacePoint& point,
-           std::span<const glm::vec4> parameters,
-           std::span<const std::shared_ptr<const TextureData>> textures) const;
+  std::size_t textureCount() const { return m_textureCount; }
+
+  const std::string& wgsl() const { return m_wgsl; }
 
 private:
   friend struct Compiler;
@@ -105,6 +110,7 @@ private:
       ToView,
       Position,
     };
+
     Kind kind = Kind::Parameter;
     uint32_t index = 0; // register or parameter
     ValueType from = ValueType::Float;

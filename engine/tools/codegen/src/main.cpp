@@ -1,11 +1,15 @@
 #include "sfs/codegen/generator.h"
+#include "sfs/codegen/model.h"
 #include "sfs/codegen/parser.h"
+#include "sfs/codegen/rules.h"
 
 #include <cstdio>
+#include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
-#include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 // sfs-codegen: generate reflection registration for script headers.
@@ -60,8 +64,10 @@ void writeIfChanged(const std::filesystem::path& path, const std::string& text)
 {
   if (std::filesystem::exists(path) && sfs::codegen::readFile(path) == text)
     return;
+
   if (path.has_parent_path())
     std::filesystem::create_directories(path.parent_path());
+
   std::ofstream(path, std::ios::binary) << text;
 }
 
@@ -83,23 +89,29 @@ bool generateTraits(const std::vector<sfs::codegen::ParseResult>& results,
   std::vector<sfs::codegen::EventModel> events;
   std::vector<std::string> plainTypes;
   std::vector<sfs::codegen::TypeModel> sceneData;
+
   for (const sfs::codegen::ParseResult& result : results)
   {
     events.insert(events.end(), result.events.begin(), result.events.end());
     plainTypes.insert(
         plainTypes.end(), result.plainTypes.begin(), result.plainTypes.end());
+
     if (result.type && result.type->kind == sfs::codegen::TypeKind::SceneData)
       sceneData.push_back(*result.type);
+
     for (const sfs::codegen::TypeModel& type : result.components)
       if (type.kind == sfs::codegen::TypeKind::SceneData)
         sceneData.push_back(type);
   }
+
   std::vector<sfs::codegen::Diagnostic> diagnostics;
   generated =
       sfs::codegen::generateEventTraits(events, plainTypes, diagnostics) +
       sfs::codegen::generateSceneDataTraits(sceneData);
+
   for (const sfs::codegen::Diagnostic& diagnostic : diagnostics)
     print(diagnostic);
+
   return diagnostics.empty();
 }
 
@@ -110,10 +122,12 @@ bool scanEvents(const std::vector<std::filesystem::path>& files,
                 std::vector<sfs::codegen::ParseResult>& results)
 {
   bool failed = false;
+
   for (const std::filesystem::path& file : files)
   {
     sfs::codegen::ParseResult& result = results.emplace_back(
         sfs::codegen::parseHeader(sfs::codegen::readFile(file), file));
+
     for (const sfs::codegen::Diagnostic& diagnostic : result.diagnostics)
       if (aboutTraits(diagnostic))
       {
@@ -121,6 +135,7 @@ bool scanEvents(const std::vector<std::filesystem::path>& files,
         failed |= isError(diagnostic);
       }
   }
+
   return !failed;
 }
 
@@ -135,37 +150,47 @@ bool generateScripts(const std::vector<std::filesystem::path>& headers,
   std::vector<sfs::codegen::ParseResult> results;
   results.reserve(headers.size() + eventSources.size());
   bool failed = false;
+
   for (const std::filesystem::path& header : headers)
   {
     sfs::codegen::ParseResult& result = results.emplace_back(
         sfs::codegen::parseHeader(sfs::codegen::readFile(header), header));
+
     for (const sfs::codegen::Diagnostic& diagnostic : result.diagnostics)
     {
       print(diagnostic);
       failed |= isError(diagnostic);
     }
   }
-  if (traits && (!scanEvents(eventSources, results) ||
-                 !generateTraits(results, *traits)))
+
+  if (traits &&
+      (!scanEvents(eventSources, results) || !generateTraits(results, *traits)))
     failed = true;
+
   // The headers' types, taken once the traits have read them.
   std::vector<sfs::codegen::TypeModel> types;
+
   for (std::size_t i = 0; i < headers.size(); ++i)
   {
     sfs::codegen::ParseResult& result = results[i];
+
     if (result.type)
       types.push_back(std::move(*result.type));
+
     for (sfs::codegen::TypeModel& type : result.components)
       types.push_back(std::move(type));
   }
+
   for (const sfs::codegen::Diagnostic& diagnostic :
        sfs::codegen::checkNames(types))
   {
     print(diagnostic);
     failed = true;
   }
+
   if (failed)
     return false;
+
   generated = sfs::codegen::generateRegistration(types, options);
   return true;
 }
@@ -192,6 +217,7 @@ int main(int argc, char* argv[])
         usage();
         std::exit(2);
       }
+
       return argv[++i];
     };
 
@@ -229,11 +255,14 @@ int main(int argc, char* argv[])
       usage();
       return 2;
     }
+
     std::vector<sfs::codegen::ParseResult> results;
     const bool scanned = scanEvents(headers, results);
     std::string traits;
+
     if (!generateTraits(results, traits) || !scanned)
       return 1;
+
     writeIfChanged(traitsOutput, traits);
     return 0;
   }
@@ -245,29 +274,36 @@ int main(int argc, char* argv[])
   }
 
   std::string generated;
+
   if (uiPreviews)
   {
     std::vector<sfs::codegen::UiTypeModel> types;
+
     for (const std::filesystem::path& header : headers)
     {
       sfs::codegen::UiParseResult result =
           sfs::codegen::parseUiHeader(sfs::codegen::readFile(header), header);
+
       for (const sfs::codegen::Diagnostic& diagnostic : result.diagnostics)
         print(diagnostic);
+
       for (sfs::codegen::UiTypeModel& type : result.types)
         types.push_back(std::move(type));
     }
+
     generated = sfs::codegen::generateUiPreviews(types, options);
   }
   else
   {
     std::string traits;
+
     if (!generateScripts(headers,
                          eventSources,
                          options,
                          generated,
                          traitsOutput.empty() ? nullptr : &traits))
       return 1;
+
     if (!traitsOutput.empty())
       writeIfChanged(traitsOutput, traits);
   }

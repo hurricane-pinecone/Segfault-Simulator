@@ -10,12 +10,12 @@ namespace theme
 
 namespace
 {
+std::string g_uiFontFile; // the UI font loadUiFont found
+
 ImVec4 rgb(int r, int g, int b, float a = 1.0f)
 {
   return ImVec4(r / 255.0f, g / 255.0f, b / 255.0f, a);
 }
-
-std::string g_uiFontFile; // the UI font loadUiFont found
 } // namespace
 
 void apply()
@@ -50,10 +50,10 @@ void apply()
 
   // Colours: warm charcoal greys, a hint of green in them, and sage for
   // anything selected, active or in focus.
-  const ImVec4 base = rgb(46, 49, 48);      // windows
-  const ImVec4 raised = rgb(53, 56, 55);    // child panes, popups
-  const ImVec4 deep = rgb(38, 40, 39);      // title bars, menu bar
-  const ImVec4 frame = rgb(63, 67, 65);     // fields
+  const ImVec4 base = rgb(46, 49, 48);   // windows
+  const ImVec4 raised = rgb(53, 56, 55); // child panes, popups
+  const ImVec4 deep = rgb(38, 40, 39);   // title bars, menu bar
+  const ImVec4 frame = rgb(63, 67, 65);  // fields
   const ImVec4 frameHover = rgb(72, 77, 74);
   const ImVec4 frameActive = rgb(80, 86, 82);
   // Pastel for accents (lines, marks); deeper shades where text sits on it.
@@ -130,6 +130,7 @@ void apply()
 void loadUiFont()
 {
   ImFontAtlas* atlas = ImGui::GetIO().Fonts;
+
   if (!atlas->Fonts.empty())
     return;
 
@@ -149,8 +150,10 @@ void loadUiFont()
   for (const char* path : candidates)
   {
     std::error_code error;
+
     if (!std::filesystem::exists(path, error))
       continue;
+
     // Sizes are chosen when used (ImGui 1.92 bakes glyphs on demand); the UI
     // is drawn at style.FontSizeBase.
     if (atlas->AddFontFromFileTTF(path, 0.0f))
@@ -163,9 +166,6 @@ void loadUiFont()
   }
 }
 
-const std::string& uiFontFile()
-{
-  return g_uiFontFile;
-}
+const std::string& uiFontFile() { return g_uiFontFile; }
 
 } // namespace theme

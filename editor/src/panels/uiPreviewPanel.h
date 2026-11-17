@@ -1,11 +1,14 @@
 #pragma once
 
-#include "panels/panel.h"
-
 #include "engine/runtime/rendering/backend/iRenderBackend.h"
+#include "engine/runtime/rendering/backend/renderTarget.h"
 #include "engine/runtime/rendering/iRenderer.h"
 #include "engine/runtime/scripting/moduleHost.h"
+#include "panels/panel.h"
 
+#include <glm/glm/ext/vector_float2.hpp>
+
+#include <cstddef>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -52,7 +55,11 @@ public:
    */
   void dropObjects();
 
-  void update(EditorContext& context) override;
+  /**
+   * Unload the UI Preview module (another project's opening): the game's
+   * previews show until the next.
+   */
+  void dropPreviewModule();
 
   /**
    * Show the previews of the UI Preview module at `module`, freshly built, in
@@ -61,33 +68,17 @@ public:
   void loadPreviewModule(const std::filesystem::path& module);
   /** Whether the UI files last failed to build (the panel says so). */
   void setBuildFailed(bool failed) { m_buildFailed = failed; }
-  /**
-   * Unload the UI Preview module (another project's opening): the game's
-   * previews show until the next.
-   */
-  void dropPreviewModule();
+
+  void update(EditorContext& context) override;
 
 protected:
-  void drawContents(EditorContext& context) override;
   void beforeBegin() override;
+  void drawContents(EditorContext& context) override;
 
 private:
   // Every preview there is: the UI Preview module's (the UI files', fresh),
   // and the game's for the files it hasn't (scripts: a layer's).
   std::vector<const sfs::ui::Preview*> allPreviews() const;
-  // The previews of the file shown (m_unit): its views', then its declared
-  // ones.
-  std::vector<const sfs::ui::Preview*> shownPreviews() const;
-  // `view` in the styles declared in the file shown.
-  sfs::ui::View styled(sfs::ui::View view) const;
-  // The layer to show: the playing scene's, or the preview's copy (made now
-  // if need be); null if there's none.
-  sfs::ui::Layer* layer(EditorContext& context);
-  // The UI module laying the UI out (made if need be), in the game's look.
-  sfs::UiModule& uiModule(EditorContext& context);
-  void followCode();
-  // Show the tab covered again once the last UI file's closed in Code.
-  void returnTab();
   void drawToolbar();
   // Lay `shown` out at `pixelsPerPoint` on a screen `screen` pixels big (or
   // as big as it is, if zero), with `room` pixels round it, and draw it and
@@ -98,6 +89,19 @@ private:
               float pixelsPerPoint,
               float room,
               bool screenGuides);
+  void followCode();
+  // The layer to show: the playing scene's, or the preview's copy (made now
+  // if need be); null if there's none.
+  sfs::ui::Layer* layer(EditorContext& context);
+  // Show the tab covered again once the last UI file's closed in Code.
+  void returnTab();
+  // The previews of the file shown (m_unit): its views', then its declared
+  // ones.
+  std::vector<const sfs::ui::Preview*> shownPreviews() const;
+  // `view` in the styles declared in the file shown.
+  sfs::ui::View styled(sfs::ui::View view) const;
+  // The UI module laying the UI out (made if need be), in the game's look.
+  sfs::UiModule& uiModule(EditorContext& context);
 
   sfs::IRenderBackend& m_backend;
   const sfs::SceneBackends& m_backends;
@@ -121,7 +125,7 @@ private:
   std::size_t m_previewLoads = 0; // how many times it's been loaded
   bool m_buildFailed = false;
 
-  std::string m_unit; // the file shown ("objects/Hud": its .h, .cpp...)
+  std::string m_unit;      // the file shown ("objects/Hud": its .h, .cpp...)
   std::string m_layerName; // its UI layer, if it's one
   bool m_follow = true;    // show the file the Code panel has open
   std::filesystem::path m_followed;

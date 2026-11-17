@@ -6,6 +6,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 #include <vector>
 
 // A process the editor runs without blocking. Its output arrives on reader
@@ -29,10 +30,18 @@ public:
   };
 
   ChildProcess();
-  ~ChildProcess();
 
   ChildProcess(const ChildProcess&) = delete;
+
+  ~ChildProcess();
+
   ChildProcess& operator=(const ChildProcess&) = delete;
+
+  /** Exit code once finished; -1 if it couldn't start or was killed. */
+  int exitCode() const { return m_exitCode; }
+
+  /** Whether it is still running (non-blocking). */
+  bool running();
 
   /**
    * Start `args[0]` with the remaining arguments (searched on PATH). Handlers
@@ -40,23 +49,21 @@ public:
    *
    * @return false (logged) if it couldn't be started.
    */
-  bool start(const std::vector<std::string>& args, OutputHandler onStdout, Options options);
+  bool start(const std::vector<std::string>& args,
+             OutputHandler onStdout,
+             Options options);
   bool start(const std::vector<std::string>& args, OutputHandler onStdout);
-
-  /** Send bytes to the process's stdin (needs Options::pipeStdin). Thread-safe. */
-  bool write(std::string_view data);
-
-  /** Whether it is still running (non-blocking). */
-  bool running();
 
   /** Stop it and everything it started, and wait for it to go. */
   void terminate();
 
-  /** Exit code once finished; -1 if it couldn't start or was killed. */
-  int exitCode() const { return m_exitCode; }
+  /** Send bytes to the process's stdin (needs Options::pipeStdin). Thread-safe.
+   */
+  bool write(std::string_view data);
 
 private:
   struct Platform; // OS process and pipe handles
+
   void finish();
 
   std::unique_ptr<Platform> m_platform;

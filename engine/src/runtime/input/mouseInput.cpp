@@ -1,7 +1,9 @@
-#include <engine/runtime/input/mouseInput.h>
+#include "engine/runtime/input/mouseInput.h"
 
-#include <SDL.h>
 #include <glm/glm/geometric.hpp>
+
+#include <array>
+#include <cstddef>
 
 namespace sfs
 {
@@ -18,6 +20,12 @@ bool inRange(const std::array<bool, N>&, MouseButton button)
 }
 } // namespace
 
+void MouseInput::addScroll(int x, int y)
+{
+  scrollX += x;
+  scrollY += y;
+}
+
 void MouseInput::beginFrame()
 {
   previousButtons = currentButtons;
@@ -29,8 +37,6 @@ void MouseInput::beginFrame()
   scrollX = 0;
   scrollY = 0;
 }
-
-void MouseInput::update() { processDrag(); }
 
 void MouseInput::block()
 {
@@ -44,46 +50,77 @@ void MouseInput::block()
   isBlocked = true;
 }
 
+bool MouseInput::dragging(MouseButton button) const
+{
+  return mouseHeld(button) && dragActive;
+}
+
+bool MouseInput::dragReleased(MouseButton button) const
+{
+  return dragReleasedThisFrame;
+}
+
+bool MouseInput::dragStarted(MouseButton button) const
+{
+  return mouseHeld(button) && dragStartedThisFrame;
+}
+
+glm::vec2 MouseInput::getDelta() const { return position - previousPosition; }
+
+glm::vec2 MouseInput::getDragDelta() const
+{
+  return position - dragStartPosition;
+}
+
+glm::vec2 MouseInput::getPosition() const { return position; }
+
+int MouseInput::getScrollX() const { return scrollX; }
+
+int MouseInput::getScrollY() const { return scrollY; }
+
+bool MouseInput::inView() const
+{
+  return position.x >= 0.0f && position.y >= 0.0f && position.x < viewSize.x &&
+         position.y < viewSize.y;
+}
+
+bool MouseInput::mouseHeld(MouseButton button) const
+{
+  if (!inRange(currentButtons, button))
+    return false;
+
+  return currentButtons[static_cast<int>(button)];
+}
+
+bool MouseInput::mousePressed(MouseButton button) const
+{
+  if (!inRange(currentButtons, button))
+    return false;
+
+  int b = static_cast<int>(button);
+  return currentButtons[b] && !previousButtons[b];
+}
+
+bool MouseInput::mouseReleased(MouseButton button) const
+{
+  if (!inRange(currentButtons, button))
+    return false;
+
+  int b = static_cast<int>(button);
+  return !currentButtons[b] && previousButtons[b];
+}
+
 void MouseInput::pressButton(MouseButton button)
 {
   if (!inRange(currentButtons, button))
     return;
+
   currentButtons[static_cast<int>(button)] = true;
 
   dragStartPosition = position;
   dragActive = false;
   dragStartedThisFrame = false;
   dragReleasedThisFrame = false;
-}
-
-void MouseInput::releaseButton(MouseButton button)
-{
-  if (!inRange(currentButtons, button))
-    return;
-  currentButtons[static_cast<int>(button)] = false;
-
-  if (dragActive)
-  {
-    dragReleasedThisFrame = true;
-  }
-
-  dragActive = false;
-}
-
-void MouseInput::setPosition(int x, int y)
-{
-  position = {static_cast<float>(x), static_cast<float>(y)};
-}
-
-void MouseInput::setViewSize(int width, int height)
-{
-  viewSize = {static_cast<float>(width), static_cast<float>(height)};
-}
-
-bool MouseInput::inView() const
-{
-  return position.x >= 0.0f && position.y >= 0.0f && position.x < viewSize.x &&
-         position.y < viewSize.y;
 }
 
 void MouseInput::processDrag()
@@ -107,61 +144,31 @@ void MouseInput::processDrag()
   }
 }
 
-bool MouseInput::mouseHeld(MouseButton button) const
+void MouseInput::releaseButton(MouseButton button)
 {
   if (!inRange(currentButtons, button))
-    return false;
-  return currentButtons[static_cast<int>(button)];
+    return;
+
+  currentButtons[static_cast<int>(button)] = false;
+
+  if (dragActive)
+  {
+    dragReleasedThisFrame = true;
+  }
+
+  dragActive = false;
 }
 
-bool MouseInput::mousePressed(MouseButton button) const
+void MouseInput::setPosition(int x, int y)
 {
-  if (!inRange(currentButtons, button))
-    return false;
-  int b = static_cast<int>(button);
-  return currentButtons[b] && !previousButtons[b];
+  position = {static_cast<float>(x), static_cast<float>(y)};
 }
 
-bool MouseInput::mouseReleased(MouseButton button) const
+void MouseInput::setViewSize(int width, int height)
 {
-  if (!inRange(currentButtons, button))
-    return false;
-  int b = static_cast<int>(button);
-  return !currentButtons[b] && previousButtons[b];
+  viewSize = {static_cast<float>(width), static_cast<float>(height)};
 }
 
-bool MouseInput::dragging(MouseButton button) const
-{
-  return mouseHeld(button) && dragActive;
-}
-
-bool MouseInput::dragStarted(MouseButton button) const
-{
-  return mouseHeld(button) && dragStartedThisFrame;
-}
-
-bool MouseInput::dragReleased(MouseButton button) const
-{
-  return dragReleasedThisFrame;
-}
-
-glm::vec2 MouseInput::getPosition() const { return position; }
-
-glm::vec2 MouseInput::getDelta() const { return position - previousPosition; }
-
-glm::vec2 MouseInput::getDragDelta() const
-{
-  return position - dragStartPosition;
-}
-
-int MouseInput::getScrollX() const { return scrollX; }
-
-int MouseInput::getScrollY() const { return scrollY; }
-
-void MouseInput::addScroll(int x, int y)
-{
-  scrollX += x;
-  scrollY += y;
-}
+void MouseInput::update() { processDrag(); }
 
 } // namespace sfs

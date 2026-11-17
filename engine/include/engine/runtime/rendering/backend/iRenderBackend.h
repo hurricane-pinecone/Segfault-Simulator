@@ -3,6 +3,7 @@
 #include "engine/runtime/rendering/backend/renderTarget.h"
 #include "engine/runtime/rendering/iRenderer.h"
 
+#include <glm/glm/ext/vector_int2.hpp>
 #include <SDL_events.h>
 #include <SDL_video.h>
 

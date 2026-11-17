@@ -1,8 +1,13 @@
 #pragma once
 
 #include "engine/core/particles/decal.h"
+#include "engine/core/rendering/mesh.h"
+#include "engine/runtime/rendering/commands.h"
 #include "engine/runtime/rendering/modules/renderModule.h"
 #include "engine/runtime/rendering/renderContext.h"
+
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_float4.hpp>
 
 #include <cstddef>
 #include <string>
@@ -28,22 +33,19 @@ class DecalModule : public CommandModule<RenderContext, MeshDrawCommand>,
 {
 public:
   explicit DecalModule(AssetStore& assets);
-
-  /** The RenderLayerComponent layer marks lie on (in front of layer 0's). */
-  void setLayer(int layer) { m_layer = layer; }
-  /** The most marks kept; the oldest go first. */
-  void setMaxDecals(std::size_t count) { m_max = count; }
+  void addDecal(const DecalSpawn& spawn) override;
+  void computeCommands(const RenderContext& context) override;
+  std::size_t count() const { return m_decals.size(); }
   /**
    * At most `perCell` lasting marks in each `cellSize` square of the plane,
    * so a spot hit again and again doesn't pile up marks; 0: no limit.
    */
   void setCoverage(float cellSize, int perCell);
-
-  std::size_t count() const { return m_decals.size(); }
-
-  void addDecal(const DecalSpawn& spawn) override;
+  /** The RenderLayerComponent layer marks lie on (in front of layer 0's). */
+  void setLayer(int layer) { m_layer = layer; }
+  /** The most marks kept; the oldest go first. */
+  void setMaxDecals(std::size_t count) { m_max = count; }
   void update(double deltaTime) override;
-  void computeCommands(const RenderContext& context) override;
 
 protected:
   bool rebuildsEveryFrame() const override { return true; }

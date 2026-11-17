@@ -1,20 +1,22 @@
 #include "../../testHarness.h"
-
-#include <engine/core/Color/Color.h>
-#include <engine/core/logger/logger.h>
-#include <engine/core/util/allocationMetrics.h>
-#include <engine/core/util/atomicFile.h>
-#include <engine/core/util/cpuFeatures.h>
-#include <engine/core/util/format.h>
-#include <engine/core/util/hash.h>
-#include <engine/core/util/readFileText.h>
-#include <engine/core/util/string.h>
+#include "engine/core/Color/Color.h"
+#include "engine/core/logger/logger.h"
+#include "engine/core/util/allocationMetrics.h"
+#include "engine/core/util/atomicFile.h"
+#include "engine/core/util/cpuFeatures.h"
+#include "engine/core/util/format.h"
+#include "engine/core/util/hash.h"
+#include "engine/core/util/readFileText.h"
+#include "engine/core/util/string.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <ios>
 #include <iterator>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -118,8 +120,10 @@ int main()
     CHECK(readFile(file).empty());
 
     std::size_t entries = 0;
+
     for ([[maybe_unused]] const auto& entry : fs::directory_iterator(folder))
       ++entries;
+
     CHECK(entries == 1u); // no temporary files left behind
 
     // No folder to write in: fails, and creates nothing.
@@ -141,11 +145,13 @@ int main()
 
     for (int i = 0; i < 5; ++i)
       LOG_INFO("same again");
+
     LOG_INFO("something else");
     LOG_INFO("something else");
     Logger::flush();
 
     CHECK(lines.size() == 4u);
+
     if (lines.size() == 4u)
     {
       CHECK(lines[0].ends_with("same again"));
@@ -153,6 +159,7 @@ int main()
       CHECK(lines[2].ends_with("something else"));
       CHECK(lines[3].ends_with("something else (repeated 1 more time)"));
     }
+
     Logger::setLogLevel(level);
     Logger::removeSink(sink);
   }
@@ -172,6 +179,7 @@ int main()
         {
           ++calls;
           LOG_INFO("from inside a sink: " + message); // console only
+
           if (message.find("last") != std::string::npos)
             sfs::Logger::removeSink(self);
         });
@@ -209,6 +217,7 @@ int main()
     const uint64_t hash = hashWords(base, 5);
     CHECK(hashWords(base, 5) == hash);
     int differ = 0;
+
     for (int word = 0; word < 5; ++word)
       for (int bit = 0; bit < 64; ++bit)
       {
@@ -216,6 +225,7 @@ int main()
         changed[word] ^= uint64_t{1} << bit;
         differ += hashWords(changed, 5) != hash ? 1 : 0;
       }
+
     CHECK(differ == 5 * 64);
     // Swapping two words changes it too: their places count.
     const uint64_t swapped[5] = {2, 1, 3, 4, 5};

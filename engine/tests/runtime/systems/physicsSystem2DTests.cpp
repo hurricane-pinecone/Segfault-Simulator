@@ -1,20 +1,23 @@
 #include "../../testHarness.h"
+#include "engine/core/components/boxCollider2D.h"
+#include "engine/core/components/rigidBody2DComponent.h"
+#include "engine/core/components/transformComponent.h"
+#include "engine/core/ecs/entity.h"
+#include "engine/core/hierarchy/hierarchy.h"
+#include "engine/runtime/assetStore/assetStore.h"
+#include "engine/runtime/game/gameObject.h"
+#include "engine/runtime/sceneManager/scene.h"
+#include "engine/runtime/scripting/scriptRegistry.h"
+#include "engine/runtime/systems/collision2D.h"
+#include "engine/runtime/systems/physicsSystem2D.h"
 
-#include <engine/core/components/boxCollider2D.h>
-#include <engine/core/components/rigidBody2DComponent.h>
-#include <engine/core/components/transformComponent.h>
-#include <engine/core/hierarchy/hierarchy.h>
-#include <engine/runtime/assetStore/assetStore.h>
-#include <engine/runtime/game/gameObject.h>
-#include <engine/runtime/sceneManager/scene.h>
-#include <engine/runtime/scripting/scriptRegistry.h>
-#include <engine/runtime/systems/physicsSystem2D.h>
+#include <glm/glm/ext/vector_float2.hpp>
 
 using namespace sfs;
 
 namespace
 {
-constexpr double kFrame = 1.0 / 60.0;
+constexpr double FRAME = 1.0 / 60.0;
 
 struct World
 {
@@ -44,15 +47,10 @@ struct World
 
   void run(double seconds)
   {
-    for (double t = 0.0; t < seconds; t += kFrame)
-      scene.update(kFrame);
+    for (double t = 0.0; t < seconds; t += FRAME)
+      scene.update(FRAME);
   }
 };
-
-glm::vec2 positionOf(const Entity& entity)
-{
-  return entity.getComponent<TransformComponent>()->position2D();
-}
 
 class Listener : public GameObject
 {
@@ -79,6 +77,11 @@ protected:
   }
   void onTriggerExit2D(const Collision2D&) override { ++left; }
 };
+
+glm::vec2 positionOf(const Entity& entity)
+{
+  return entity.getComponent<TransformComponent>()->position2D();
+}
 } // namespace
 
 int main()
@@ -113,7 +116,7 @@ int main()
     World world;
     Entity mover = world.body({0.0f, 0.0f}, {6000.0f, 0.0f});
     world.wall({10.0f, 0.0f}, {0.05f, 2.0f});
-    world.scene.update(kFrame); // 100 units in one step
+    world.scene.update(FRAME); // 100 units in one step
 
     CHECK(testing::approx(positionOf(mover).x, 10.0f - 0.05f - 0.5f));
   }

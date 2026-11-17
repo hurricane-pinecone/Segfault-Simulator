@@ -1,8 +1,19 @@
 #include "../../../testHarness.h"
+#include "engine/runtime/navigation/geometry.h"
+#include "engine/runtime/navigation/vehicle/steering.h"
+#include "engine/runtime/navigation/vehicle/vehicleModel.h"
+#include "engine/runtime/navigation/vehicle/vehiclePath.h"
 
-#include <engine/runtime/navigation/vehicle/steering.h>
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/geometric.hpp>
 
+#include <algorithm>
+#include <cmath>
+#include <cstddef>
+#include <cstdio>
+#include <cstdlib>
 #include <random>
+#include <vector>
 
 using namespace sfs::nav;
 using namespace sfs::nav::vehicle;
@@ -15,6 +26,7 @@ bool continuous(const std::vector<Segment>& w)
   for (std::size_t i = 1; i < w.size(); ++i)
     if (w[i].gear == w[i - 1].gear && std::abs(w[i].k0 - w[i - 1].k1) > 1e-5f)
       return false;
+
   return !w.empty() && std::abs(w.front().k0) < 1e-6f &&
          std::abs(w.back().k1) < 1e-6f;
 }
@@ -24,6 +36,7 @@ bool sharpEnough(const std::vector<Segment>& w, float sigma)
   for (const Segment& s : w)
     if (s.length > 0 && std::abs(s.k1 - s.k0) / s.length > sigma * 1.001f)
       return false;
+
   return true;
 }
 } // namespace
@@ -49,6 +62,7 @@ int main()
   {
     const glm::vec2 c{steer.ccRadius() * std::sin(steer.ccAngle()),
                       steer.ccRadius() * std::cos(steer.ccAngle())};
+
     for (float d : {0.0f,
                     0.05f,
                     0.5f * steer.clothoidTurn(),
@@ -68,6 +82,7 @@ int main()
     std::mt19937 rng(7);
     std::uniform_real_distribution<float> u(-1.0f, 1.0f);
     int pairs = 0, withWords = 0, bad = 0, sharp = 0;
+
     for (int i = 0; i < 300; ++i)
     {
       const Pose2 a{{0, 0}, u(rng) * kPi};
@@ -77,6 +92,7 @@ int main()
       all.verify = true; // (a rare degenerate word misses: dropped)
       const auto words = steer.paths(a, b, all);
       withWords += !words.empty();
+
       for (const auto& w : words)
       {
         const Pose2 e = endOf(a, w);
@@ -84,6 +100,7 @@ int main()
         sharp += !sharpEnough(w, steer.sigma());
       }
     }
+
     CHECK(withWords == pairs);
     std::printf("  (words: %d pairs, bad %d)\n", pairs, bad);
     CHECK(bad == 0);
@@ -95,6 +112,7 @@ int main()
     const auto words =
         steer.paths({{0, 0}, 0.0f}, {{20, 6}, 0.5f}, {true, false, false});
     CHECK(!words.empty());
+
     for (const auto& w : words)
       for (const Segment& s : w)
         CHECK(s.gear == 1);
@@ -107,17 +125,21 @@ int main()
     const auto words = steer.paths({{0, 0}, 0.0f}, {{0, 1}, kPi}, {});
     float shortest = 1e9f;
     int cuspy = 0;
+
     for (const auto& w : words)
     {
       int cusps = 0;
+
       for (std::size_t i = 1; i < w.size(); ++i)
         cusps += w[i].gear != w[i - 1].gear;
+
       if (cusps == 2)
       {
         ++cuspy;
         shortest = std::min(shortest, lengthOf(w));
       }
     }
+
     CHECK(cuspy > 0);
     CHECK(shortest < 20.0f);
   }

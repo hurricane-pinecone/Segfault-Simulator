@@ -1,19 +1,27 @@
 #include "../testHarness.h"
+#include "sfs/lsp/protocol.h"
 
-#include <sfs/lsp/protocol.h>
+#include <nlohmann/json.hpp>
 
 #include <chrono>
 #include <csignal>
+#include <cstddef>
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <ios>
 #include <optional>
-#include <string>
-#include <vector>
-
 #include <poll.h>
+#include <signal.h>
+#include <stdlib.h>
+#include <string>
+#include <string_view>
+#include <sys/poll.h>
+#include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <utility>
+#include <vector>
 
 using namespace sfs::lsp;
 using nlohmann::json;
@@ -29,9 +37,12 @@ public:
   {
     int toChild[2];
     int fromChild[2];
+
     if (pipe(toChild) != 0 || pipe(fromChild) != 0)
       return;
+
     m_pid = fork();
+
     if (m_pid == 0)
     {
       dup2(toChild[0], 0);
@@ -41,6 +52,7 @@ public:
       execl(SFS_LSP_PATH, SFS_LSP_PATH, static_cast<char*>(nullptr));
       _exit(127);
     }
+
     close(toChild[0]);
     close(fromChild[1]);
     m_in = toChild[1];
@@ -50,8 +62,10 @@ public:
   ~LspProcess()
   {
     closeInput();
+
     if (m_out >= 0)
       close(m_out);
+
     if (m_pid > 0 && !m_exited)
     {
       kill(m_pid, SIGKILL);
@@ -64,8 +78,10 @@ public:
     while (!bytes.empty())
     {
       const ssize_t written = ::write(m_in, bytes.data(), bytes.size());
+
       if (written <= 0)
         return;
+
       bytes.remove_prefix(static_cast<std::size_t>(written));
     }
   }
@@ -76,6 +92,7 @@ public:
   {
     if (m_in >= 0)
       close(m_in);
+
     m_in = -1;
   }
 
@@ -86,26 +103,35 @@ public:
   {
     const auto deadline = std::chrono::steady_clock::now() +
                           std::chrono::duration<double>(seconds);
+
     while (true)
     {
       while (!m_pending.empty())
       {
         json message = json::parse(m_pending.front());
         m_pending.erase(m_pending.begin());
+
         if (wanted(message))
           return message;
       }
+
       const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
           deadline - std::chrono::steady_clock::now());
+
       if (left.count() <= 0)
         return std::nullopt;
+
       pollfd fd{m_out, POLLIN, 0};
+
       if (poll(&fd, 1, static_cast<int>(left.count())) <= 0)
         continue;
+
       char buffer[65536];
       const ssize_t count = read(m_out, buffer, sizeof buffer);
+
       if (count <= 0)
         return std::nullopt;
+
       std::vector<std::string> problems;
       m_reader.feed(std::string_view(buffer, static_cast<std::size_t>(count)),
                     m_pending,
@@ -135,16 +161,20 @@ public:
   {
     const auto deadline = std::chrono::steady_clock::now() +
                           std::chrono::duration<double>(seconds);
+
     while (std::chrono::steady_clock::now() < deadline)
     {
       int status = 0;
+
       if (waitpid(m_pid, &status, WNOHANG) == m_pid)
       {
         m_exited = true;
         return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
       }
+
       usleep(10000);
     }
+
     return std::nullopt;
   }
 
@@ -202,6 +232,7 @@ int main()
     server.write(init.substr(split));
     const std::optional<json> result = server.response(1);
     CHECK(result.has_value());
+
     if (result)
     {
       const json& capabilities = (*result)["result"]["capabilities"];
@@ -212,6 +243,7 @@ int main()
             "quickfix");
       CHECK((*result)["result"]["serverInfo"]["name"] == "sfs-lsp");
     }
+
     server.write(frame(dump(request(2, "nope/one", json::object()))) +
                  frame(dump(request(3, "nope/two", json::object()))));
     const std::optional<json> unknown = server.response(3);
@@ -249,6 +281,7 @@ int main()
                                  "0;\n  [[sfs::hdie]] int x;\n};\n"}}}}));
     const std::optional<json> published = server.diagnostics(uri);
     CHECK(published.has_value());
+
     if (published)
     {
       const json& list = (*published)["params"]["diagnostics"];
@@ -256,6 +289,7 @@ int main()
       CHECK(list.size() == 2u && list[1]["code"] == "unknown-sfs-attribute");
       CHECK(list.size() == 2u && list[1]["source"] == "sfs-codegen");
     }
+
     server.send(request(7,
                         "textDocument/completion",
                         {{"textDocument", {{"uri", uri}}},
@@ -263,6 +297,7 @@ int main()
                          {"context", {{"triggerKind", 1}}}}));
     const std::optional<json> answer = server.response(7);
     bool found = false;
+
     if (answer)
       for (const json& item : (*answer)["result"]["items"])
         if (item["label"] == "range")
@@ -271,6 +306,7 @@ int main()
           CHECK(item["textEdit"]["newText"] == "range(${1:min}, ${2:max})");
           CHECK(item["insertTextFormat"] == 2);
         }
+
     CHECK(found);
   }
 
@@ -289,8 +325,10 @@ int main()
             "void f()\n{\n  scene().query<A, sfs::Any<B>>();\n}\n"}}}}));
     const std::optional<json> published = server.diagnostics(uri);
     CHECK(published && (*published)["params"]["diagnostics"].size() == 1u);
+
     if (!published || (*published)["params"]["diagnostics"].size() != 1u)
       continue;
+
     const json diagnostic = (*published)["params"]["diagnostics"][0];
     CHECK(diagnostic["code"] == "single-any");
     CHECK(diagnostic["source"] == "sfs");
@@ -302,8 +340,10 @@ int main()
                          {"context", {{"diagnostics", {diagnostic}}}}}));
     const std::optional<json> actions = server.response(9);
     CHECK(actions && (*actions)["result"].size() == 3u);
+
     if (!actions || (*actions)["result"].size() != 3u)
       continue;
+
     const json& fix = (*actions)["result"][0];
     CHECK(fix["isPreferred"] == true);
     CHECK((*actions)["result"][1]["title"] == "Ignore single-any on this line");
@@ -348,8 +388,10 @@ int main()
             "  registerComponent<GateLeaf>();\n}\n"}}}}));
     const std::optional<json> published = server.diagnostics(uri);
     CHECK(published && (*published)["params"]["diagnostics"].size() == 1u);
+
     if (!published || (*published)["params"]["diagnostics"].size() != 1u)
       continue;
+
     const json diagnostic = (*published)["params"]["diagnostics"][0];
     CHECK(diagnostic["code"] == "setup-in-constructor");
     const auto fixOf = [&](int id) -> json
@@ -365,8 +407,10 @@ int main()
     };
     const json fix = fixOf(12);
     CHECK(fix.is_object() && fix["isPreferred"] == true);
+
     if (!fix.is_object())
       continue;
+
     const json& changes = fix["edit"]["documentChanges"];
     CHECK(changes.size() == 2u);
     CHECK(changes.size() == 2u && changes[0]["textDocument"]["uri"] == uri &&
@@ -440,9 +484,12 @@ int main()
             if (m.value("method", "") != "textDocument/publishDiagnostics" ||
                 m["params"]["uri"] != plan)
               return false;
+
             bool found = false;
+
             for (const json& d : m["params"]["diagnostics"])
               found = found || d["code"] == "response-sent-twice";
+
             return found == wanted;
           },
           5.0);
@@ -512,11 +559,13 @@ int main()
                  {"options", {{"tabSize", 2}, {"insertSpaces", true}}}}));
     const std::optional<json> whole = server.response(30);
     CHECK(whole && (*whole)["result"].size() == 2u);
+
     if (whole && (*whole)["result"].size() == 2u)
     {
       CHECK(insertsAt((*whole)["result"][0], 3));
       CHECK(insertsAt((*whole)["result"][1], 5));
     }
+
     server.send(request(
         31,
         "textDocument/rangeFormatting",
@@ -525,8 +574,10 @@ int main()
          {"options", {{"tabSize", 2}, {"insertSpaces", true}}}}));
     const std::optional<json> part = server.response(31);
     CHECK(part && (*part)["result"].size() == 1u);
+
     if (part && (*part)["result"].size() == 1u)
       CHECK(insertsAt((*part)["result"][0], 3));
+
     std::filesystem::remove_all(root);
   }
 

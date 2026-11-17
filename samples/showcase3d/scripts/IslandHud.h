@@ -11,9 +11,9 @@ class IslandDirector;
 class IslandHud : public sfs::ui::Layer
 {
 public:
-  void setDirector(IslandDirector* director) { m_director = director; }
-
   sfs::ui::View body() override;
+
+  void setDirector(IslandDirector* director) { m_director = director; }
 
 private:
   IslandDirector* m_director = nullptr; // the one that made it
@@ -24,6 +24,7 @@ private:
 inline sfs::ui::View IslandHud::body()
 {
   using namespace sfs::ui;
+
   if (!m_director)
     return Empty();
 

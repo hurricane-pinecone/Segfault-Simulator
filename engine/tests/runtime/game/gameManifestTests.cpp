@@ -1,6 +1,5 @@
 #include "../../testHarness.h"
-
-#include <engine/runtime/game/gameManifest.h>
+#include "engine/runtime/game/gameManifest.h"
 
 #include <filesystem>
 #include <fstream>

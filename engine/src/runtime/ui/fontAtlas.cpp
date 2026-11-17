@@ -1,12 +1,25 @@
 #include "engine/runtime/ui/fontAtlas.h"
 
 #include "engine/core/logger/logger.h"
+#include "engine/runtime/rendering/uiDraw.h"
 
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_float4.hpp>
+#include <SDL_pixels.h>
+#include <SDL_stdinc.h>
+#include <SDL_surface.h>
 #include <SDL_ttf.h>
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
+#include <functional>
+#include <map>
+#include <memory>
+#include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 namespace sfs::ui
@@ -14,8 +27,8 @@ namespace sfs::ui
 
 namespace
 {
-constexpr int kStartSize = 256; // a face's texture to begin with, a side
-constexpr int kMostSize = 4096;
+constexpr int START_SIZE = 256; // a face's texture to begin with, a side
+constexpr int MOST_SIZE = 4096;
 uint32_t g_nextTextureId = 0x55490000u; // "UI": apart from other textures
 } // namespace
 
@@ -36,199 +49,6 @@ FontAtlas::~FontAtlas()
       TTF_CloseFont(face->font);
 }
 
-void FontAtlas::beginFrame()
-{
-  ++m_frame;
-  if (m_faces.size() <= kMostFaces)
-    return;
-  // The longest unused first, of those not used in the last frame (whose
-  // text may still be on its way to the screen).
-  std::vector<
-      std::map<std::pair<std::string, int>, std::unique_ptr<Face>>::iterator>
-      idle;
-  for (auto it = m_faces.begin(); it != m_faces.end(); ++it)
-    if (it->second->lastUsed + 1 < m_frame)
-      idle.push_back(it);
-  std::sort(idle.begin(),
-            idle.end(),
-            [](const auto& a, const auto& b)
-            { return a->second->lastUsed < b->second->lastUsed; });
-  for (std::size_t i = 0; i < idle.size() && m_faces.size() > kMostFaces; ++i)
-  {
-    if (idle[i]->second->font)
-      TTF_CloseFont(idle[i]->second->font);
-    m_faces.erase(idle[i]);
-    ++m_generation;
-    // (Widths are kept by face: another may come where it was.)
-    m_widths.clear();
-    m_olderWidths.clear();
-  }
-}
-
-void FontAtlas::keep(const UiTexture* texture)
-{
-  for (auto& [key, face] : m_faces)
-    if (&face->texture == texture)
-    {
-      face->lastUsed = m_frame;
-      return;
-    }
-}
-
-FontAtlas::Face* FontAtlas::face(const std::string& font, float pixels)
-{
-  const int size = std::max(1, static_cast<int>(std::lround(pixels)));
-  auto [it, added] = m_faces.try_emplace({font, size});
-  if (!added)
-  {
-    it->second->lastUsed = m_frame;
-    return it->second.get();
-  }
-
-  auto made = std::make_unique<Face>();
-  std::string path = m_initialised ? m_resolve(font) : std::string();
-  if (!path.empty())
-    made->font = TTF_OpenFont(path.c_str(), size);
-  if (!made->font && m_initialised)
-  {
-    if (font != m_fallback)
-      LOG_ERROR(
-          "UI font '" + font + "' can't be opened" +
-          (path.empty() ? std::string() : std::string(": ") + TTF_GetError()) +
-          "; using " + m_fallback);
-    const std::string fallback = m_resolve(m_fallback);
-    if (!fallback.empty())
-      made->font = TTF_OpenFont(fallback.c_str(), size);
-  }
-  if (made->font)
-  {
-    TTF_SetFontHinting(made->font, TTF_HINTING_LIGHT);
-    made->lineHeight = static_cast<float>(TTF_FontLineSkip(made->font));
-  }
-  else
-    made->lineHeight = static_cast<float>(size);
-  made->lastUsed = m_frame;
-  made->texture.id = ++g_nextTextureId;
-  made->texture.size = {kStartSize, kStartSize};
-  made->texture.pixels.assign(std::size_t(kStartSize) * kStartSize * 4, 0);
-  it->second = std::move(made);
-  return it->second.get();
-}
-
-const FontAtlas::Glyph& FontAtlas::glyph(Face& face, char32_t codepoint)
-{
-  if (const auto it = face.glyphs.find(codepoint); it != face.glyphs.end())
-    return it->second;
-  Glyph& glyph = face.glyphs[codepoint];
-  if (!face.font)
-    return glyph;
-
-  int minX = 0, maxX = 0, minY = 0, maxY = 0, advance = 0;
-  if (TTF_GlyphMetrics32(face.font,
-                         static_cast<Uint32>(codepoint),
-                         &minX,
-                         &maxX,
-                         &minY,
-                         &maxY,
-                         &advance) != 0)
-    return glyph; // not in the font
-  glyph.advance = static_cast<float>(advance);
-  if (codepoint == U' ' || codepoint == U'\t')
-    return glyph;
-
-  // Rendered white, its coverage in alpha, a box the font's height.
-  SDL_Surface* rendered = TTF_RenderGlyph32_Blended(
-      face.font, static_cast<Uint32>(codepoint), SDL_Color{255, 255, 255, 255});
-  if (!rendered)
-    return glyph;
-  SDL_Surface* rgba =
-      SDL_ConvertSurfaceFormat(rendered, SDL_PIXELFORMAT_RGBA32, 0);
-  SDL_FreeSurface(rendered);
-  if (!rgba)
-    return glyph;
-
-  // Onto the next shelf with room (a pixel apart, so neighbours don't bleed),
-  // the texture made taller when it's full.
-  UiTexture& texture = face.texture;
-  if (face.shelf.x + rgba->w + 1 > texture.size.x)
-  {
-    face.shelf = {1, face.shelf.y + face.shelfHeight + 1};
-    face.shelfHeight = 0;
-  }
-  while (face.shelf.y + rgba->h + 1 > texture.size.y &&
-         texture.size.y < kMostSize)
-  {
-    texture.size.y *= 2;
-    texture.pixels.resize(std::size_t(texture.size.x) * texture.size.y * 4, 0);
-    ++m_generation; // its glyphs' coordinates have moved
-  }
-  if (face.shelf.y + rgba->h + 1 <= texture.size.y &&
-      rgba->w + 2 <= texture.size.x)
-  {
-    SDL_LockSurface(rgba);
-    for (int y = 0; y < rgba->h; ++y)
-      std::memcpy(
-          &texture.pixels[(std::size_t(face.shelf.y + y) * texture.size.x +
-                           face.shelf.x) *
-                          4],
-          static_cast<const uint8_t*>(rgba->pixels) +
-              std::size_t(y) * rgba->pitch,
-          std::size_t(rgba->w) * 4);
-    SDL_UnlockSurface(rgba);
-    glyph.at = face.shelf;
-    glyph.size = {rgba->w, rgba->h};
-    face.shelf.x += rgba->w + 1;
-    face.shelfHeight = std::max(face.shelfHeight, rgba->h);
-    ++texture.revision;
-  }
-  SDL_FreeSurface(rgba);
-  return glyph;
-}
-
-float FontAtlas::lineHeight(const std::string& font, float pixels)
-{
-  return face(font, pixels)->lineHeight;
-}
-
-float FontAtlas::width(const std::string& font,
-                       float pixels,
-                       std::string_view line)
-{
-  Face& f = *face(font, pixels);
-  // Kept: by the face and the text.
-  const uint64_t key =
-      std::hash<std::string_view>()(line) * 0x9E3779B97F4A7C15ull ^
-      reinterpret_cast<uintptr_t>(&f);
-  if (const auto found = m_widths.find(key); found != m_widths.end())
-    return found->second;
-  if (const auto found = m_olderWidths.find(key); found != m_olderWidths.end())
-  {
-    const float kept = found->second;
-    m_widths.emplace(key, kept);
-    return kept;
-  }
-  if (m_widths.size() >= kMostWidths)
-  {
-    m_olderWidths = std::move(m_widths);
-    m_widths.clear();
-  }
-  float pen = 0.0f;
-  char32_t previous = 0;
-  forEachCodepoint(line,
-                   [&](char32_t codepoint)
-                   {
-                     if (previous && f.font)
-                       pen += static_cast<float>(TTF_GetFontKerningSizeGlyphs32(
-                           f.font,
-                           static_cast<Uint32>(previous),
-                           static_cast<Uint32>(codepoint)));
-                     pen += glyph(f, codepoint).advance;
-                     previous = codepoint;
-                   });
-  m_widths.emplace(key, pen);
-  return pen;
-}
-
 void FontAtlas::draw(const std::string& font,
                      float pixels,
                      std::string_view line,
@@ -247,8 +67,10 @@ void FontAtlas::draw(const std::string& font,
                            f.font,
                            static_cast<Uint32>(previous),
                            static_cast<Uint32>(codepoint)));
+
                      previous = codepoint;
                      const Glyph& g = glyph(f, codepoint);
+
                      if (g.size.x > 0 && g.size.y > 0)
                      {
                        UiQuad quad;
@@ -266,8 +88,234 @@ void FontAtlas::draw(const std::string& font,
                        quad.color = color;
                        out.push_back(quad);
                      }
+
                      pen += g.advance;
                    });
+}
+
+void FontAtlas::keep(const UiTexture* texture)
+{
+  for (auto& [key, face] : m_faces)
+    if (&face->texture == texture)
+    {
+      face->lastUsed = m_frame;
+      return;
+    }
+}
+
+float FontAtlas::lineHeight(const std::string& font, float pixels)
+{
+  return face(font, pixels)->lineHeight;
+}
+
+float FontAtlas::width(const std::string& font,
+                       float pixels,
+                       std::string_view line)
+{
+  Face& f = *face(font, pixels);
+  // Kept: by the face and the text.
+  const uint64_t key =
+      std::hash<std::string_view>()(line) * 0x9E3779B97F4A7C15ull ^
+      reinterpret_cast<uintptr_t>(&f);
+
+  if (const auto found = m_widths.find(key); found != m_widths.end())
+    return found->second;
+
+  if (const auto found = m_olderWidths.find(key); found != m_olderWidths.end())
+  {
+    const float kept = found->second;
+    m_widths.emplace(key, kept);
+    return kept;
+  }
+
+  if (m_widths.size() >= kMostWidths)
+  {
+    m_olderWidths = std::move(m_widths);
+    m_widths.clear();
+  }
+
+  float pen = 0.0f;
+  char32_t previous = 0;
+  forEachCodepoint(line,
+                   [&](char32_t codepoint)
+                   {
+                     if (previous && f.font)
+                       pen += static_cast<float>(TTF_GetFontKerningSizeGlyphs32(
+                           f.font,
+                           static_cast<Uint32>(previous),
+                           static_cast<Uint32>(codepoint)));
+
+                     pen += glyph(f, codepoint).advance;
+                     previous = codepoint;
+                   });
+  m_widths.emplace(key, pen);
+  return pen;
+}
+
+void FontAtlas::beginFrame()
+{
+  ++m_frame;
+
+  if (m_faces.size() <= kMostFaces)
+    return;
+
+  // The longest unused first, of those not used in the last frame (whose
+  // text may still be on its way to the screen).
+  std::vector<
+      std::map<std::pair<std::string, int>, std::unique_ptr<Face>>::iterator>
+      idle;
+
+  for (auto it = m_faces.begin(); it != m_faces.end(); ++it)
+    if (it->second->lastUsed + 1 < m_frame)
+      idle.push_back(it);
+
+  std::sort(idle.begin(),
+            idle.end(),
+            [](const auto& a, const auto& b)
+            { return a->second->lastUsed < b->second->lastUsed; });
+
+  for (std::size_t i = 0; i < idle.size() && m_faces.size() > kMostFaces; ++i)
+  {
+    if (idle[i]->second->font)
+      TTF_CloseFont(idle[i]->second->font);
+
+    m_faces.erase(idle[i]);
+    ++m_generation;
+    // (Widths are kept by face: another may come where it was.)
+    m_widths.clear();
+    m_olderWidths.clear();
+  }
+}
+
+FontAtlas::Face* FontAtlas::face(const std::string& font, float pixels)
+{
+  const int size = std::max(1, static_cast<int>(std::lround(pixels)));
+  auto [it, added] = m_faces.try_emplace({font, size});
+
+  if (!added)
+  {
+    it->second->lastUsed = m_frame;
+    return it->second.get();
+  }
+
+  auto made = std::make_unique<Face>();
+  std::string path = m_initialised ? m_resolve(font) : std::string();
+
+  if (!path.empty())
+    made->font = TTF_OpenFont(path.c_str(), size);
+
+  if (!made->font && m_initialised)
+  {
+    if (font != m_fallback)
+      LOG_ERROR(
+          "UI font '" + font + "' can't be opened" +
+          (path.empty() ? std::string() : std::string(": ") + TTF_GetError()) +
+          "; using " + m_fallback);
+
+    const std::string fallback = m_resolve(m_fallback);
+
+    if (!fallback.empty())
+      made->font = TTF_OpenFont(fallback.c_str(), size);
+  }
+
+  if (made->font)
+  {
+    TTF_SetFontHinting(made->font, TTF_HINTING_LIGHT);
+    made->lineHeight = static_cast<float>(TTF_FontLineSkip(made->font));
+  }
+  else
+    made->lineHeight = static_cast<float>(size);
+
+  made->lastUsed = m_frame;
+  made->texture.id = ++g_nextTextureId;
+  made->texture.size = {START_SIZE, START_SIZE};
+  made->texture.pixels.assign(std::size_t(START_SIZE) * START_SIZE * 4, 0);
+  it->second = std::move(made);
+  return it->second.get();
+}
+
+const FontAtlas::Glyph& FontAtlas::glyph(Face& face, char32_t codepoint)
+{
+  if (const auto it = face.glyphs.find(codepoint); it != face.glyphs.end())
+    return it->second;
+
+  Glyph& glyph = face.glyphs[codepoint];
+
+  if (!face.font)
+    return glyph;
+
+  int minX = 0, maxX = 0, minY = 0, maxY = 0, advance = 0;
+
+  if (TTF_GlyphMetrics32(face.font,
+                         static_cast<Uint32>(codepoint),
+                         &minX,
+                         &maxX,
+                         &minY,
+                         &maxY,
+                         &advance) != 0)
+    return glyph; // not in the font
+
+  glyph.advance = static_cast<float>(advance);
+
+  if (codepoint == U' ' || codepoint == U'\t')
+    return glyph;
+
+  // Rendered white, its coverage in alpha, a box the font's height.
+  SDL_Surface* rendered = TTF_RenderGlyph32_Blended(
+      face.font, static_cast<Uint32>(codepoint), SDL_Color{255, 255, 255, 255});
+
+  if (!rendered)
+    return glyph;
+
+  SDL_Surface* rgba =
+      SDL_ConvertSurfaceFormat(rendered, SDL_PIXELFORMAT_RGBA32, 0);
+  SDL_FreeSurface(rendered);
+
+  if (!rgba)
+    return glyph;
+
+  // Onto the next shelf with room (a pixel apart, so neighbours don't bleed),
+  // the texture made taller when it's full.
+  UiTexture& texture = face.texture;
+
+  if (face.shelf.x + rgba->w + 1 > texture.size.x)
+  {
+    face.shelf = {1, face.shelf.y + face.shelfHeight + 1};
+    face.shelfHeight = 0;
+  }
+
+  while (face.shelf.y + rgba->h + 1 > texture.size.y &&
+         texture.size.y < MOST_SIZE)
+  {
+    texture.size.y *= 2;
+    texture.pixels.resize(std::size_t(texture.size.x) * texture.size.y * 4, 0);
+    ++m_generation; // its glyphs' coordinates have moved
+  }
+
+  if (face.shelf.y + rgba->h + 1 <= texture.size.y &&
+      rgba->w + 2 <= texture.size.x)
+  {
+    SDL_LockSurface(rgba);
+
+    for (int y = 0; y < rgba->h; ++y)
+      std::memcpy(
+          &texture.pixels[(std::size_t(face.shelf.y + y) * texture.size.x +
+                           face.shelf.x) *
+                          4],
+          static_cast<const uint8_t*>(rgba->pixels) +
+              std::size_t(y) * rgba->pitch,
+          std::size_t(rgba->w) * 4);
+
+    SDL_UnlockSurface(rgba);
+    glyph.at = face.shelf;
+    glyph.size = {rgba->w, rgba->h};
+    face.shelf.x += rgba->w + 1;
+    face.shelfHeight = std::max(face.shelfHeight, rgba->h);
+    ++texture.revision;
+  }
+
+  SDL_FreeSurface(rgba);
+  return glyph;
 }
 
 } // namespace sfs::ui

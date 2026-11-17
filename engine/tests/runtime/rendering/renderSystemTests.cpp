@@ -1,53 +1,78 @@
 #include "../../testHarness.h"
+#include "engine/core/components/boxCollider3DComponent.h"
+#include "engine/core/components/cameraComponent.h"
+#include "engine/core/components/cameraFeedComponent.h"
+#include "engine/core/components/cameraFollowComponent.h"
+#include "engine/core/components/deformerComponent.h"
+#include "engine/core/components/grassBenderComponent.h"
+#include "engine/core/components/grassComponent.h"
+#include "engine/core/components/lightningComponent.h"
+#include "engine/core/components/meshRendererComponent.h"
+#include "engine/core/components/pointLightComponent.h"
+#include "engine/core/components/rigidBody3DComponent.h"
+#include "engine/core/components/sphereCollider3DComponent.h"
+#include "engine/core/components/transformComponent.h"
+#include "engine/core/hierarchy/hierarchy.h"
+#include "engine/core/rendering/camera.h"
+#include "engine/core/rendering/colorGrading.h"
+#include "engine/core/rendering/grass.h"
+#include "engine/core/rendering/lighting.h"
+#include "engine/core/rendering/materialGraph.h"
+#include "engine/core/rendering/materialGraphCompiler.h"
+#include "engine/core/rendering/materialNodes.h"
+#include "engine/core/rendering/mesh.h"
+#include "engine/core/rendering/meshPrimitives.h"
+#include "engine/core/rendering/sky.h"
+#include "engine/core/rendering/sunShadow.h"
+#include "engine/core/rendering/terrain.h"
+#include "engine/core/sceneData/ambientLighting.h"
+#include "engine/core/sceneData/celestialBodies.h"
+#include "engine/core/sceneData/clouds.h"
+#include "engine/core/sceneData/directionalLighting.h"
+#include "engine/core/sceneData/rain.h"
+#include "engine/core/sceneData/shaderGlobals.h"
+#include "engine/core/sceneData/wind.h"
+#include "engine/runtime/assetStore/assetStore.h"
+#include "engine/runtime/game/gameObject.h"
+#include "engine/runtime/input/input.h"
+#include "engine/runtime/input/mouseInput.h"
+#include "engine/runtime/rendering/commands.h"
+#include "engine/runtime/rendering/frame.h"
+#include "engine/runtime/rendering/framePlan.h"
+#include "engine/runtime/rendering/meshLibrary.h"
+#include "engine/runtime/rendering/modules/deformationModule.h"
+#include "engine/runtime/rendering/modules/grassModule.h"
+#include "engine/runtime/rendering/modules/meshModule.h"
+#include "engine/runtime/rendering/modules/renderModule.h"
+#include "engine/runtime/rendering/modules/uiModule.h"
+#include "engine/runtime/rendering/renderContext.h"
+#include "engine/runtime/rendering/renderSystem.h"
+#include "engine/runtime/rendering/space2D.h"
+#include "engine/runtime/rendering/visualStyles.h"
+#include "engine/runtime/sceneManager/scene.h"
+#include "engine/runtime/systems/cameraSystem.h"
+#include "engine/runtime/ui/layer.h"
+#include "engine/runtime/ui/layout.h"
+#include "engine/runtime/ui/ui.h"
 #include "mockRenderer.h"
 
-#include <engine/core/components/boxCollider3DComponent.h>
-#include <engine/core/components/cameraComponent.h>
-#include <engine/core/components/cameraFeedComponent.h>
-#include <engine/core/components/cameraFollowComponent.h>
-#include <engine/core/components/deformerComponent.h>
-#include <engine/core/components/grassBenderComponent.h>
-#include <engine/core/components/grassComponent.h>
-#include <engine/core/components/lightningComponent.h>
-#include <engine/core/components/meshRendererComponent.h>
-#include <engine/core/components/pointLightComponent.h>
-#include <engine/core/components/rigidBody3DComponent.h>
-#include <engine/core/components/sphereCollider3DComponent.h>
-#include <engine/core/components/transformComponent.h>
-#include <engine/core/hierarchy/hierarchy.h>
-#include <engine/core/rendering/materialGraphCompiler.h>
-#include <engine/core/rendering/meshPrimitives.h>
-#include <engine/core/rendering/terrain.h>
-#include <engine/core/sceneData/ambientLighting.h>
-#include <engine/core/sceneData/celestialBodies.h>
-#include <engine/core/sceneData/clouds.h>
-#include <engine/core/sceneData/directionalLighting.h>
-#include <engine/core/sceneData/rain.h>
-#include <engine/core/sceneData/shaderGlobals.h>
-#include <engine/core/sceneData/wind.h>
-#include <engine/runtime/assetStore/assetStore.h>
-#include <engine/runtime/input/input.h>
-#include <engine/runtime/rendering/framePlan.h>
-#include <engine/runtime/rendering/iRenderer.h>
-#include <engine/runtime/rendering/meshLibrary.h>
-#include <engine/runtime/rendering/modules/deformationModule.h>
-#include <engine/runtime/rendering/modules/grassModule.h>
-#include <engine/runtime/rendering/modules/meshModule.h>
-#include <engine/runtime/rendering/modules/uiModule.h>
-#include <engine/runtime/rendering/renderSystem.h>
-#include <engine/runtime/rendering/visualStyles.h>
-#include <engine/runtime/sceneManager/scene.h>
-#include <engine/runtime/systems/cameraSystem.h>
-#include <engine/runtime/ui/layer.h>
-
-#include "glm/glm/ext/matrix_clip_space.hpp"
-#include "glm/glm/ext/matrix_transform.hpp"
-#include "glm/glm/ext/quaternion_trigonometric.hpp"
-#include "glm/glm/ext/scalar_constants.hpp"
-#include "glm/glm/trigonometric.hpp"
+#include <glm/glm/common.hpp>
+#include <glm/glm/ext/matrix_clip_space.hpp>
+#include <glm/glm/ext/matrix_transform.hpp>
+#include <glm/glm/ext/quaternion_trigonometric.hpp>
+#include <glm/glm/ext/scalar_constants.hpp>
+#include <glm/glm/ext/vector_float4.hpp>
+#include <glm/glm/geometric.hpp>
+#include <glm/glm/trigonometric.hpp>
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <optional>
+#include <string>
+#include <utility>
 #include <vector>
 
 using namespace sfs;
@@ -55,27 +80,6 @@ using sfs::testing3d::MockRenderer;
 
 namespace
 {
-// A material from a graph, as the asset store makes one.
-MeshMaterial graphMaterial(const materialGraph::Graph& graph)
-{
-  const materialGraph::CompiledGraph compiled = materialGraph::compile(graph);
-  MeshMaterial material;
-  material.shader = compiled.shader;
-  material.shaderParameters = compiled.parameters;
-  material.shaderTextures.resize(compiled.textures.size());
-  return material;
-}
-
-// A graph material glowing `emission` all over (black otherwise).
-MeshMaterial glowMaterial(glm::vec3 emission)
-{
-  materialGraph::Graph graph;
-  const auto out = graph.add(std::string(materialGraph::kOutputType), {});
-  graph.find(out)->inputs[materialGraph::kBaseColor] = glm::vec4(0.0f);
-  graph.find(out)->inputs[materialGraph::kEmission] = glm::vec4(emission, 1.0f);
-  return graphMaterial(graph);
-}
-
 // A scene wired to the mock renderer, with a render system drawing meshes.
 // The camera looks along +X at the origin from 20 units away.
 struct Harness
@@ -126,6 +130,27 @@ struct Harness
     return data ? *data : scene.addSceneData<T>();
   }
 };
+
+// A material from a graph, as the asset store makes one.
+MeshMaterial graphMaterial(const materialGraph::Graph& graph)
+{
+  const materialGraph::CompiledGraph compiled = materialGraph::compile(graph);
+  MeshMaterial material;
+  material.shader = compiled.shader;
+  material.shaderParameters = compiled.parameters;
+  material.shaderTextures.resize(compiled.textures.size());
+  return material;
+}
+
+// A graph material glowing `emission` all over (black otherwise).
+MeshMaterial glowMaterial(glm::vec3 emission)
+{
+  materialGraph::Graph graph;
+  const auto out = graph.add(std::string(materialGraph::kOutputType), {});
+  graph.find(out)->inputs[materialGraph::kBaseColor] = glm::vec4(0.0f);
+  graph.find(out)->inputs[materialGraph::kEmission] = glm::vec4(emission, 1.0f);
+  return graphMaterial(graph);
+}
 } // namespace
 
 int main()
@@ -141,6 +166,7 @@ int main()
   {
     Harness h;
     const MeshHandle box = h.system.meshes().add(meshes::box({1, 1, 1}));
+
     for (int i = 0; i < 5; ++i)
       h.spawn(box, {0.0f, static_cast<float>(i) - 2.0f, 0.0f});
 
@@ -166,6 +192,7 @@ int main()
       {
         if (!m_commands.empty())
           return;
+
         MeshDrawCommand command{.mesh = mesh};
         command.instances.resize(3);
         command.instances[0].model =
@@ -176,8 +203,10 @@ int main()
     Harness h;
     const MeshHandle box = h.system.meshes().add(meshes::box({1, 1, 1}));
     const MeshHandle ball = h.system.meshes().add(meshes::sphere(0.5f, 8, 6));
+
     for (int i = 0; i < 4; ++i)
       h.spawn(box, {0.0f, static_cast<float>(i) - 2.0f, 0.0f});
+
     h.system.withModule<Kept>().mesh = ball;
 
     for (int frame = 0; frame < 3; ++frame)
@@ -185,8 +214,10 @@ int main()
       h.frame();
       CHECK(h.renderer.batches.size() == 2u);
       std::size_t boxes = 0, balls = 0;
+
       for (const MockRenderer::Batch& batch : h.renderer.batches)
         (batch.mesh == box ? boxes : balls) += batch.instances;
+
       CHECK(boxes == 4u);
       CHECK(balls == 3u);
       CHECK(h.renderer.drawn.size() == 7u);
@@ -244,12 +275,15 @@ int main()
     const auto drawnX = [&](std::size_t c)
     {
       std::vector<float> xs;
+
       for (const FramePlan::Draw& draw : plan.cascadeDraws(c))
       {
         CHECK(draw.meshSlot == 1u);
+
         for (uint32_t k = 0; k < draw.instanceCount; ++k)
           xs.push_back(plan.instances()[draw.firstInstance + k].model[3].x);
       }
+
       return xs;
     };
     CHECK((drawnX(0) == std::vector<float>{0.0f, 6.5f}));
@@ -286,8 +320,10 @@ int main()
     const auto boxAt = [&](glm::vec3 at, const Entity& parent)
     {
       Entity e = h.spawn(box, at);
+
       if (parent.isValid())
         hierarchy::setParent(e, parent);
+
       return e;
     };
     boxAt({0.0f, -8.0f, -0.05f}, {});
@@ -672,6 +708,7 @@ int main()
   {
     Harness h;
     const auto count = static_cast<int>(kMaxPointLights) + 8;
+
     for (int i = 0; i < count; ++i)
     {
       Entity lamp = h.scene.createEntity();
@@ -684,8 +721,10 @@ int main()
 
     CHECK(h.renderer.lights.size() == kMaxPointLights);
     float furthest = 0.0f;
+
     for (const PointLight& light : h.renderer.lights)
       furthest = std::max(furthest, light.position.x);
+
     CHECK(furthest < static_cast<float>(kMaxPointLights));
   }
 
@@ -704,6 +743,7 @@ int main()
 
     CHECK(h.renderer.lights.size() == 1u);
     CHECK(h.system.stats().emissionLights == 1u);
+
     if (h.renderer.lights.size() == 1u)
     {
       const PointLight& light = h.renderer.lights[0];
@@ -800,6 +840,7 @@ int main()
     const MeshHandle sphere =
         h.system.meshes().add(meshes::sphere(0.5f, 24, 16, glm::vec3(1.0f)));
     h.system.meshes().setMaterial("glow", glowMaterial(glm::vec3(2.0f)));
+
     for (int i = 0; i < 300; ++i)
       h.spawn(sphere,
               {static_cast<float>(i % 20) * 3.0f,
@@ -807,14 +848,17 @@ int main()
                0.0f})
           .getComponent<MeshRendererComponent>()
           ->materials = {"glow"};
+
     h.frame();
     CHECK(h.renderer.lights.size() == 300u);
     bool eachAtOne = true;
+
     for (const PointLight& light : h.renderer.lights)
     {
       const glm::vec2 grid = glm::vec2(light.position) / 3.0f;
       eachAtOne = eachAtOne && glm::length(grid - glm::round(grid)) < 0.02f;
     }
+
     CHECK(eachAtOne);
   }
 
@@ -895,6 +939,7 @@ int main()
     ShadowSettings shadows;
     shadows.pointLights = 2;
     h.system.setShadowSettings(shadows);
+
     // Five lights along y through the target, one off behind the camera, and
     // one that doesn't cast.
     for (int i = 0; i < 5; ++i)
@@ -905,6 +950,7 @@ int main()
       lamp.addComponent<PointLightComponent>(
           PointLightComponent{glm::vec3(1.0f), 1.0f, 2.0f});
     }
+
     Entity behind = h.scene.createEntity();
     behind.addComponent<TransformComponent>(
         TransformComponent{{-60.0f, 0.0f, 0.0f}});
@@ -925,16 +971,20 @@ int main()
     h.frame();
 
     std::vector<float> shadowed;
+
     for (const PointLight& light : h.renderer.lights)
       if (light.castsShadow)
         shadowed.push_back(light.position.y);
+
     std::sort(shadowed.begin(), shadowed.end());
     CHECK(shadowed == std::vector<float>({0.0f, 3.0f}));
     CHECK(h.system.stats().shadowedLights == 2u);
     // Only the box near a shadowed light casts into its shadow map.
     std::size_t casters = 0;
+
     for (const MockRenderer::Batch& batch : h.renderer.batches)
       casters += batch.lightShadowInstances;
+
     CHECK(casters == 1u);
 
     shadows.pointLights = 0;
@@ -959,6 +1009,7 @@ int main()
       physical.model = SkyModel::Physical;
       h.system.setSkySettings(physical);
       h.light().direction = toSun;
+
       // A dim lamp (x = 0) and a strong one (x = 3).
       for (int i = 0; i < 2; ++i)
       {
@@ -968,11 +1019,14 @@ int main()
         lamp.addComponent<PointLightComponent>(
             PointLightComponent{glm::vec3(1.0f), i == 0 ? 1.0f : 4.0f, 2.0f});
       }
+
       h.frame();
       std::vector<float> shadowed;
+
       for (const PointLight& light : h.renderer.lights)
         if (light.castsShadow)
           shadowed.push_back(light.position.x);
+
       std::sort(shadowed.begin(), shadowed.end());
       return std::make_pair(shadowed, h.renderer.frame.sky.lampScale);
     };
@@ -1170,8 +1224,10 @@ int main()
     field.groundArea = 600.0f * 600.0f;
     const std::optional<GrassPlan> plan = planGrass(batch, field, frame);
     CHECK(plan && plan->grows);
+
     if (!plan || grassLegacyThinning())
       break;
+
     const GrassGrowUniforms& grow = plan->grow;
     // All kept near the camera (out to 770 cells of 0.05), then fewer, with
     // no step anywhere, and none at the draw distance.
@@ -1179,6 +1235,7 @@ int main()
     CHECK(grassKeptShare(grow, 0.0f) == 1.0f);
     CHECK(grassKeptShare(grow, 38.0f) == 1.0f);
     float last = 1.0f;
+
     for (float away = 38.5f; away <= 200.0f; away += 0.5f)
     {
       const float share = grassKeptShare(grow, away);
@@ -1186,7 +1243,9 @@ int main()
       CHECK(last - share < 0.05f);
       last = share;
     }
+
     CHECK(grassKeptShare(grow, 200.0f) == 0.0f);
+
     // Each lattice grown as far as any of its blades are kept, the coarsest
     // to the draw distance.
     for (int k = 0; k < 3; ++k)
@@ -1195,6 +1254,7 @@ int main()
       const float lowest = std::pow(0.25f, static_cast<float>(k + 1));
       CHECK(grassKeptShare(grow, grow.reach[k]) * 1.2f <= lowest * 1.001f);
     }
+
     CHECK(grow.reach[3] == 200.0f);
 
     // Its tiles hidden behind what's drawn opaque can be left out: from the
@@ -1229,8 +1289,10 @@ int main()
     field.groundArea = 600.0f * 600.0f;
     const std::optional<GrassPlan> plan = planGrass(batch, field, frame);
     CHECK(plan.has_value());
+
     if (!plan)
       break;
+
     // Where the blades start thinning out to none: the ground's look hands
     // over to theirs from afar from there.
     CHECK(plan->draw.far.z == plan->grow.thinning.z);
@@ -1326,9 +1388,11 @@ int main()
     // Dirt (no grass) painted over the left half (u below 0.5: x below 0).
     auto terrain = std::make_shared<TerrainMaterial>();
     auto splat = blankSplat(8);
+
     for (int y = 0; y < 8; ++y)
       for (int x = 0; x < 4; ++x)
         splat->rgba[(std::size_t(y) * 8 + x) * 4] = 255;
+
     terrain->splat = splat;
     terrain->layers = {TerrainLayer{}, TerrainLayer{.grass = 0.0f}};
     MeshMaterial ground;
@@ -1447,6 +1511,7 @@ int main()
     h.frame(); // the module learns the meshes
     h.frame();
     CHECK(grassModule.benders().size() == 2u);
+
     for (const GrassBender& bender : grassModule.benders())
       if (bender.center.x > 0.0f)
       {
@@ -1492,12 +1557,16 @@ int main()
     h.frame();
     CHECK(!h.renderer.uiDrawn.empty());
     const ui::Hit* button = nullptr;
+
     for (const ui::Hit& hit : ui.hits())
       if (hit.action)
         button = &hit;
+
     CHECK(button != nullptr);
+
     if (!button)
       return testing::report("renderSystemTests");
+
     const glm::vec2 on(button->rect.x + button->rect.width * 0.5f,
                        button->rect.y + button->rect.height * 0.5f);
 
@@ -1508,8 +1577,10 @@ int main()
     {
       Input seen = input;
       ui.handleInput(seen);
+
       for (GameObject* object : std::vector<GameObject*>{&game})
         static_cast<Game*>(object)->onProcessInput(seen);
+
       input.mouse().beginFrame();
     };
 
@@ -1549,6 +1620,7 @@ int main()
     h.frame(); // the module learns the meshes
     const ui::SourceImage* icon = ui.image("test:crate", true);
     CHECK(icon != nullptr && icon->texture != nullptr);
+
     if (icon && icon->texture)
     {
       CHECK(icon->size() == glm::ivec2(128, 128));
@@ -1564,14 +1636,17 @@ int main()
             .pixels[(std::size_t(at.y + y) * page.size.x + (at.x + x)) * 4 + 3];
       };
       bool solid = false;
+
       for (int y = 0; y < 128; ++y)
         for (int x = 0; x < 128; ++x)
           solid = solid || alpha(x, y) > 200;
+
       CHECK(solid && alpha(0, 0) == 0);
       CHECK(ui.image("test:crate", true) == icon); // once
       // By handle (Image::mesh(MeshHandle)), the same picture.
       CHECK(ui.image("#" + std::to_string(crate.id), true) != nullptr);
     }
+
     CHECK(ui.image("test:nothing", true) == nullptr);
     CHECK(ui.image("no/such/file.png", false) == nullptr);
   }
@@ -1772,10 +1847,12 @@ int main()
 
     const MeshHandle box = h.system.meshes().add(meshes::box({1, 1, 1}));
     h.spawn(box, {0.0f, -2.0f, 0.0f});
+
     for (const float y : {0.0f, 2.0f})
       h.spawn(box, {0.0f, y, 0.0f})
           .getComponent<MeshRendererComponent>()
           ->materials = {"wood"};
+
     // A missing material, or an empty slot, is the mesh's own: batches with the
     // first.
     h.spawn(box, {0.0f, 4.0f, 0.0f})
@@ -1794,11 +1871,13 @@ int main()
                                    [](const auto& batch)
                                    { return !batch.materials.empty(); });
     CHECK(wood != h.renderer.batches.end());
+
     if (wood != h.renderer.batches.end())
     {
       CHECK(wood->instances == 2u);
       CHECK(wood->materials.size() == 1u);
     }
+
     CHECK(h.renderer.liveMaterials.size() == 1u);
     CHECK(loads == 2); // wood and missing, each asked for once
   }
@@ -1852,8 +1931,10 @@ int main()
         [&](std::string_view name) -> std::optional<VisualStyle>
         {
           asked.emplace_back(name);
+
           if (name == "asset:real")
             return style;
+
           return std::nullopt;
         });
 
@@ -2079,15 +2160,19 @@ int main()
     h.frame();
     CHECK(h.system.meshes().size() == meshes);
     std::vector<Entity> storm;
+
     for (int i = 0; i < 6; ++i)
     {
       storm.push_back(strikeAt(false, -1.0f));
       h.scene.update(0.01);
       h.scene.render();
     }
+
     int flashing = 0;
+
     for (const Entity& one : storm)
       flashing += one.getComponent<LightningComponent>()->finished ? 0 : 1;
+
     CHECK(flashing == 4);
     CHECK(storm[0].getComponent<LightningComponent>()->finished);
     CHECK(!storm[5].getComponent<LightningComponent>()->finished);
@@ -2170,12 +2255,14 @@ int main()
     // shadows, and the night sky glows brighter under it.
     sky.moonDirection = {-0.3f, -0.2f, 0.8f};
     sky.moonPhase = 1.0f;
+
     // (Twice: the setting sun's may still have been being worked out.)
     for (int i = 0; i < 2; ++i)
     {
       h.frame();
       h.system.finishSkyWork();
     }
+
     h.frame();
     const FrameSky moonlit = h.renderer.frame.sky;
     CHECK(moonlit.moonLit);
@@ -2301,13 +2388,17 @@ int main()
     {
       ++loads;
       auto material = std::make_shared<MeshMaterial>();
+
       if (name == "turf")
         material->variants = {
             {"realistic", "turf real"}, {"painted", "turf painted"}};
+
       if (name == "turf real" || name == "turf painted")
         material->roughness = 0.5f;
+
       if (name == "turf real") // not followed (a variant's own variant)
         material->variants = {{"realistic", "turf painted"}};
+
       return name == "nothing" ? nullptr : material;
     };
     library.setProvider(provider);
@@ -2329,8 +2420,10 @@ int main()
     const auto drawnMaterials = [&]
     {
       std::vector<MaterialHandle> out;
+
       for (const auto& batch : h.renderer.batches)
         out.insert(out.end(), batch.materials.begin(), batch.materials.end());
+
       return out;
     };
     const auto has =
@@ -2361,8 +2454,10 @@ int main()
     // The variant asked as itself doesn't follow its own variant.
     CHECK(library.material("turf real") == real);
     const int loaded = loads;
+
     for (int i = 0; i < 3; ++i)
       h.frame();
+
     CHECK(loads == loaded); // nothing more loads frame to frame
 
     // Another tag, then none: back to the material itself, live.
@@ -2455,11 +2550,13 @@ int main()
     const MeshHandle house = h.system.meshes().add(model);
     const std::vector<MeshSection> slots = h.system.meshes().sections(house);
     CHECK(slots.size() == 2u);
+
     if (slots.size() == 2u)
     {
       CHECK(slots[0].name == "Wood");
       CHECK(slots[1].material.baseColor.r == 1.0f);
     }
+
     // No sections: one slot, the default material.
     CHECK(h.system.meshes()
               .sections(h.system.meshes().add(meshes::box({1, 1, 1})))

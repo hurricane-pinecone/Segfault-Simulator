@@ -1,11 +1,24 @@
 #pragma once
 
+#include "engine/core/ecs/component.h"
+#include "engine/core/ecs/entityDeclaration.h"
+#include "engine/core/ecs/pool.h"
 #include "engine/core/ecs/registry.h"
+#include "engine/core/ecs/sceneData.h"
+#include "engine/core/ecs/service.h"
+#include "engine/core/ecs/system.h"
+#include "engine/core/events/eventVerbs.h"
 #include "engine/core/logger/logger.h"
 #include "engine/core/util/debugFeatures.h"
 #include "engine/core/util/fatalError.h"
+
 #include <algorithm>
+#include <atomic>
+#include <cstddef>
+#include <cstdint>
+#include <memory>
 #include <string>
+#include <type_traits>
 #include <typeinfo>
 
 namespace sfs
@@ -28,11 +41,13 @@ void Registry::add(const char* action, const Entity& entity, TArgs&&... args)
                 "add the component itself, not a const one: const is for "
                 "reading it (getComponent<const T>, a const query term)");
   const auto componentId = Component<TComponent>::getId();
+
   if (!isValid(entity))
   {
     refuseAdd(entity, action, detail::componentTypeKey<TComponent>());
     return;
   }
+
   const auto entityId = entity.getId();
 
   if (static_cast<std::size_t>(componentId) >= componentPools.size())
@@ -52,6 +67,7 @@ void Registry::add(const char* action, const Entity& entity, TArgs&&... args)
 
   const Signature before = entityComponentSignatures[entityId];
   entityComponentSignatures[entityId].set(componentId, true);
+
   if (!before.test(componentId))
     componentsChanged(entity, before, static_cast<std::size_t>(componentId));
 }
@@ -63,15 +79,19 @@ void Registry::removeComponent(const Entity& entity)
                 "remove the component itself, not a const one: const is for "
                 "reading it (getComponent<const T>, a const query term)");
   const int componentId = Component<TComponent>::getId();
+
   if (!isValid(entity))
     return;
+
   const auto entityId = entity.getId();
   const Signature before = entityComponentSignatures[entityId];
+
   if (!before.test(componentId))
     return;
 
   entityComponentSignatures[entityId].set(componentId, false);
   componentsChanged(entity, before, static_cast<std::size_t>(componentId));
+
   if (Pool<TComponent>* pool = poolOf<TComponent>())
     pool->remove(static_cast<std::size_t>(entityId));
 }
@@ -101,18 +121,23 @@ T& Registry::addSceneData(TArgs&&... args)
                 "add the scene data itself, not a const one: const is for "
                 "reading it (sceneData<const T>())");
   const std::size_t id = detail::sceneDataId<T>();
+
   while (m_sceneData.size() <= id)
     m_sceneData.emplace_back(nullptr, [](void*) {});
+
   if (m_sceneData[id])
   {
     sceneDataExists(detail::componentTypeKey<T>());
     return *static_cast<T*>(m_sceneData[id].get());
   }
+
   T* made = nullptr;
+
   if constexpr (std::is_constructible_v<T, TArgs&&...>)
     made = new T(std::forward<TArgs>(args)...);
   else
     made = new T{std::forward<TArgs>(args)...};
+
   m_sceneData[id] = {made, [](void* data) { delete static_cast<T*>(data); }};
   return *made;
 }
@@ -123,6 +148,7 @@ void Registry::removeSceneData()
   (void)sizeof(detail::RequireSceneData<T>);
   static_assert(!std::is_const_v<T> && !std::is_volatile_v<T>,
                 "remove the scene data itself, not a const one");
+
   if (const std::size_t id = detail::sceneDataId<T>(); id < m_sceneData.size())
     m_sceneData[id].reset();
 }
@@ -232,11 +258,13 @@ template <typename TSystem>
 TSystem* Registry::tryGetSystem() const
 {
   const auto id = static_cast<std::size_t>(detail::systemLookupId<TSystem>());
+
   if (id >= kSystemSlots)
     return findSystem<TSystem>();
 
   std::atomic<std::uintptr_t>& slot = m_systemSlots[id];
   const std::uintptr_t known = slot.load(std::memory_order_acquire);
+
   if (known != kNotLookedUp)
   {
     // Two system types with one name share a slot: the answer may be the
@@ -245,16 +273,20 @@ TSystem* Registry::tryGetSystem() const
         debugFeatures::compiled() && debugFeatures::enabled()
             ? m_systemSlotTypes[id].load(std::memory_order_acquire)
             : nullptr;
+
     if (foundFor && *foundFor != typeid(TSystem))
     {
       static std::atomic<bool> logged{false};
+
       if (!logged.exchange(true))
         LOG_ERROR(
             "tryGetSystem: two system types are named " +
             detail::readableTypeName(detail::componentTypeKey<TSystem>()) +
             "; give them distinct names (looked up by a scan instead)");
+
       return findSystem<TSystem>();
     }
+
     return known == kNoSuchSystem ? nullptr : reinterpret_cast<TSystem*>(known);
   }
 
@@ -264,13 +296,16 @@ TSystem* Registry::tryGetSystem() const
   TSystem* found = findSystem<TSystem>();
   std::uintptr_t answer =
       found ? reinterpret_cast<std::uintptr_t>(found) : kNoSuchSystem;
+
   if (m_systemsChanged.load() == changed)
   {
     m_systemSlotTypes[id].store(&typeid(TSystem));
     slot.store(answer);
+
     if (m_systemsChanged.load() != changed)
       slot.compare_exchange_strong(answer, kNotLookedUp);
   }
+
   return found;
 }
 
@@ -280,6 +315,7 @@ TSystem* Registry::findSystem() const
   for (const auto& system : systems)
     if (auto* casted = dynamic_cast<TSystem*>(system.get()))
       return casted;
+
   return nullptr;
 }
 

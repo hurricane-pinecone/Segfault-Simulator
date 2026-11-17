@@ -1,10 +1,22 @@
 #include "engine/core/rendering/materialGraphCompiler.h"
 
+#include "engine/core/rendering/materialGraph.h"
+#include "engine/core/rendering/materialNodes.h"
 #include "engine/core/rendering/mesh.h"
 #include "engine/core/sceneData/shaderGlobals.h"
 
+#include <glm/glm/ext/vector_float4.hpp>
+
 #include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <span>
+#include <string>
+#include <unordered_map>
 #include <unordered_set>
+#include <utility>
+#include <vector>
 
 namespace sfs::materialGraph
 {
@@ -16,8 +28,10 @@ namespace
 std::string parameterWgsl(std::size_t index, ValueType type)
 {
   std::string out = "graphParameters.values[" + std::to_string(index) + "]";
+
   if (type != ValueType::Vec4)
     out += "." + std::string("xyzw").substr(0, width(type));
+
   return out;
 }
 
@@ -53,35 +67,44 @@ struct Compiler
   {
     std::unordered_map<NodeId, int>
         waiting; // links into each node not yet placed
+
     for (const Node& node : graph.nodes)
       waiting[node.id] = 0;
+
     for (const Link& link : graph.links)
       if (waiting.contains(link.fromNode) && waiting.contains(link.toNode))
         ++waiting[link.toNode];
 
     std::vector<const Node*> ready;
+
     for (const Node& node : graph.nodes)
       if (waiting[node.id] == 0)
         ready.push_back(&node);
+
     // Stable: ties go in the graph's order, so the WGSL doesn't change unless
     // the graph does.
     std::reverse(ready.begin(), ready.end());
     std::vector<const Node*> sorted;
+
     while (!ready.empty())
     {
       const Node* node = ready.back();
       ready.pop_back();
       sorted.push_back(node);
       std::vector<const Node*> next;
+
       for (const Link& link : graph.links)
         if (link.fromNode == node->id && waiting.contains(link.toNode) &&
             --waiting[link.toNode] == 0)
           next.push_back(graph.find(link.toNode));
+
       ready.insert(ready.end(), next.rbegin(), next.rend());
     }
+
     for (const Node& node : graph.nodes)
       if (waiting[node.id] > 0)
         error(node.id, "This node feeds into itself");
+
     for (const Node* node : sorted)
       if (findNodeType(node->type))
         order.push_back(node);
@@ -92,11 +115,15 @@ struct Compiler
   const Link* source(const Node& node, uint32_t input) const
   {
     const Link* link = graph.linkInto(node.id, input);
+
     if (!link)
       return nullptr;
+
     const auto it = outputTypes.find(link->fromNode);
+
     if (it == outputTypes.end() || link->fromOutput >= it->second.size())
       return nullptr;
+
     return link;
   }
 
@@ -106,13 +133,16 @@ struct Compiler
     {
       const NodeType& type = *findNodeType(node->type);
       ValueType dynamic = ValueType::Float;
+
       for (uint32_t i = 0; i < type.inputs.size(); ++i)
         if (!type.inputs[i].type)
           if (const Link* link = source(*node, i))
             dynamic = std::max(
                 dynamic, outputTypes[link->fromNode][link->fromOutput]);
+
       result.dynamicTypes[node->id] = dynamic;
       std::vector<ValueType>& outputs = outputTypes[node->id];
+
       for (std::size_t i = 0; i < type.outputs.size(); ++i)
         outputs.push_back(type.outputType(i, dynamic));
     }
@@ -123,14 +153,17 @@ struct Compiler
   {
     std::unordered_set<NodeId> found = {output};
     std::vector<NodeId> pending = {output};
+
     while (!pending.empty())
     {
       const NodeId node = pending.back();
       pending.pop_back();
+
       for (const Link& link : graph.links)
         if (link.toNode == node && found.insert(link.fromNode).second)
           pending.push_back(link.fromNode);
     }
+
     return found;
   }
 
@@ -146,6 +179,7 @@ struct Compiler
   {
     using Kind = MaterialShader::Source::Kind;
     const ValueType to = type.inputType(index, result.dynamicTypes[node.id]);
+
     if (const Link* link = source(node, index))
     {
       const ValueType from = outputTypes[link->fromNode][link->fromOutput];
@@ -155,6 +189,7 @@ struct Compiler
                from,
                to}};
     }
+
     switch (type.inputs[index].fallback)
     {
     case Fallback::Uv:
@@ -172,6 +207,7 @@ struct Compiler
     case Fallback::Value:
       break;
     }
+
     const glm::vec4 value = index < node.inputs.size()
                                 ? node.inputs[index]
                                 : type.inputs[index].defaultValue;
@@ -186,34 +222,44 @@ struct Compiler
     resolveTypes();
 
     std::vector<const Node*> outputs;
+
     for (const Node& node : graph.nodes)
       if (node.type == kOutputType)
         outputs.push_back(&node);
+
     if (outputs.empty())
       error(0, "The graph needs a Material Output");
+
     for (std::size_t i = 1; i < outputs.size(); ++i)
       error(outputs[i]->id, "A graph has one Material Output: remove this one");
+
     if (outputs.empty())
       return;
+
     const Node& output = *outputs.front();
 
     const std::unordered_set<NodeId> used = feedingOutput(output.id);
+
     for (const Node& node : graph.nodes)
       if (used.contains(node.id) && !findNodeType(node.type))
         error(node.id,
               "Unknown node type \"" + node.type +
                   "\" (made by a newer version?)");
+
     if (!result.errors.empty())
       return;
 
     std::string helpers;
     std::unordered_set<const NodeType*> withHelpers;
     std::string body;
+
     for (const Node* node : order)
     {
       if (!used.contains(node->id) || node->id == output.id)
         continue;
+
       const NodeType& type = *findNodeType(node->type);
+
       if (!type.helpers.empty() && withHelpers.insert(&type).second)
         helpers += type.helpers;
 
@@ -221,6 +267,7 @@ struct Compiler
       step.type = &type;
       step.dynamic = result.dynamicTypes[node->id];
       std::vector<std::string> inputs;
+
       for (uint32_t i = 0; i < type.inputs.size(); ++i)
       {
         auto [wgsl, source] = input(*node, type, i);
@@ -233,12 +280,14 @@ struct Compiler
       args.dynamic = step.dynamic;
       args.local = "n" + std::to_string(node->id);
       args.body = &body;
+
       if (type.property == Property::Color || type.property == Property::Number)
       {
         const std::size_t parameter = addParameter(node->value);
         step.parameter = static_cast<int32_t>(parameter);
         args.property = parameterWgsl(parameter, ValueType::Vec4);
       }
+
       if (type.property == Property::Texture)
       {
         const std::size_t texture = result.textures.size();
@@ -249,6 +298,7 @@ struct Compiler
         args.property = "graphTexture" + std::to_string(texture);
         args.sampler = "graphSampler" + std::to_string(texture);
       }
+
       // A global shader parameter: the frame's, at its slot (none: 0).
       if (type.property == Property::Global)
       {
@@ -260,6 +310,7 @@ struct Compiler
 
       const std::vector<std::string> expressions = type.emit(args);
       const std::vector<ValueType>& types = outputTypes[node->id];
+
       for (std::size_t i = 0; i < expressions.size() && i < types.size(); ++i)
         body += "  let " + outputName(node->id, i) + ": " + wgslType(types[i]) +
                 " = " + expressions[i] + ";\n";
@@ -272,15 +323,15 @@ struct Compiler
 
     // The Material Output's inputs become the surface.
     const NodeType& outputType = *findNodeType(kOutputType);
-    static constexpr const char* kFields[] = {"baseColor",
-                                              "metallic",
-                                              "roughness",
-                                              "normal",
-                                              "emission",
-                                              "alphaClip",
-                                              "alpha",
-                                              "bloom"};
-    static constexpr uint32_t kFieldInputs[] = {kBaseColor,
+    static constexpr const char* FIELDS[] = {"baseColor",
+                                             "metallic",
+                                             "roughness",
+                                             "normal",
+                                             "emission",
+                                             "alphaClip",
+                                             "alpha",
+                                             "bloom"};
+    static constexpr uint32_t FIELD_INPUTS[] = {kBaseColor,
                                                 kMetallic,
                                                 kRoughness,
                                                 kNormal,
@@ -289,12 +340,14 @@ struct Compiler
                                                 kAlpha,
                                                 kBloom};
     body += "  var result: Surface;\n";
-    for (std::size_t i = 0; i < std::size(kFields); ++i)
+
+    for (std::size_t i = 0; i < std::size(FIELDS); ++i)
     {
-      auto [wgsl, source] = input(output, outputType, kFieldInputs[i]);
-      body += "  result." + std::string(kFields[i]) + " = " + wgsl + ";\n";
-      shader->m_output[kFieldInputs[i]] = source;
+      auto [wgsl, source] = input(output, outputType, FIELD_INPUTS[i]);
+      body += "  result." + std::string(FIELDS[i]) + " = " + wgsl + ";\n";
+      shader->m_output[FIELD_INPUTS[i]] = source;
     }
+
     body += "  return result;\n";
 
     std::string wgsl =
@@ -302,6 +355,7 @@ struct Compiler
         std::to_string(std::max<std::size_t>(result.parameters.size(), 1)) +
         ">,\n}\n\n@group(1) @binding(0) var<uniform> graphParameters: "
         "GraphParameters;\n";
+
     for (std::size_t i = 0; i < result.textures.size(); ++i)
     {
       const std::string n = std::to_string(i);
@@ -310,6 +364,7 @@ struct Compiler
       wgsl += "@group(1) @binding(" + std::to_string(2 + 2 * i) +
               ") var graphSampler" + n + ": sampler;\n";
     }
+
     wgsl += helpers;
     wgsl += "\nfn surface(in: SurfaceIn) -> Surface {\n" + body + "}\n";
 
@@ -320,6 +375,59 @@ struct Compiler
     result.shader = std::move(shader);
   }
 };
+
+SurfaceValues MaterialShader::evaluate(
+    const SurfacePoint& point,
+    std::span<const glm::vec4> parameters,
+    std::span<const std::shared_ptr<const TextureData>> textures) const
+{
+  // Kept between calls (previews evaluate every pixel), one set per thread.
+  thread_local std::vector<glm::vec4> registers;
+  thread_local std::vector<glm::vec4> inputs;
+  registers.assign(m_registerCount, glm::vec4(0.0f));
+
+  for (const Step& step : m_steps)
+  {
+    inputs.clear();
+
+    for (const Source& source : step.inputs)
+      inputs.push_back(read(source, registers, parameters, point));
+
+    EvaluateArgs args;
+    args.inputs = inputs;
+    args.dynamic = step.dynamic;
+
+    if (step.parameter >= 0 &&
+        static_cast<std::size_t>(step.parameter) < parameters.size())
+      args.property = parameters[step.parameter];
+
+    if (step.texture >= 0 &&
+        static_cast<std::size_t>(step.texture) < textures.size())
+      args.texture = textures[step.texture].get();
+
+    args.point = &point;
+
+    const std::span<glm::vec4> outputs(
+        registers.data() + step.firstOutput, step.type->outputs.size());
+    step.type->evaluate(args, outputs);
+
+    for (std::size_t i = 0; i < outputs.size(); ++i)
+      outputs[i] = trim(outputs[i], step.type->outputType(i, step.dynamic));
+  }
+
+  const auto value = [&](uint32_t input)
+  { return read(m_output[input], registers, parameters, point); };
+  SurfaceValues surface;
+  surface.baseColor = glm::vec3(value(kBaseColor));
+  surface.alpha = value(kAlpha).x;
+  surface.metallic = value(kMetallic).x;
+  surface.roughness = value(kRoughness).x;
+  surface.normal = glm::vec3(value(kNormal));
+  surface.emission = glm::vec3(value(kEmission));
+  surface.alphaClip = value(kAlphaClip).x;
+  surface.bloom = value(kBloom).x;
+  return surface;
+}
 
 void MaterialShader::findOutputReads()
 {
@@ -344,16 +452,21 @@ void MaterialShader::findOutputReads()
     case Source::Kind::Position:
       return PointInputs::Position;
     }
+
     return PointInputs::None;
   };
+
   for (const Step& step : m_steps)
   {
     PointInputs reads = step.type->reads;
+
     for (const Source& input : step.inputs)
       reads |= readsOf(input);
+
     for (std::size_t i = 0; i < step.type->outputs.size(); ++i)
       registers[step.firstOutput + i] = reads;
   }
+
   for (std::size_t i = 0; i < m_output.size(); ++i)
     m_outputReads[i] = readsOf(m_output[i]);
 }
@@ -364,6 +477,7 @@ glm::vec4 MaterialShader::read(const Source& source,
                                const SurfacePoint& point) const
 {
   glm::vec4 value(0.0f);
+
   switch (source.kind)
   {
   case Source::Kind::Register:
@@ -372,6 +486,7 @@ glm::vec4 MaterialShader::read(const Source& source,
   case Source::Kind::Parameter:
     if (source.index < parameters.size())
       value = trim(parameters[source.index], source.from);
+
     break;
   case Source::Kind::Uv:
     value = glm::vec4(point.uv, 0.0f, 0.0f);
@@ -386,54 +501,8 @@ glm::vec4 MaterialShader::read(const Source& source,
     value = glm::vec4(point.position, 0.0f);
     break;
   }
+
   return convert(value, source.from, source.to);
-}
-
-SurfaceValues MaterialShader::evaluate(
-    const SurfacePoint& point,
-    std::span<const glm::vec4> parameters,
-    std::span<const std::shared_ptr<const TextureData>> textures) const
-{
-  // Kept between calls (previews evaluate every pixel), one set per thread.
-  thread_local std::vector<glm::vec4> registers;
-  thread_local std::vector<glm::vec4> inputs;
-  registers.assign(m_registerCount, glm::vec4(0.0f));
-  for (const Step& step : m_steps)
-  {
-    inputs.clear();
-    for (const Source& source : step.inputs)
-      inputs.push_back(read(source, registers, parameters, point));
-
-    EvaluateArgs args;
-    args.inputs = inputs;
-    args.dynamic = step.dynamic;
-    if (step.parameter >= 0 &&
-        static_cast<std::size_t>(step.parameter) < parameters.size())
-      args.property = parameters[step.parameter];
-    if (step.texture >= 0 &&
-        static_cast<std::size_t>(step.texture) < textures.size())
-      args.texture = textures[step.texture].get();
-    args.point = &point;
-
-    const std::span<glm::vec4> outputs(
-        registers.data() + step.firstOutput, step.type->outputs.size());
-    step.type->evaluate(args, outputs);
-    for (std::size_t i = 0; i < outputs.size(); ++i)
-      outputs[i] = trim(outputs[i], step.type->outputType(i, step.dynamic));
-  }
-
-  const auto value = [&](uint32_t input)
-  { return read(m_output[input], registers, parameters, point); };
-  SurfaceValues surface;
-  surface.baseColor = glm::vec3(value(kBaseColor));
-  surface.alpha = value(kAlpha).x;
-  surface.metallic = value(kMetallic).x;
-  surface.roughness = value(kRoughness).x;
-  surface.normal = glm::vec3(value(kNormal));
-  surface.emission = glm::vec3(value(kEmission));
-  surface.alphaClip = value(kAlphaClip).x;
-  surface.bloom = value(kBloom).x;
-  return surface;
 }
 
 CompiledGraph compile(const Graph& graph)

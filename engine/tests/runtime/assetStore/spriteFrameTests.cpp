@@ -1,10 +1,12 @@
 #include "../../testHarness.h"
-
-#include <engine/core/assets/assetDatabase.h>
-#include <engine/runtime/assetStore/assetStore.h>
-#include <engine/runtime/assetStore/textureImporter.h>
+#include "engine/core/assets/assetDatabase.h"
+#include "engine/core/rendering/mesh.h"
+#include "engine/runtime/assetStore/assetStore.h"
+#include "engine/runtime/assetStore/textureImporter.h"
 
 #include <filesystem>
+#include <optional>
+#include <string>
 
 using namespace sfs;
 namespace fs = std::filesystem;
@@ -38,8 +40,10 @@ int main()
         project.root, AssetDatabase::Mode::ReadWrite, {"assets"});
     const AssetRecord* sheet = catalogue.findByPath("assets/sheet.png");
     CHECK(sheet != nullptr);
+
     if (!sheet)
       return testing::report("spriteFrameTests");
+
     const AssetId id = sheet->id;
     const std::string name = "asset:" + id.toString();
     AssetStore store;

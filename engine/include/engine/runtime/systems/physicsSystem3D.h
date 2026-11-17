@@ -1,10 +1,12 @@
 #pragma once
 
+#include "engine/core/components/contactReportComponent.h"
+#include "engine/core/ecs/entity.h"
 #include "engine/core/ecs/system.h"
 #include "engine/core/rendering/camera.h"
-#include "engine/runtime/systems/collision3D.h"
 #include "engine/runtime/systems/collisionWorld3D.h"
-#include "glm/glm/ext/vector_float3.hpp"
+
+#include <glm/glm/ext/vector_float3.hpp>
 
 #include <cstdint>
 #include <functional>
@@ -58,17 +60,39 @@ struct RaycastHit3D
 class PhysicsSystem3D : public System
 {
 public:
+  /** What the last update did, for tests and measuring. */
+  struct UpdateStats
+  {
+    int steps = 0;                // simulation steps taken
+    bool lookedForBodies = false; // searched the scene for new bodies
+  };
+
   /** `scene`: whose game objects hear about contacts (none: nobody's). */
   explicit PhysicsSystem3D(Scene* scene = nullptr);
-  ~PhysicsSystem3D() override;
-
   PhysicsSystem3D(const PhysicsSystem3D&) = delete;
+  ~PhysicsSystem3D() override;
   PhysicsSystem3D& operator=(const PhysicsSystem3D&) = delete;
-
-  /** Gravity in world units per second squared; default (0, 0, -9.81). */
-  void setGravity(const glm::vec3& gravity);
+  /** A steady push, for the next step (call it every frame to keep pushing). */
+  void addForce(const Entity& entity, const glm::vec3& force);
+  /** A sudden push (mass * velocity change), e.g. a jump or a hit. */
+  void addImpulse(const Entity& entity, const glm::vec3& impulse);
+  glm::vec3 angularVelocity(const Entity& entity) const;
+  /**
+   * Contacts that began and ended during the last update, scene-wide. Games
+   * read their own through a ContactReportComponent instead.
+   */
+  const std::vector<Contact3D>& contactsBegun() const;
+  /**
+   * Contacts that went deeper during the last update (beyond the depth they
+   * began with, or last went deeper to), once each, with their deepest
+   * depth: e.g. to tell a graze from a real hit. Not triggers.
+   */
+  const std::vector<Contact3D>& contactsDeepened() const;
+  const std::vector<Contact3D>& contactsEnded() const;
   glm::vec3 gravity() const;
-
+  /** Whether the entity currently has a physics body. */
+  bool hasBody(const Entity& entity) const;
+  const UpdateStats& lastUpdateStats() const;
   /**
    * The nearest body the ray hits within `maxDistance` (triggers are ignored),
    * as of the last update. Pair with RenderSystem::screenRay to find what
@@ -76,21 +100,16 @@ public:
    */
   std::optional<RaycastHit3D> raycast(const Ray& ray,
                                       float maxDistance = 1000.0f) const;
-
-  // A dynamic body's motion; no effect on an entity that isn't one.
-  glm::vec3 velocity(const Entity& entity) const;
-  void setVelocity(const Entity& entity, const glm::vec3& velocity);
-  glm::vec3 angularVelocity(const Entity& entity) const;
+  /**
+   * Goes up whenever a body is added, removed or rebuilt, or a static one is
+   * moved: a snapshot of static bodies is current while this hasn't changed.
+   */
+  uint64_t revision() const;
   void setAngularVelocity(const Entity& entity,
                           const glm::vec3& radiansPerSecond);
-  /** A sudden push (mass * velocity change), e.g. a jump or a hit. */
-  void addImpulse(const Entity& entity, const glm::vec3& impulse);
-  /** A steady push, for the next step (call it every frame to keep pushing). */
-  void addForce(const Entity& entity, const glm::vec3& force);
-
-  /** Whether the entity currently has a physics body. */
-  bool hasBody(const Entity& entity) const;
-
+  /** Gravity in world units per second squared; default (0, 0, -9.81). */
+  void setGravity(const glm::vec3& gravity);
+  void setVelocity(const Entity& entity, const glm::vec3& velocity);
   /**
    * A frozen copy of the solid bodies that aren't dynamic (static ones, and
    * kinematic ones where they are now), as of the last update, for queries on
@@ -100,38 +119,15 @@ public:
    */
   std::shared_ptr<const CollisionWorld3D>
   snapshot(const std::function<bool(const Entity&)>& include = {}) const;
-  /**
-   * Goes up whenever a body is added, removed or rebuilt, or a static one is
-   * moved: a snapshot of static bodies is current while this hasn't changed.
-   */
-  uint64_t revision() const;
-
-  /** What the last update did, for tests and measuring. */
-  struct UpdateStats
-  {
-    int steps = 0;                // simulation steps taken
-    bool lookedForBodies = false; // searched the scene for new bodies
-  };
-  const UpdateStats& lastUpdateStats() const;
-
-  /**
-   * Contacts that began and ended during the last update, scene-wide. Games
-   * read their own through a ContactReportComponent instead.
-   */
-  const std::vector<Contact3D>& contactsBegun() const;
-  const std::vector<Contact3D>& contactsEnded() const;
-  /**
-   * Contacts that went deeper during the last update (beyond the depth they
-   * began with, or last went deeper to), once each, with their deepest
-   * depth: e.g. to tell a graze from a real hit. Not triggers.
-   */
-  const std::vector<Contact3D>& contactsDeepened() const;
+  // A dynamic body's motion; no effect on an entity that isn't one.
+  glm::vec3 velocity(const Entity& entity) const;
 
 protected:
   void update(double deltaTime) override;
 
 private:
   struct Impl;
+
   std::unique_ptr<Impl> m;
   Scene* m_scene = nullptr;
 };

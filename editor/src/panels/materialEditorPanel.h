@@ -1,16 +1,16 @@
 #pragma once
 
+#include "engine/core/assets/assetDatabase.h"
+#include "engine/core/rendering/material.h"
+#include "engine/core/rendering/materialGraph.h"
+#include "engine/core/rendering/materialGraphCompiler.h"
 #include "materials/materialGraphCanvas.h"
 #include "materials/materialPreview.h"
 #include "panels/panel.h"
 
-#include "engine/core/assets/assetDatabase.h"
-#include "engine/core/rendering/material.h"
-#include "engine/core/rendering/materialGraphCompiler.h"
-
 #include <chrono>
-#include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace sfs
@@ -32,25 +32,11 @@ public:
   MaterialEditorPanel(sfs::IRenderBackend& backend,
                       const sfs::AssetRecord& record);
 
-  const sfs::AssetId& material() const { return m_material; }
+  bool canRedo() const { return !m_redo.empty(); }
 
-  /** Read the material's file. False (logged) if it isn't a graph material. */
-  bool load(EditorContext& context);
+  bool canUndo() const { return !m_undo.empty(); }
 
-  /** Changed since it was last saved (or opened). */
-  bool unsaved() const { return m_asset != m_saved; }
-
-  /** Write the file (and redraw the scene and the Assets panel's preview). */
-  bool save(EditorContext& context);
-
-  /** Its tab was closed, its changes saved or discarded: remove the panel. */
-  bool finished() const { return m_finished; }
-
-  /** Put the scene back to the material as saved (closing without saving). */
-  void revertScene(EditorContext& context) const;
-
-  /** Open as a tab beside this window (another material's). */
-  void dockWith(std::string title) { m_dockWith = std::move(title); }
+  void deleteSelection() { m_canvas.deleteSelection(*m_asset.graph); }
 
   /**
    * Open below this window (the scene's viewport), splitting its space: the
@@ -58,32 +44,51 @@ public:
    */
   void dockBelow(std::string title) { m_dockBelow = std::move(title); }
 
+  /** Open as a tab beside this window (another material's). */
+  void dockWith(std::string title) { m_dockWith = std::move(title); }
+
+  void duplicateSelection() { m_canvas.duplicateSelection(*m_asset.graph); }
+
+  /** Its tab was closed, its changes saved or discarded: remove the panel. */
+  bool finished() const { return m_finished; }
+
+  /** Read the material's file. False (logged) if it isn't a graph material. */
+  bool load(EditorContext& context);
+
+  const sfs::AssetId& material() const { return m_material; }
+
   /** Whose the Edit menu is: this panel's while it was the last one focused. */
   bool ownsEdit() const { return m_ownsEdit; }
 
-  bool canUndo() const { return !m_undo.empty(); }
-  bool canRedo() const { return !m_redo.empty(); }
-  void undo();
   void redo();
-  void duplicateSelection() { m_canvas.duplicateSelection(*m_asset.graph); }
-  void deleteSelection() { m_canvas.deleteSelection(*m_asset.graph); }
+
+  /** Put the scene back to the material as saved (closing without saving). */
+  void revertScene(EditorContext& context) const;
+
+  /** Write the file (and redraw the scene and the Assets panel's preview). */
+  bool save(EditorContext& context);
+
+  void undo();
+
+  /** Changed since it was last saved (or opened). */
+  bool unsaved() const { return m_asset != m_saved; }
 
   void update(EditorContext& context) override;
 
 protected:
-  void drawContents(EditorContext& context) override;
   void beforeBegin() override;
+  void drawContents(EditorContext& context) override;
   int windowFlags() const override;
 
 private:
-  void handleKeys(EditorContext& context);
-  void drawToolbar(EditorContext& context);
-  void drawSidebar(EditorContext& context);
-  void drawNodeValues(EditorContext& context, sfs::materialGraph::Node& node);
-  void drawPreview();
-  void drawCloseDialog(EditorContext& context);
   // After any edit: compile, show it in the scene, start a new preview.
   void applyChanges(EditorContext& context);
+  void drawCloseDialog(EditorContext& context);
+  void drawNodeValues(EditorContext& context, sfs::materialGraph::Node& node);
+  void drawPreview();
+  void drawSidebar(EditorContext& context);
+  void drawToolbar(EditorContext& context);
+  void handleKeys(EditorContext& context);
   // Record an undo step once an edit is finished (not mid-drag).
   void recordUndo();
 

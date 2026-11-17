@@ -1,12 +1,14 @@
 #pragma once
 
-#include "engine/core/ecs/entity.h"
+#include "engine/core/ecs/entityDeclaration.h"
 #include "engine/core/events/eventInbox.h"
 #include "engine/core/events/eventOwner.h"
 #include "engine/core/events/eventRules.h"
+#include "engine/core/events/eventTraits.h"
 #include "engine/core/events/keyed.h"
 #include "engine/core/events/requestTickets.h"
 #include "engine/core/util/typeKey.h"
+#include "engine/core/util/typeList.h"
 
 #include <array>
 #include <atomic>
@@ -220,9 +222,6 @@ struct EventQueueLink
 class EventQueueBase
 {
 public:
-  /** Kept events past which a queue warns, naming who holds them. */
-  static constexpr std::size_t kManyEvents = 65536;
-
   /**
    * @param name the event type's name, for people
    * @param frame the owning Events' frame count, for the log
@@ -233,10 +232,17 @@ public:
                  const uint64_t& frame,
                  const std::size_t& maxKept,
                  std::string kind);
-  virtual ~EventQueueBase();
   EventQueueBase(const EventQueueBase&) = delete;
+  virtual ~EventQueueBase();
   EventQueueBase& operator=(const EventQueueBase&) = delete;
-
+  /**
+   * Registers a consumer, at the oldest event kept, so nothing sent while a
+   * scene sets up is lost to the order things are made in.
+   * @param owner its owner; null for none
+   * @param who its owner's type, for the log; null for none
+   * @return its slot
+   */
+  uint32_t addConsumer(EventOwner* owner, const std::type_info* who);
   /**
    * The frame boundary: the workers' staged events are taken in, the events
    * every consumer has passed are dropped (a type with no consumers keeps an
@@ -244,32 +250,12 @@ public:
    * compacted. Events::update() calls it only while busy().
    */
   virtual void advance() = 0;
-
   /**
-   * This queue's counts, for the debug view.
-   * @param out filled with them
+   * A range of this queue's events starts being gone through: until the last
+   * ends, sends wait in a pending lane, so the buffer the range points into
+   * never moves. Inline: every range calls it.
    */
-  virtual void stats(EventStats& out) const = 0;
-
-  /**
-   * This queue's consumers, for the debug view.
-   * @param out gains one row per registered consumer
-   */
-  void consumerStats(std::vector<EventConsumerStats>& out) const;
-
-  /**
-   * Takes in what workers staged now, between frame boundaries: response
-   * types' queues do (Events::takeIn()), others have nothing to do.
-   */
-  inline virtual void takeIn() {}
-
-  /**
-   * A requester goes, or never handled this queue's responses: its route
-   * is closed (response queues only).
-   * @param requester its number
-   */
-  virtual void closeRoute(uint32_t requester) {}
-
+  inline void beginRead() { ++m_reading; }
   /**
    * Whether advance() has work: events kept, waiting behind a range, or
    * workers' events staged. Not virtual, so an idle queue costs
@@ -280,31 +266,12 @@ public:
     return m_endId != m_oldestId || m_pendingCount != 0 ||
            (m_staged && m_staged->load(std::memory_order_relaxed) != 0);
   }
-
   /**
-   * The number of the oldest event kept.
-   * @return it
+   * A requester goes, or never handled this queue's responses: its route
+   * is closed (response queues only).
+   * @param requester its number
    */
-  inline uint64_t oldestId() const { return m_oldestId; }
-  /**
-   * The number the next event sent will get.
-   * @return it
-   */
-  inline uint64_t endId() const { return m_endId; }
-
-  /**
-   * Registers a consumer, at the oldest event kept, so nothing sent while a
-   * scene sets up is lost to the order things are made in.
-   * @param owner its owner; null for none
-   * @param who its owner's type, for the log; null for none
-   * @return its slot
-   */
-  uint32_t addConsumer(EventOwner* owner, const std::type_info* who);
-  /**
-   * Deregisters a consumer: the queue no longer keeps events for it.
-   * @param slot its slot (addConsumer())
-   */
-  void removeConsumer(uint32_t slot);
+  virtual void closeRoute(uint32_t requester) {}
   /**
    * A registered consumer.
    * @param slot its slot (addConsumer())
@@ -316,32 +283,25 @@ public:
   {
     return m_consumers[slot];
   }
-
   /**
-   * A consumer's span for this call, with the way it reads noted: its
-   * owner's update keeps one span for all its reads and handlers; a read
-   * with no owner, or outside an update, is a span of its own.
-   * @param slot its slot
-   * @param consuming how it reads now
-   * @param begin set to the span's first event
-   * @param end set to past its last
+   * This queue's consumers, for the debug view.
+   * @param out gains one row per registered consumer
    */
-  inline void
-  span(uint32_t slot, Consuming consuming, uint64_t& begin, uint64_t& end)
+  void consumerStats(std::vector<EventConsumerStats>& out) const;
+  /**
+   * The number the next event sent will get.
+   * @return it
+   */
+  inline uint64_t endId() const { return m_endId; }
+  /**
+   * A range ends: once none is left, the events sent meanwhile join the
+   * buffer, numbered after the rest in send order.
+   */
+  inline void endRead()
   {
-    ConsumerSlot& self = m_consumers[slot];
-    const EventOwner* owner = self.owner;
-    if (!owner || self.spanStamp != owner->stamp || !owner->updating)
-        [[unlikely]]
-      newSpan(self);
-    if (self.consuming != consuming) [[unlikely]]
-      self.consuming =
-          self.consuming == Consuming::Unknown ? consuming : Consuming::All;
-    begin = self.spanBegin;
-    end = self.spanEnd;
-    m_lastReader = slot;
+    if (--m_reading == 0 && m_pendingCount != 0) [[unlikely]]
+      foldPending();
   }
-
   /**
    * Whether any consumer is registered.
    * @return whether one is
@@ -361,9 +321,18 @@ public:
 
   /** The shared block consumers hold to find the queue. */
   inline const std::shared_ptr<EventQueueLink>& link() const { return m_link; }
-
-  /** The event type's name, for people. */
-  inline const std::string& name() const { return m_name; }
+  /**
+   * Logs a cancel of a key's current event.
+   * @param key the key entity
+   * @param generation the cancel's generation
+   */
+  void logCancelled(const Entity& key, uint32_t generation) const;
+  /**
+   * Logs a response dropped because its request was superseded.
+   * @param key the request's key entity
+   * @param generation the request's generation
+   */
+  void logDropped(const Entity& key, uint32_t generation) const;
   /** Whether each send is logged (debugFeatures::logEvents()). */
   inline bool logging() const { return m_log; }
 
@@ -386,18 +355,6 @@ public:
    */
   void logTaken(uint64_t first, std::size_t count) const;
   /**
-   * Logs a cancel of a key's current event.
-   * @param key the key entity
-   * @param generation the cancel's generation
-   */
-  void logCancelled(const Entity& key, uint32_t generation) const;
-  /**
-   * Logs a response dropped because its request was superseded.
-   * @param key the request's key entity
-   * @param generation the request's generation
-   */
-  void logDropped(const Entity& key, uint32_t generation) const;
-  /**
    * Counts events dropped at the cap before a consumer read them, and warns
    * once for that consumer, in every build.
    * @param count how many it missed
@@ -405,44 +362,80 @@ public:
    * @param disabled whether its owner was disabled since its last update
    */
   void missed(uint64_t count, ConsumerSlot& consumer, bool disabled = false);
+  /** The event type's name, for people. */
+  inline const std::string& name() const { return m_name; }
   /**
-   * A range of this queue's events starts being gone through: until the last
-   * ends, sends wait in a pending lane, so the buffer the range points into
-   * never moves. Inline: every range calls it.
+   * The number of the oldest event kept.
+   * @return it
    */
-  inline void beginRead() { ++m_reading; }
+  inline uint64_t oldestId() const { return m_oldestId; }
   /**
-   * A range ends: once none is left, the events sent meanwhile join the
-   * buffer, numbered after the rest in send order.
+   * Deregisters a consumer: the queue no longer keeps events for it.
+   * @param slot its slot (addConsumer())
    */
-  inline void endRead()
+  void removeConsumer(uint32_t slot);
+  /**
+   * A consumer's span for this call, with the way it reads noted: its
+   * owner's update keeps one span for all its reads and handlers; a read
+   * with no owner, or outside an update, is a span of its own.
+   * @param slot its slot
+   * @param consuming how it reads now
+   * @param begin set to the span's first event
+   * @param end set to past its last
+   */
+  inline void
+  span(uint32_t slot, Consuming consuming, uint64_t& begin, uint64_t& end)
   {
-    if (--m_reading == 0 && m_pendingCount != 0) [[unlikely]]
-      foldPending();
+    ConsumerSlot& self = m_consumers[slot];
+    const EventOwner* owner = self.owner;
+
+    if (!owner || self.spanStamp != owner->stamp || !owner->updating)
+        [[unlikely]]
+      newSpan(self);
+
+    if (self.consuming != consuming) [[unlikely]]
+      self.consuming =
+          self.consuming == Consuming::Unknown ? consuming : Consuming::All;
+
+    begin = self.spanBegin;
+    end = self.spanEnd;
+    m_lastReader = slot;
   }
+  /**
+   * This queue's counts, for the debug view.
+   * @param out filled with them
+   */
+  virtual void stats(EventStats& out) const = 0;
+  /**
+   * Takes in what workers staged now, between frame boundaries: response
+   * types' queues do (Events::takeIn()), others have nothing to do.
+   */
+  inline virtual void takeIn() {}
+
+  /** Kept events past which a queue warns, naming who holds them. */
+  static constexpr std::size_t kManyEvents = 65536;
 
 protected:
   // Moves the events sent while ranges were alive into the buffer.
   virtual void foldPending() = 0;
-  // A requester's route of unread responses grew past 65,536: its owner
-  // doesn't run (disabled, gone). Warned once per route.
-  void routeGrows(std::string_view requester, std::size_t count);
   // A range of this queue lives past a frame boundary: warned once per
   // queue (in every build), and past 65,536 waiting events again.
   void keptRange();
-  // The pending lane past the kept cap: its oldest were dropped, logged once
-  // and counted as missed.
-  void pendingOverCap(std::size_t dropped);
-
   // A new span for a consumer: from its place (a miss at the cap is logged)
   // to the newest event.
   void newSpan(ConsumerSlot& self);
-  // Warns, once per queue, that many events are kept, naming the consumer
-  // that holds the oldest.
-  void warnMany(std::size_t kept, const ConsumerSlot* holder);
   // Events past the kept cap: logged as an error, once per queue, naming the
   // consumer that holds the oldest.
   void overCap(uint64_t dropped, const ConsumerSlot* holder);
+  // The pending lane past the kept cap: its oldest were dropped, logged once
+  // and counted as missed.
+  void pendingOverCap(std::size_t dropped);
+  // A requester's route of unread responses grew past 65,536: its owner
+  // doesn't run (disabled, gone). Warned once per route.
+  void routeGrows(std::string_view requester, std::size_t count);
+  // Warns, once per queue, that many events are kept, naming the consumer
+  // that holds the oldest.
+  void warnMany(std::size_t kept, const ConsumerSlot* holder);
 
   // The oldest event kept, and the next to be sent.
   uint64_t m_oldestId = 0;
@@ -539,6 +532,7 @@ public:
     {
       m_channel = std::make_shared<KeyedChannel>();
       m_channel->name = m_name;
+
       if constexpr (kRequest<T>)
         m_channel->tickets = std::make_unique<RequestTickets>();
     }
@@ -572,8 +566,10 @@ public:
       const std::lock_guard lock(m_channel->mutex);
       m_inbox = m_channel->template responseInbox<T>(type, nullptr);
     }
+
     if (!m_inbox)
       return;
+
     const std::lock_guard lock(m_inbox->mutex);
     m_inbox->log = m_log;
     m_inbox->name = m_name;
@@ -584,6 +580,7 @@ public:
   {
     if (!m_inbox)
       return;
+
     // Staged events go now, while T's code is surely loaded.
     typename EventInbox<T>::Lanes staged;
     {
@@ -606,20 +603,26 @@ public:
   {
     if (from < m_oldestId)
       from = m_oldestId;
+
     if (to > m_endId)
       to = m_endId;
+
     if (to < from)
       to = from;
+
     const auto first = static_cast<std::size_t>(from - m_baseId);
     EventSegment<T> part;
     part.events = m_buffer.events.data() + first;
+
     if constexpr (kKeyed<T>)
     {
       part.keys = m_buffer.keys.data() + first;
       part.stamps = m_buffer.stamps.data() + first;
     }
+
     if constexpr (kRequesters)
       part.tickets = m_buffer.tickets.data() + first;
+
     part.count = static_cast<std::size_t>(to - from);
     return part;
   }
@@ -634,6 +637,7 @@ public:
     requires(!kKeyed<T>)
   {
     const T& kept = append(std::forward<TEvent>(event));
+
     if constexpr (kAncestors != 0)
       fanOut(kept, static_cast<Ancestors*>(nullptr));
   }
@@ -656,8 +660,10 @@ public:
   {
     const T& kept =
         append(std::forward<TEvent>(event), key, generation, ticket);
+
     if constexpr (kAncestors != 0)
       fanOut(kept, static_cast<Ancestors*>(nullptr), &key);
+
     return kept;
   }
 
@@ -691,19 +697,25 @@ public:
     requires ResponseQueueType<T>
   {
     RequestTickets& requests = *m_channel->tickets;
+
     // Superseded, or closed by its final response: the first final wins.
     if (!requests.current(ticket, generation) ||
         requests.closed(ticket, generation))
     {
       ++m_dropped;
+
       if (m_log) [[unlikely]]
         logDropped(key, generation);
+
       return false;
     }
+
     const T& kept =
         push(std::forward<TEvent>(response), key, generation, ticket);
+
     if (last)
       requests.responded(ticket, generation);
+
     route(requests.requesterOf(ticket), lastId());
     watch(kept, key, generation);
     return true;
@@ -720,6 +732,7 @@ public:
   {
     if (m_routes.size() < requester)
       m_routes.resize(requester);
+
     Route& own = m_routes[requester - 1];
     own.open = true;
     own.name = std::move(name);
@@ -751,13 +764,17 @@ public:
     requires ResponseQueueType<T>
   {
     static const std::vector<uint64_t> none;
+
     if (requester == 0 || requester > m_routes.size())
       return none;
+
     Route& own = m_routes[requester - 1];
     own.reading.clear();
     std::size_t taken = 0;
+
     while (taken < own.ids.size() && own.ids[taken] < end)
       ++taken;
+
     own.reading.insert(own.reading.end(),
                        own.ids.begin(),
                        own.ids.begin() + static_cast<std::ptrdiff_t>(taken));
@@ -791,6 +808,7 @@ public:
       m_inbox->name = m_name;
       m_staged = &m_inbox->count;
     }
+
     return m_inbox;
   }
 
@@ -803,19 +821,24 @@ public:
       heldBack();
       return;
     }
+
     const uint64_t lastStart = m_frameStartId;
     m_sentLastFrame = static_cast<std::size_t>(m_endId - lastStart);
     m_advancedFrame = m_frame;
     m_frameStartId = m_endId;
+
     if (m_staged && m_staged->load(std::memory_order_relaxed) != 0)
       takeStaged();
 
     const ConsumerSlot* holder = nullptr;
     uint64_t head = hasConsumers() ? slowest(holder) : lastStart;
+
     if (head < m_oldestId)
       head = m_oldestId;
+
     const uint64_t kept = m_endId - head;
     const bool capped = kept > m_maxKept;
+
     if (capped) [[unlikely]]
     {
       overCap(kept - m_maxKept, holder);
@@ -824,6 +847,7 @@ public:
     }
     else if (kept > kManyEvents && !m_warnedMany) [[unlikely]]
       warnMany(static_cast<std::size_t>(kept), holder);
+
     // Latest consumers behind the head had nothing left there to read (only
     // superseded events), unless the cap moved it: then the current events
     // they could still have read are counted as missed. They move up to it.
@@ -833,8 +857,10 @@ public:
       {
         if (capped) [[unlikely]]
           countCapMisses(consumer, head);
+
         consumer.next = head;
       }
+
     m_oldestId = head;
     compact();
   }
@@ -857,6 +883,7 @@ public:
     out.consumers = m_liveConsumers;
     out.missed = m_missed;
     out.dropped = m_dropped;
+
     if constexpr (kRequest<T>)
     {
       out.superseded = m_channel->superseded + m_channel->tickets->superseded;
@@ -873,26 +900,33 @@ private:
   uint64_t slowest(const ConsumerSlot*& holder)
   {
     uint64_t head = m_endId;
+
     for (ConsumerSlot& consumer : m_consumers)
     {
       if (!consumer.live)
         continue;
+
       uint64_t at = consumer.next < m_oldestId ? m_oldestId : consumer.next;
+
       if constexpr (kOwnChannel<T>)
         if (consumer.consuming == Consuming::Latest)
         {
           if (consumer.scanned > at)
             at = consumer.scanned;
+
           while (at < m_endId && !current(at))
             ++at;
+
           consumer.scanned = at;
         }
+
       if (at < head || !holder)
       {
         head = at < head ? at : head;
         holder = &consumer;
       }
     }
+
     return head;
   }
 
@@ -901,12 +935,14 @@ private:
   void countCapMisses(ConsumerSlot& consumer, uint64_t head)
   {
     uint64_t missedEvents = 0;
+
     if constexpr (kOwnChannel<T>)
       for (uint64_t id = consumer.next < m_oldestId ? m_oldestId
                                                     : consumer.next;
            id < head;
            ++id)
         missedEvents += current(id);
+
     if (missedEvents != 0)
       missed(missedEvents, consumer);
   }
@@ -916,6 +952,7 @@ private:
     requires kKeyed<T>
   {
     const auto at = static_cast<std::size_t>(id - m_baseId);
+
     if constexpr (kRequesters)
       return m_channel->tickets->current(
           m_buffer.tickets[at], m_buffer.stamps[at]);
@@ -928,31 +965,41 @@ private:
   void compact()
   {
     const auto consumed = static_cast<std::size_t>(m_oldestId - m_baseId);
+
     if (consumed == 0)
       return;
+
     if (m_oldestId == m_endId)
     {
       m_buffer.events.clear();
+
       if constexpr (kKeyed<T>)
       {
         m_buffer.keys.clear();
         m_buffer.stamps.clear();
+
         if constexpr (kRequesters)
           m_buffer.tickets.clear();
       }
+
       m_baseId = m_oldestId;
       return;
     }
+
     if (consumed * 2 < m_buffer.events.size())
       return;
+
     eraseFront(m_buffer.events, consumed);
+
     if constexpr (kKeyed<T>)
     {
       eraseFront(m_buffer.keys, consumed);
       eraseFront(m_buffer.stamps, consumed);
+
       if constexpr (kRequesters)
         eraseFront(m_buffer.tickets, consumed);
     }
+
     m_baseId = m_oldestId;
   }
 
@@ -969,8 +1016,10 @@ private:
     {
       m_spare.clear();
       m_spare.reserve(lane.size() - count);
+
       for (std::size_t i = count; i < lane.size(); ++i)
         m_spare.emplace_back(std::move(lane[i]));
+
       lane.swap(m_spare);
     }
   }
@@ -985,14 +1034,19 @@ private:
     {
       m_pending.events.push_back(std::forward<TEvent>(event));
       ++m_pendingCount;
+
       if (m_log) [[unlikely]]
         logSent(m_endId + m_pendingCount - 1);
+
       return m_pending.events.back();
     }
+
     m_buffer.events.push_back(std::forward<TEvent>(event));
     ++m_endId;
+
     if (m_log) [[unlikely]]
       logSent(m_endId - 1);
+
     return m_buffer.events.back();
   }
 
@@ -1008,14 +1062,18 @@ private:
     lane.events.push_back(std::forward<TEvent>(event));
     lane.keys.push_back(key);
     lane.stamps.push_back(generation);
+
     if constexpr (kRequesters)
       lane.tickets.push_back(ticket);
+
     if (m_reading != 0) [[unlikely]]
       ++m_pendingCount;
     else
       ++m_endId;
+
     if (m_log) [[unlikely]]
       logSent(m_endId + m_pendingCount - 1, key, generation);
+
     return lane.events.back();
   }
 
@@ -1023,6 +1081,7 @@ private:
   {
     if (m_reading != 0)
       return;
+
     if constexpr (std::is_move_assignable_v<T>)
       m_buffer.events.insert(m_buffer.events.end(),
                              std::make_move_iterator(m_pending.events.begin()),
@@ -1030,6 +1089,7 @@ private:
     else
       for (T& event : m_pending.events)
         m_buffer.events.emplace_back(std::move(event));
+
     if constexpr (kKeyed<T>)
     {
       m_buffer.keys.insert(
@@ -1040,6 +1100,7 @@ private:
       m_pending.keys.clear();
       m_pending.stamps.clear();
     }
+
     if constexpr (kRequesters)
     {
       m_buffer.tickets.insert(m_buffer.tickets.end(),
@@ -1047,6 +1108,7 @@ private:
                               m_pending.tickets.end());
       m_pending.tickets.clear();
     }
+
     m_pending.events.clear();
     m_endId += m_pendingCount;
     m_pendingCount = 0;
@@ -1063,11 +1125,14 @@ private:
         [&]
         {
           auto& base = *static_cast<EventQueue<TBases>*>(m_ancestors[index++]);
+
           if (!base.hasConsumers())
             return;
+
           if constexpr (kKeyed<T>)
           {
             uint32_t generation = 0;
+
             if (base.channel()->next(*key, true, generation))
               base.append(static_cast<const TBases&>(event), *key, generation);
           }
@@ -1092,8 +1157,10 @@ private:
     if (requester == 0 || requester > m_routes.size() ||
         !m_routes[requester - 1].open)
       return;
+
     Route& own = m_routes[requester - 1];
     own.ids.push_back(id);
+
     if (own.ids.size() >= kManyEvents && !own.warned) [[unlikely]]
     {
       own.warned = true;
@@ -1109,8 +1176,10 @@ private:
       for (Route& own : m_routes)
       {
         std::size_t gone = 0;
+
         while (gone < own.ids.size() && own.ids[gone] < oldest)
           ++gone;
+
         own.ids.erase(own.ids.begin(),
                       own.ids.begin() + static_cast<std::ptrdiff_t>(gone));
       }
@@ -1124,15 +1193,19 @@ private:
     {
       const uint64_t first = m_endId;
       const uint64_t past = m_endId + drop;
+
       for (Route& own : m_routes)
       {
         std::size_t kept = 0;
+
         for (const uint64_t id : own.ids)
         {
           if (id >= first && id < past)
             continue;
+
           own.ids[kept++] = id >= past ? id - drop : id;
         }
+
         own.ids.resize(kept);
       }
     }
@@ -1145,9 +1218,11 @@ private:
     requires ResponseQueueType<T>
   {
     using Value = typename T::Value;
+
     if constexpr (std::is_copy_constructible_v<Value>)
     {
       auto& watchers = *static_cast<EventQueue<Value>*>(m_watchers);
+
       if (watchers.hasConsumers()) [[unlikely]]
         watchers.append(static_cast<const Value&>(response), key, generation);
     }
@@ -1160,21 +1235,27 @@ private:
     // The workers' events wait behind the range too, under the same cap.
     if (m_staged && m_staged->load(std::memory_order_relaxed) != 0)
       takeStaged();
+
     keptRange();
     // Capped with the buffer: together they keep at most the cap.
     const uint64_t buffered = m_endId - m_oldestId;
     const uint64_t room = buffered < m_maxKept ? m_maxKept - buffered : 0;
+
     if (m_pendingCount <= room)
       return;
+
     const auto drop = static_cast<std::size_t>(m_pendingCount - room);
     eraseFront(m_pending.events, drop);
+
     if constexpr (kKeyed<T>)
     {
       eraseFront(m_pending.keys, drop);
       eraseFront(m_pending.stamps, drop);
     }
+
     if constexpr (kRequesters)
       eraseFront(m_pending.tickets, drop);
+
     shiftRoutes(drop);
     m_pendingCount -= static_cast<uint32_t>(drop);
     pendingOverCap(drop);
@@ -1196,27 +1277,35 @@ private:
     Buffer& lane = reading ? m_pending : m_buffer;
     const std::size_t before = lane.events.size();
     const uint64_t first = m_endId + m_pendingCount;
+
     if constexpr (ResponseQueueType<T>)
     {
       RequestTickets& requests = *m_channel->tickets;
+
       for (std::size_t i = 0; i < spare.events.size(); ++i)
       {
         const uint32_t stamp = spare.stamps[i] & ~kLastResponse;
         const Entity& key = spare.keys[i];
         const uint32_t ticket = spare.tickets[i];
+
         if (!requests.current(ticket, stamp) || requests.closed(ticket, stamp))
         {
           ++m_dropped;
+
           if (m_log)
             logDropped(key, stamp);
+
           continue;
         }
+
         lane.events.emplace_back(std::move(spare.events[i]));
         lane.keys.push_back(key);
         lane.stamps.push_back(stamp);
         lane.tickets.push_back(ticket);
+
         if (spare.stamps[i] & kLastResponse)
           requests.responded(ticket, stamp);
+
         route(requests.requesterOf(ticket),
               first + (lane.events.size() - before) - 1);
         watch(lane.events.back(), key, stamp);
@@ -1230,11 +1319,14 @@ private:
       for (std::size_t i = 0; i < spare.events.size(); ++i)
       {
         uint32_t generation = 0;
+
         if (!m_channel->next(spare.keys[i], true, generation))
           continue;
+
         lane.events.emplace_back(std::move(spare.events[i]));
         lane.keys.push_back(spare.keys[i]);
         lane.stamps.push_back(generation);
+
         if constexpr (kAncestors != 0)
           fanOut(lane.events.back(),
                  static_cast<Ancestors*>(nullptr),
@@ -1252,20 +1344,26 @@ private:
       else
       {
         lane.events.reserve(lane.events.size() + spare.events.size());
+
         for (T& event : spare.events)
           lane.events.emplace_back(std::move(event));
       }
+
       if constexpr (kAncestors != 0)
         for (std::size_t i = before; i < lane.events.size(); ++i)
           fanOut(lane.events[i], static_cast<Ancestors*>(nullptr));
     }
+
     const std::size_t added = lane.events.size() - before;
+
     if (reading)
       m_pendingCount += static_cast<uint32_t>(added);
     else
       m_endId = m_baseId + m_buffer.events.size();
+
     if (m_log && added != 0)
       logTaken(first, added);
+
     spare.clear();
   }
 

@@ -1,14 +1,15 @@
 #pragma once
 
 #include "engine/core/rendering/mesh.h"
-#include "glm/glm/ext/matrix_float4x4.hpp"
-#include "glm/glm/ext/vector_float2.hpp"
-#include "glm/glm/ext/vector_float3.hpp"
-#include "glm/glm/ext/vector_float4.hpp"
-#include "glm/glm/ext/vector_int2.hpp"
 
+#include <glm/glm/ext/matrix_float4x4.hpp>
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
+#include <glm/glm/ext/vector_float4.hpp>
+#include <glm/glm/ext/vector_int2.hpp>
+
+#include <cstddef>
 #include <cstdint>
-#include <functional>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -58,12 +59,12 @@ inline constexpr float kDeepest = 0.5f;
  */
 struct Footprint
 {
+  bool empty() const { return size.x <= 0 || size.y <= 0; }
+
   glm::ivec2 from{0}; // the rectangle's first texel (world texel index)
   glm::ivec2 size{0};
   std::vector<float> target;
   std::vector<float> coverage;
-
-  bool empty() const { return size.x <= 0 || size.y <= 0; }
 };
 
 /** How press() pushes displaced soil up. */
@@ -86,52 +87,50 @@ struct PressSettings
 class DeformationMap
 {
 public:
-  static constexpr int kTile = 64;
-
   explicit DeformationMap(float texel = kDeformationTexel);
-
-  float texel() const { return m_texel; }
-  /** The texel a world XY point is in. */
-  glm::ivec2 texelOf(glm::vec2 point) const;
-  /** A texel's centre (world XY). */
-  glm::vec2 centerOf(glm::ivec2 texel) const;
-  /** The tile a texel is in. */
-  static glm::ivec2 tileOf(glm::ivec2 texel);
-
+  /**
+   * Whether it has any tile in a block of tiles, without listing them.
+   * @param first the block's lowest tile, as a tile index
+   * @param count how many tiles the block spans in x and y
+   * @return true if one of its tiles is in the block
+   */
+  bool anyTileIn(glm::ivec2 first, glm::ivec2 count) const;
   /** A texel's offset (0 where nothing's touched it). */
   float at(glm::ivec2 texel) const;
-  void set(glm::ivec2 texel, float offset);
-  /** The offset at a world XY point, bilinear between texel centres. */
-  float sample(glm::vec2 point) const;
-
-  bool empty() const { return m_tiles.empty(); }
-  std::size_t tileCount() const { return m_tiles.size(); }
+  /** A texel's centre (world XY). */
+  glm::vec2 centerOf(glm::ivec2 texel) const;
+  /** Whether anything's changed since takeChanged(). */
+  bool changed() const { return !m_changed.empty(); }
+  /** Flatten a world XY rectangle (e.g. where the ground's been levelled). */
+  void clear(glm::vec2 low, glm::vec2 high);
+  /** Flatten inside a world XY polygon (its corners in order). */
+  void clear(std::span<const glm::vec2> polygon);
+  /** Flatten everywhere. */
+  void clearAll();
   /** The lowest offset in it (0 or below; kept as it's pressed, so after
    * relax() or clear() it may be lower than what's left). */
   float deepest() const { return m_deepest; }
-
+  bool empty() const { return m_tiles.empty(); }
+  /**
+   * A tile's offsets as half floats (rows from its lowest y, kTile x kTile),
+   * for the GPU; zeros for a tile it doesn't have.
+   */
+  void halves(glm::ivec2 tile, std::span<uint16_t> out) const;
+  bool load(std::span<const uint8_t> bytes);
+  /**
+   * The lowest offset over each texel of a coarser grid (`origin` its
+   * corner, `texel` across, `size` texels; row-major, 0 where untouched):
+   * as the puddles take it (on the GPU), so a rut narrower than their texels
+   * still holds water.
+   */
+  std::vector<float>
+  lowestOver(glm::vec2 origin, float texel, glm::ivec2 size) const;
   /**
    * Press texels down to their targets (those above them; deeper than
    * kDeepest is kept to it), pushing a share of the soil up alongside.
    * @return how much was pressed out (cubic metres).
    */
   float press(const Footprint& footprint, const PressSettings& settings = {});
-
-  /**
-   * Press a shape in, e.g. a footprint or a hoof: `size` across (world XY,
-   * along its heading and across it), turned `heading` radians from the
-   * world's +X, `depth` deep at its deepest, from the ground's offset at
-   * `center` as it is. `shape`'s red (sampled smoothly; 1 deepest) is the
-   * imprint, from above, its top along the heading; without one, a rounded
-   * oval.
-   */
-  void stamp(glm::vec2 center,
-             float heading,
-             glm::vec2 size,
-             float depth,
-             const TextureData* shape = nullptr,
-             const PressSettings& settings = {});
-
   /**
    * Weather it: each texel eased `smooth` (0..1) toward the average of its
    * neighbours (edges round off, ridges slump into ruts), then `fade`
@@ -150,50 +149,8 @@ public:
    */
   void relax(std::span<const glm::ivec2> tiles,
              std::span<const glm::vec4> corners);
-
-  /** Flatten a world XY rectangle (e.g. where the ground's been levelled). */
-  void clear(glm::vec2 low, glm::vec2 high);
-  /** Flatten inside a world XY polygon (its corners in order). */
-  void clear(std::span<const glm::vec2> polygon);
-  /** Flatten everywhere. */
-  void clearAll();
-
-  /** The tiles changed since the last call (tile indices), and forget them.
-   */
-  std::vector<glm::ivec2> takeChanged();
-  /** Whether anything's changed since takeChanged(). */
-  bool changed() const { return !m_changed.empty(); }
-  /**
-   * The tiles changed since the last call to this (as takeChanged(), but
-   * kept apart from it: for a game to follow what changes, while its module
-   * uploads it), and forget them.
-   */
-  std::vector<glm::ivec2> takeRevised();
-  /** Every tile it has (tile indices). */
-  std::vector<glm::ivec2> tiles() const;
-  /**
-   * Whether it has any tile in a block of tiles, without listing them.
-   * @param first the block's lowest tile, as a tile index
-   * @param count how many tiles the block spans in x and y
-   * @return true if one of its tiles is in the block
-   */
-  bool anyTileIn(glm::ivec2 first, glm::ivec2 count) const;
-
-  /**
-   * A tile's offsets as half floats (rows from its lowest y, kTile x kTile),
-   * for the GPU; zeros for a tile it doesn't have.
-   */
-  void halves(glm::ivec2 tile, std::span<uint16_t> out) const;
-
-  /**
-   * The lowest offset over each texel of a coarser grid (`origin` its
-   * corner, `texel` across, `size` texels; row-major, 0 where untouched):
-   * as the puddles take it (on the GPU), so a rut narrower than their texels
-   * still holds water.
-   */
-  std::vector<float>
-  lowestOver(glm::vec2 origin, float texel, glm::ivec2 size) const;
-
+  /** The offset at a world XY point, bilinear between texel centres. */
+  float sample(glm::vec2 point) const;
   /**
    * Its offsets packed small, to keep with a saved game: only its tiles,
    * millimetres, runs of flat ground and small steps between neighbours in
@@ -201,14 +158,43 @@ public:
    * aren't a map's).
    */
   std::vector<uint8_t> save() const;
-  bool load(std::span<const uint8_t> bytes);
+  void set(glm::ivec2 texel, float offset);
+  /**
+   * Press a shape in, e.g. a footprint or a hoof: `size` across (world XY,
+   * along its heading and across it), turned `heading` radians from the
+   * world's +X, `depth` deep at its deepest, from the ground's offset at
+   * `center` as it is. `shape`'s red (sampled smoothly; 1 deepest) is the
+   * imprint, from above, its top along the heading; without one, a rounded
+   * oval.
+   */
+  void stamp(glm::vec2 center,
+             float heading,
+             glm::vec2 size,
+             float depth,
+             const TextureData* shape = nullptr,
+             const PressSettings& settings = {});
+  /** The tiles changed since the last call (tile indices), and forget them.
+   */
+  std::vector<glm::ivec2> takeChanged();
+  /**
+   * The tiles changed since the last call to this (as takeChanged(), but
+   * kept apart from it: for a game to follow what changes, while its module
+   * uploads it), and forget them.
+   */
+  std::vector<glm::ivec2> takeRevised();
+  float texel() const { return m_texel; }
+  /** The texel a world XY point is in. */
+  glm::ivec2 texelOf(glm::vec2 point) const;
+  std::size_t tileCount() const { return m_tiles.size(); }
+  /** The tile a texel is in. */
+  static glm::ivec2 tileOf(glm::ivec2 texel);
+  /** Every tile it has (tile indices). */
+  std::vector<glm::ivec2> tiles() const;
+
+  static constexpr int kTile = 64;
 
 private:
   using Tile = std::vector<float>; // kTile * kTile, row-major from the lowest y
-  static int64_t keyOf(glm::ivec2 tile);
-  Tile* tileAt(glm::ivec2 tile);
-  const Tile* tileAt(glm::ivec2 tile) const;
-  Tile& makeTile(glm::ivec2 tile);
   // Texels read and written a run at a time (as press() does), the tile
   // last looked up, and last marked changed, remembered.
   struct Cursor
@@ -217,8 +203,13 @@ private:
     Tile* tile = nullptr;
     int64_t changed = std::numeric_limits<int64_t>::min();
   };
+
   float at(glm::ivec2 texel, Cursor& cursor);
-  void set(glm::ivec2 texel, float offset, Cursor& cursor);
+  // Tiles flat again (every texel within a hair of 0) go.
+  void dropFlat(std::span<const glm::ivec2> tiles);
+  static int64_t keyOf(glm::ivec2 tile);
+  Tile& makeTile(glm::ivec2 tile);
+  void markChanged(int64_t key);
   // press()'s second half: the soil pressed out pushed up alongside; and
   // around what was pressed (`first` to `last` in the footprint), walls too
   // steep slumped.
@@ -229,20 +220,20 @@ private:
               glm::ivec2 last,
               float pressedOut,
               const PressSettings& settings);
+  void set(glm::ivec2 texel, float offset, Cursor& cursor);
   void slump(const Footprint& footprint,
              const std::vector<uint8_t>& under,
              glm::ivec2 first,
              glm::ivec2 last,
              const PressSettings& settings);
-  // Tiles flat again (every texel within a hair of 0) go.
-  void dropFlat(std::span<const glm::ivec2> tiles);
+  Tile* tileAt(glm::ivec2 tile);
+  const Tile* tileAt(glm::ivec2 tile) const;
 
   float m_texel;
   float m_deepest = 0.0f;
   std::unordered_map<int64_t, Tile> m_tiles;
   std::unordered_set<int64_t> m_changed;
   std::unordered_set<int64_t> m_revised; // takeRevised()'s
-  void markChanged(int64_t key);
 };
 
 /**
@@ -253,31 +244,29 @@ private:
 class GroundSurface
 {
 public:
-  GroundSurface() = default;
-  GroundSurface(std::span<const glm::vec3> positions,
-                std::span<const uint32_t> indices,
-                std::span<const glm::vec2> uvs,
-                const glm::mat4& model);
-
   struct Point
   {
     float height = 0.0f;
     glm::vec2 uv{0.0f};
   };
+
+  GroundSurface() = default;
+  GroundSurface(std::span<const glm::vec3> positions,
+                std::span<const uint32_t> indices,
+                std::span<const glm::vec2> uvs,
+                const glm::mat4& model);
   /** The highest of its surface over a point, if any. */
   std::optional<Point> at(glm::vec2 point) const;
   /** And which of its triangles that's on (for heightOn()). */
   std::optional<Point> at(glm::vec2 point, uint32_t& triangle) const;
+  bool empty() const { return m_triangles.empty(); }
   /**
    * The height of one of its triangles' plane over a point: at()'s there,
    * if it's on that triangle (as at() found it at points all round it).
    */
   float heightOn(uint32_t triangle, glm::vec2 point) const;
-
-  bool empty() const { return m_triangles.empty(); }
-  glm::vec2 low() const { return m_low; }
   glm::vec2 high() const { return m_high; }
-
+  glm::vec2 low() const { return m_low; }
   /**
    * Its surface over a grid (`origin` its corner, `texel` across, `size`
    * texels; row-major from the lowest y), each texel (height, u, v, 1), or
@@ -292,6 +281,7 @@ private:
     glm::vec3 p[3];
     glm::vec2 uv[3];
   };
+
   std::vector<Triangle> m_triangles;
   glm::vec2 m_low{0.0f};
   glm::vec2 m_high{0.0f};
@@ -312,12 +302,12 @@ private:
  */
 struct Underside
 {
+  bool empty() const { return size.x <= 0 || size.y <= 0; }
+
   glm::ivec2 from{0};
   glm::ivec2 size{0};
   std::vector<float> bottom;   // world Z
   std::vector<float> coverage; // 0 to 1
-
-  bool empty() const { return size.x <= 0 || size.y <= 0; }
 };
 
 Underside underside(std::span<const glm::vec3> positions,
@@ -357,6 +347,7 @@ private:
     uint32_t firstVertex = 0, vertices = 0;
     uint32_t firstIndex = 0, indices = 0; // into its own vertices
   };
+
   std::vector<glm::vec3> m_vertices;
   std::vector<uint32_t> m_indices;
   // Each triangle's (as m_indices): on a closed solid, 1 if it goes round
@@ -396,6 +387,8 @@ uint16_t toHalf(float value);
  */
 struct TerrainDeformation
 {
+  bool empty() const { return size <= 0; }
+
   MaterialHandle patch;
   float texel = kDeformationTexel;
   // The window: `size` texels square (a multiple of DeformationMap::kTile),
@@ -414,8 +407,6 @@ struct TerrainDeformation
   float patchHalf = 0.0f;
   float patchBand = 4.0f;
   float deepest = 0.0f; // the map's (DeformationMap::deepest())
-
-  bool empty() const { return size <= 0; }
 };
 
 } // namespace sfs

@@ -23,6 +23,7 @@ constexpr uint64_t fnv1a64(std::string_view bytes,
 {
   for (const char c : bytes)
     state = (state ^ static_cast<unsigned char>(c)) * 1099511628211ull;
+
   return state;
 }
 
@@ -68,16 +69,19 @@ constexpr uint64_t hashWords(const uint64_t* words, std::size_t count)
 {
   uint64_t even = 0x9E3779B97F4A7C15ull;
   uint64_t odd = 0xD1B54A32D192ED03ull;
+
   for (std::size_t word = 0; word < count; word += 2)
   {
     even = (even ^ words[word]) * 0xBF58476D1CE4E5B9ull;
     even ^= even >> 31;
+
     if (word + 1 < count)
     {
       odd = (odd ^ words[word + 1]) * 0x94D049BB133111EBull;
       odd ^= odd >> 29;
     }
   }
+
   return even ^ odd;
 }
 

@@ -1,6 +1,8 @@
 #include "engine/core/rendering/fog.h"
 
-#include "glm/glm/geometric.hpp"
+#include <glm/glm/ext/vector_float3.hpp>
+#include <glm/glm/geometric.hpp>
+#include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -19,26 +21,18 @@ void read(const nlohmann::json& json, const char* key, float& out)
 
 } // namespace
 
-nlohmann::json FogSettings::toJson() const
-{
-  return {{"enabled", enabled},
-          {"density", density},
-          {"heightFalloff", heightFalloff},
-          {"baseHeight", baseHeight},
-          {"startDistance", startDistance},
-          {"maxOpacity", maxOpacity},
-          {"sunGlow", sunGlow}};
-}
-
 FogSettings FogSettings::fromJson(const nlohmann::json& json,
                                   const FogSettings& defaults)
 {
   FogSettings out = defaults;
+
   if (!json.is_object())
     return out;
+
   if (const auto it = json.find("enabled");
       it != json.end() && it->is_boolean())
     out.enabled = it->get<bool>();
+
   read(json, "density", out.density);
   read(json, "heightFalloff", out.heightFalloff);
   read(json, "baseHeight", out.baseHeight);
@@ -53,15 +47,28 @@ FogSettings FogSettings::fromJson(const nlohmann::json& json)
   return fromJson(json, FogSettings());
 }
 
+nlohmann::json FogSettings::toJson() const
+{
+  return {{"enabled", enabled},
+          {"density", density},
+          {"heightFalloff", heightFalloff},
+          {"baseHeight", baseHeight},
+          {"startDistance", startDistance},
+          {"maxOpacity", maxOpacity},
+          {"sunGlow", sunGlow}};
+}
+
 float fogOpacity(const FogSettings& fog,
                  const glm::vec3& camera,
                  const glm::vec3& point)
 {
   if (!fog.enabled)
     return 0.0f;
+
   const glm::vec3 away = point - camera;
   const float length = glm::length(away);
   const float start = std::max(fog.startDistance, 0.0f);
+
   if (length <= start || length <= 0.0f)
     return 0.0f;
 

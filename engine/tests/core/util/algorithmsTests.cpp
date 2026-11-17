@@ -1,8 +1,7 @@
 #include "../../testHarness.h"
+#include "engine/core/util/algorithms/aabbSweep.h"
 
-#include <engine/core/util/algorithms/aabbSweep.h>
-
-#include <vector>
+#include <glm/glm/ext/vector_float2.hpp>
 
 using namespace sfs;
 

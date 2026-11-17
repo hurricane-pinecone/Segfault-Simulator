@@ -4,14 +4,14 @@
 #include "engine/core/components/animatorComponent.h"
 #include "engine/core/ecs/entity.h"
 #include "engine/core/ecs/system.h"
-#include "engine/core/rendering/mesh.h"
-#include "glm/glm/ext/matrix_float4x4.hpp"
 
+#include <glm/glm/ext/matrix_float4x4.hpp>
+
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <string_view>
-#include <unordered_map>
 #include <vector>
 
 namespace sfs
@@ -47,16 +47,26 @@ class MeshLibrary;
 class AnimationSystem : public System
 {
 public:
+  /** Last update's work, for a profiler. */
+  struct Stats
+  {
+    std::size_t animators = 0; // with clips to play
+    std::size_t posed = 0;     // posed this update
+    std::size_t skins = 0;     // skinned meshes posed this update
+  };
+
   AnimationSystem(MeshLibrary& meshes, AssetStore& assets);
   ~AnimationSystem() override;
-
+  /** Every clip it can play, by name (empty until its model has loaded). */
+  std::vector<std::string> clipNames(const Entity& animator) const;
+  /** Its clips, once loaded (null before, or if its model has none). */
+  const AnimationSet* clips(const Entity& animator) const;
   /**
-   * Whether the scene is playing (the default): animators' times run and
-   * their joints' transforms are set. Off (the editor, editing): each shows
-   * its pose at its `time` without moving its joints, its time running only
-   * while it's previewed (setPreview()).
+   * A clip's length in seconds (the one playing if `clip` is empty); 0 if
+   * there's no such clip or its model hasn't loaded yet (it's loaded the
+   * first time it updates).
    */
-  void setLive(bool live) { m_live = live; }
+  float length(const Entity& animator, std::string_view clip = {}) const;
   bool live() const { return m_live; }
 
   /**
@@ -65,41 +75,27 @@ public:
    * (restart() goes back to its start).
    */
   void play(const Entity& animator, std::string_view clip, float fade = 0.0f);
-  /** Back to the start of the clip playing (and playing). */
-  void restart(const Entity& animator);
-  /**
-   * A clip's length in seconds (the one playing if `clip` is empty); 0 if
-   * there's no such clip or its model hasn't loaded yet (it's loaded the
-   * first time it updates).
-   */
-  float length(const Entity& animator, std::string_view clip = {}) const;
-  /** Every clip it can play, by name (empty until its model has loaded). */
-  std::vector<std::string> clipNames(const Entity& animator) const;
-  /** Its clips, once loaded (null before, or if its model has none). */
-  const AnimationSet* clips(const Entity& animator) const;
-
-  /** While editing: play an animator's clip (its time runs), or stop. */
-  void setPreview(const Entity& animator, bool preview);
   bool previewing(const Entity& animator) const;
-
-  /** Every animator's speed is multiplied by this (1: as they are). */
-  void setTimeScale(float scale) { m_timeScale = scale; }
-  float timeScale() const { return m_timeScale; }
-
   /**
    * Find what's below an animator again on the next update (none: every
    * animator), e.g. after parenting a new skinned mesh under it.
    */
   void rebind(const Entity& animator = {});
-
-  /** Last update's work, for a profiler. */
-  struct Stats
-  {
-    std::size_t animators = 0; // with clips to play
-    std::size_t posed = 0;     // posed this update
-    std::size_t skins = 0;     // skinned meshes posed this update
-  };
+  /** Back to the start of the clip playing (and playing). */
+  void restart(const Entity& animator);
+  /**
+   * Whether the scene is playing (the default): animators' times run and
+   * their joints' transforms are set. Off (the editor, editing): each shows
+   * its pose at its `time` without moving its joints, its time running only
+   * while it's previewed (setPreview()).
+   */
+  void setLive(bool live) { m_live = live; }
+  /** While editing: play an animator's clip (its time runs), or stop. */
+  void setPreview(const Entity& animator, bool preview);
+  /** Every animator's speed is multiplied by this (1: as they are). */
+  void setTimeScale(float scale) { m_timeScale = scale; }
   const Stats& stats() const { return m_stats; }
+  float timeScale() const { return m_timeScale; }
 
 protected:
   void create() override;
@@ -109,38 +105,37 @@ private:
   using SkinBinding = AnimatorSkin;
   using Binding = AnimatorComponent;
 
-  void
-  bind(const Entity& entity, Binding& binding, AnimatorComponent& animator);
-  std::shared_ptr<const AnimationSet>
-  clipsFor(const Binding& binding,
-           const AnimatorComponent& animator,
-           bool& waiting) const;
-  // Note which nodes a set's clips move (once per set).
-  void useSet(Binding& binding, const AnimationSet& set);
-  const std::vector<int>& targetsFor(Binding& binding,
-                                     const AnimationSet& set,
-                                     const AnimationClip& clip);
   void advance(Binding& binding,
                AnimatorComponent& animator,
                float seconds,
                bool running);
+  AnimatorComponent* animatorOf(const Entity& animator);
+  void
+  bind(const Entity& entity, Binding& binding, AnimatorComponent& animator);
+  // An animator's (null: not one).
+  Binding* bindingOf(const Entity& animator) const;
+  std::shared_ptr<const AnimationSet>
+  clipsFor(const Binding& binding,
+           const AnimatorComponent& animator,
+           bool& waiting) const;
   void pose(Binding& binding, AnimatorComponent& animator);
+  const std::vector<int>& targetsFor(Binding& binding,
+                                     const AnimationSet& set,
+                                     const AnimationClip& clip);
+  // Note which nodes a set's clips move (once per set).
+  void useSet(Binding& binding, const AnimationSet& set);
 
   MeshLibrary& m_meshes;
   AssetStore& m_assets;
   bool m_live = true;
   float m_timeScale = 1.0f;
   uint64_t m_frame = 0;
-  // An animator's (null: not one).
-  Binding* bindingOf(const Entity& animator) const;
   // Scratch, kept to reuse (one animator posed at a time).
   std::vector<JointPose> m_pose;
   std::vector<JointPose> m_layerPose;
   std::vector<glm::mat4> m_models;
   std::vector<glm::mat4> m_jointModels;
   std::vector<glm::mat4> m_palette;
-  AnimatorComponent* animatorOf(const Entity& animator);
-
   Stats m_stats;
 };
 

@@ -2,7 +2,11 @@
 
 #include "engine/core/rendering/mesh.h"
 #include "engine/runtime/rendering/backend/iRenderBackend.h"
+#include "engine/runtime/rendering/backend/renderTarget.h"
 #include "engine/runtime/rendering/iRenderer.h"
+
+#include <glm/glm/ext/vector_float3.hpp>
+#include <glm/glm/ext/vector_int2.hpp>
 
 #include <array>
 #include <memory>
@@ -23,9 +27,6 @@ public:
 
   explicit MaterialPreview(sfs::IRenderBackend& backend);
 
-  /** Draw with this material from now on. */
-  void setMaterial(const sfs::MeshMaterial& material);
-
   /**
    * Draw the preview `size` across (pixels) and show it as an ImGui image.
    * Dragging the image turns the shape. `time` is the seconds Time nodes
@@ -33,8 +34,12 @@ public:
    */
   void draw(float size, float time);
 
-  Shape shape() const { return m_shape; }
+  /** Draw with this material from now on. */
+  void setMaterial(const sfs::MeshMaterial& material);
+
   void setShape(Shape shape) { m_shape = shape; }
+
+  Shape shape() const { return m_shape; }
 
 private:
   bool ensureReady();

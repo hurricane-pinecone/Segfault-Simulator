@@ -4,6 +4,10 @@
 #include "sfs/codegen/model.h"
 
 #include <array>
+#include <cstddef>
+#include <span>
+#include <string>
+#include <string_view>
 
 namespace sfs::codegen
 {
@@ -20,7 +24,7 @@ constexpr RuleSource L = RuleSource::Lint;
 // A new rule goes at the end of its tool's rows (a house rule at the very end,
 // after bad-ignore), with its RuleId enumerator in the same place. Names are
 // never changed once shipped: sfs-ignore comments name them.
-constexpr std::array<RuleInfo, static_cast<std::size_t>(Count)> kRules = {{
+constexpr std::array<RuleInfo, static_cast<std::size_t>(Count)> RULES = {{
     {NoScriptType,
      "no-script-type",
      W,
@@ -491,27 +495,29 @@ constexpr std::array<RuleInfo, static_cast<std::size_t>(Count)> kRules = {{
 
 constexpr bool inOrder()
 {
-  for (std::size_t i = 0; i < kRules.size(); ++i)
-    if (static_cast<std::size_t>(kRules[i].id) != i)
+  for (std::size_t i = 0; i < RULES.size(); ++i)
+    if (static_cast<std::size_t>(RULES[i].id) != i)
       return false;
+
   return true;
 }
 static_assert(inOrder(), "kRules must list every RuleId in order");
 
 } // namespace
 
-std::span<const RuleInfo> rules() { return kRules; }
+std::span<const RuleInfo> rules() { return RULES; }
 
 const RuleInfo& ruleInfo(RuleId id)
 {
-  return kRules[static_cast<std::size_t>(id)];
+  return RULES[static_cast<std::size_t>(id)];
 }
 
 const RuleInfo* findRule(std::string_view name)
 {
-  for (const RuleInfo& rule : kRules)
+  for (const RuleInfo& rule : RULES)
     if (rule.name == name && !rule.reserved)
       return &rule;
+
   return nullptr;
 }
 
@@ -519,17 +525,21 @@ const RuleInfo* closestRule(std::string_view name)
 {
   const RuleInfo* best = nullptr;
   std::size_t bestDistance = 3;
-  for (const RuleInfo& rule : kRules)
+
+  for (const RuleInfo& rule : RULES)
   {
     if (rule.reserved)
       continue;
+
     const std::size_t distance = editDistance(name, rule.name);
+
     if (distance < bestDistance)
     {
       best = &rule;
       bestDistance = distance;
     }
   }
+
   return best;
 }
 
@@ -549,6 +559,7 @@ std::string_view toolName(RuleSource source)
   case RuleSource::Suppression:
     return "sfs-codegen, sfs-lsp";
   }
+
   return "sfs-lsp";
 }
 
@@ -562,8 +573,10 @@ std::string formatDiagnostic(const Diagnostic& diagnostic, bool column)
   const RuleInfo& rule = ruleInfo(diagnostic.rule);
   std::string line = diagnostic.file.string() + ':' +
                      std::to_string(diagnostic.range.startRow + 1) + ':';
+
   if (column)
     line += std::to_string(diagnostic.range.startColumn + 1) + ':';
+
   line += ' ';
   line += severityName(rule.severity);
   line += ": " + diagnostic.message + " [";
@@ -576,10 +589,12 @@ std::string ruleDocsTable()
 {
   std::string out = "| Rule | Tool | Severity | What it says |\n"
                     "| --- | --- | --- | --- |\n";
-  for (const RuleInfo& rule : kRules)
+
+  for (const RuleInfo& rule : RULES)
   {
     if (rule.reserved || rule.house)
       continue;
+
     out += "| `";
     out += rule.name;
     out += "` | ";
@@ -590,6 +605,7 @@ std::string ruleDocsTable()
     out += rule.summary;
     out += " |\n";
   }
+
   return out;
 }
 
@@ -597,16 +613,19 @@ std::string houseRuleDocsTable()
 {
   std::string out = "| Rule | What it says |\n"
                     "| --- | --- |\n";
-  for (const RuleInfo& rule : kRules)
+
+  for (const RuleInfo& rule : RULES)
   {
     if (rule.reserved || !rule.house)
       continue;
+
     out += "| `";
     out += rule.name;
     out += "` | ";
     out += rule.summary;
     out += " |\n";
   }
+
   return out;
 }
 

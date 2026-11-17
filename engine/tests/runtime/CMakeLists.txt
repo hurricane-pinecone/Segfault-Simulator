@@ -84,11 +84,16 @@ add_runtime_test(scriptRegistryTests scripting/scriptRegistryTests.cpp)
 # builds them (reporting the engine ABI it was built against), and one from
 # before modules reported it.
 add_library(moduleHostCurrentModule SHARED scripting/moduleFixture.cpp)
-target_link_libraries(moduleHostCurrentModule PRIVATE engine)
 target_compile_definitions(moduleHostCurrentModule PRIVATE SFS_GAME_MODULE)
 add_library(moduleHostStaleModule SHARED scripting/moduleFixture.cpp)
-target_link_libraries(moduleHostStaleModule PRIVATE engine)
 foreach(fixture moduleHostCurrentModule moduleHostStaleModule)
+    # A module takes the C++ runtime's operator new and delete: a static engine's
+    # allocation tracking replaces them, which is only sound in one binary (see
+    # allocationMetrics.cpp). The runtime linked ahead of the engine provides them.
+    if(NOT MSVC)
+        target_link_libraries(${fixture} PRIVATE stdc++)
+    endif()
+    target_link_libraries(${fixture} PRIVATE engine)
     set_target_properties(${fixture} PROPERTIES
         PREFIX ""
         # Not in bin/ (see ../CMakeLists.txt): exports copy the DLLs there.

@@ -2,11 +2,14 @@
 
 #include "engine/runtime/navigation/coarseGraph.h"
 #include "engine/runtime/navigation/costLayer.h"
+#include "engine/runtime/navigation/geometry.h"
 #include "engine/runtime/navigation/planScheduler.h"
 #include "engine/runtime/navigation/planState.h"
 #include "engine/runtime/navigation/space.h"
 #include "engine/runtime/navigation/vehicle/vehicleModel.h"
 #include "engine/runtime/navigation/vehicle/vehiclePath.h"
+
+#include <glm/glm/ext/vector_float2.hpp>
 
 #include <atomic>
 #include <cstdint>
@@ -45,6 +48,7 @@ inline int lastGear(std::span<const Segment> segments)
   for (auto it = segments.rbegin(); it != segments.rend(); ++it)
     if (it->length > 0.0f)
       return it->gear;
+
   return 0;
 }
 
@@ -53,14 +57,18 @@ inline float lastRun(std::span<const Segment> segments)
 {
   const int gear = lastGear(segments);
   float run = 0.0f;
+
   for (auto it = segments.rbegin(); it != segments.rend(); ++it)
   {
     if (it->length <= 0.0f)
       continue;
+
     if (it->gear != gear)
       break;
+
     run += it->length;
   }
+
   return run;
 }
 

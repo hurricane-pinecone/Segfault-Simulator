@@ -1,16 +1,24 @@
 #pragma once
 
 #include "engine/runtime/rendering/backend/iRenderBackend.h"
+#include "engine/runtime/rendering/backend/renderTarget.h"
 #include "engine/runtime/sceneManager/scene.h"
 #include "engine/webgpu/webGpuContext.h"
-#include "engine/webgpu/webGpuRenderTarget.h"
 #include "engine/webgpu/webGpuRenderer.h"
+#include "engine/webgpu/webGpuRenderTarget.h"
 
+#include <glm/glm/ext/vector_int2.hpp>
+#include <SDL_events.h>
+#include <SDL_video.h>
 #include <webgpu/webgpu.h>
 
+#include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
+#include <string_view>
 
 namespace sfs
 {
@@ -32,42 +40,33 @@ class WebGpuRenderBackend : public IRenderBackend
 public:
   WebGpuRenderBackend();
   ~WebGpuRenderBackend() override;
-
-  std::string_view name() const override { return "webgpu"; }
-  bool init(const char* title, int width, int height) override;
-  SDL_Window* window() const override { return m_window; }
-  void onResize(int width, int height) override;
-  SceneBackends* sceneBackends() override;
-
   void beginFrame(int width, int height) override;
-  void endFrame() override;
-
-  void imguiProcessEvent(const SDL_Event& event) override;
-  void imguiNewFrame() override;
-  void imguiRenderDrawData() override;
-  bool imguiAvailable() const override { return m_imguiReady; }
-  void setVsync(bool vsync) override { m_context.setVsync(vsync); }
-  bool deviceLost() const override { return m_context.deviceLost(); }
-
-  std::unique_ptr<IRenderTarget> createRenderTarget() override;
-  /** The target must be one of createRenderTarget()'s, and outlive its use. */
-  void setSceneTarget(IRenderTarget* target) override;
+  WebGpuContext& context() { return m_context; }
+  std::unique_ptr<IImage> createImage(glm::ivec2 size,
+                                      std::span<const uint8_t> rgba) override;
   std::unique_ptr<IRenderer>
   createRenderer(uint32_t shadowMapResolution) override;
+  std::unique_ptr<IRenderTarget> createRenderTarget() override;
+  bool deviceLost() const override { return m_context.deviceLost(); }
   void drawInto(IRenderTarget& target,
                 IRenderer& renderer,
                 const std::function<void()>& draw) override;
-  std::unique_ptr<IImage> createImage(glm::ivec2 size,
-                                      std::span<const uint8_t> rgba) override;
-
+  void endFrame() override;
+  bool imguiAvailable() const override { return m_imguiReady; }
+  void imguiNewFrame() override;
+  void imguiProcessEvent(const SDL_Event& event) override;
+  void imguiRenderDrawData() override;
+  bool init(const char* title, int width, int height) override;
+  std::string_view name() const override { return "webgpu"; }
+  void onResize(int width, int height) override;
+  SceneBackends* sceneBackends() override;
+  /** The target must be one of createRenderTarget()'s, and outlive its use. */
+  void setSceneTarget(IRenderTarget* target) override;
+  void setVsync(bool vsync) override { m_context.setVsync(vsync); }
   void shutdown() override;
-
-  WebGpuContext& context() { return m_context; }
+  SDL_Window* window() const override { return m_window; }
 
 private:
-  bool initImGui();
-  void shutdownImGui();
-  void clearWindow();
   // The window's next picture: at beginFrame, or with SFS_LATE_ACQUIRE as
   // late as a frame can (before the first pass that draws into it: the
   // renderer's composite, or ImGui; or at endFrame). First submits what's
@@ -75,6 +74,17 @@ private:
   // false if there's no picture (a lost surface, a window of no size). `clear`:
   // clear it (unless the scene's composite is about to cover it).
   bool acquire(bool clear);
+  void clearWindow();
+  bool initImGui();
+  void saveScreenshot();
+  // SFS_SCREENSHOT=<file.png>: the scene draws offscreen, and frame
+  // SFS_SCREENSHOT_FRAME (60 by default) is saved there (for checking how a
+  // game looks without seeing its window). With SFS_SCREENSHOT_COUNT=<n> and
+  // SFS_SCREENSHOT_EVERY=<frames>, n of them that many frames apart, each
+  // numbered (<file>_00.png...): a sequence, as the camera steps (see
+  // RenderSystem's SFS_CAMERA_STEP).
+  bool screenshotDue(int frame) const;
+  void shutdownImGui();
   // Submit and release this frame's encoder.
   void submit();
 
@@ -97,15 +107,6 @@ private:
   std::optional<SceneBackends> m_backends;
 
   WebGpuRenderTarget* m_sceneTarget = nullptr;
-
-  // SFS_SCREENSHOT=<file.png>: the scene draws offscreen, and frame
-  // SFS_SCREENSHOT_FRAME (60 by default) is saved there (for checking how a
-  // game looks without seeing its window). With SFS_SCREENSHOT_COUNT=<n> and
-  // SFS_SCREENSHOT_EVERY=<frames>, n of them that many frames apart, each
-  // numbered (<file>_00.png...): a sequence, as the camera steps (see
-  // RenderSystem's SFS_CAMERA_STEP).
-  bool screenshotDue(int frame) const;
-  void saveScreenshot();
   std::unique_ptr<WebGpuRenderTarget> m_screenshotTarget;
   std::string m_screenshotPath;
   int m_screenshotFrame = 60;

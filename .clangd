@@ -3,3 +3,8 @@
 # reports misspelt standard ones instead.
 Diagnostics:
   Suppress: [unknown-attributes]
+  # SFS's own: include what you use. Flag an include nothing uses, and a name
+  # that only arrives through another header. (New projects keep clangd's
+  # default.)
+  UnusedIncludes: Strict
+  MissingIncludes: Strict

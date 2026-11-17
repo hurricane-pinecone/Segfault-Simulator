@@ -1,7 +1,16 @@
 #pragma once
 
+#include "engine/runtime/navigation/geometry.h"
+#include "engine/runtime/navigation/planState.h"
 #include "engine/runtime/navigation/search.h"
 #include "engine/runtime/navigation/vehicle/motions.h"
+#include "engine/runtime/navigation/vehicle/planner.h"
+#include "engine/runtime/navigation/vehicle/vehiclePath.h"
+
+#include <glm/glm/ext/vector_float2.hpp>
+
+#include <span>
+#include <vector>
 
 namespace sfs::nav::vehicle
 {
@@ -43,10 +52,10 @@ struct SearchContext
 class ISearch : public SearchBase
 {
 public:
-  virtual Way found() const = 0;
   virtual Way bestSoFar() const = 0;
   /** How it got to its way (PlanStats' ways, first and best; diagnostics). */
   virtual void describe(PlanStats&) const {}
+  virtual Way found() const = 0;
 };
 
 using Searches = SearchRegistry<SearchContext, ISearch>;

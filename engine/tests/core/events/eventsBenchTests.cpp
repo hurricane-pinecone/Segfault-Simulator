@@ -1,9 +1,13 @@
 #include "../../testHarness.h"
-
-#include <engine/core/ecs/ecs.h>
-#include <engine/core/events/events.h>
-#include <engine/core/events/responder.h>
-#include <engine/core/util/allocationMetrics.h>
+#include "engine/core/ecs/ecs.h"
+#include "engine/core/events/eventBroadcast.h"
+#include "engine/core/events/eventQueue.h"
+#include "engine/core/events/eventRows.h"
+#include "engine/core/events/events.h"
+#include "engine/core/events/eventTraits.h"
+#include "engine/core/events/responder.h"
+#include "engine/core/util/allocationMetrics.h"
+#include "engine/core/util/typeList.h"
 
 #include <algorithm>
 #include <atomic>
@@ -14,6 +18,7 @@
 #include <functional>
 #include <limits>
 #include <memory>
+#include <ratio>
 #include <string>
 #include <thread>
 #include <utility>
@@ -65,12 +70,12 @@ namespace
 {
 
 // A response handler that does nothing, for requesters that only ask.
-constexpr auto ignored = [](const Entity&, const auto&) {};
+constexpr auto IGNORED = [](const Entity&, const auto&) {};
 
 volatile uint64_t g_sink = 0;
 
-constexpr int kEvents = 10000;
-constexpr int kRounds = 200;
+constexpr int EVENTS = 10000;
+constexpr int ROUNDS = 200;
 
 // A 32-byte trivially copyable event.
 struct [[sfs::event_news]] TickEvent
@@ -108,320 +113,12 @@ namespace
 
 using Clock = std::chrono::steady_clock;
 
-double nsSince(Clock::time_point start)
-{
-  return std::chrono::duration<double, std::nano>(Clock::now() - start).count();
-}
-
-void print(const char* name, int count, double ns)
-{
-  std::printf("bench %s %d %.3f\n", name, count, ns);
-}
-
-// Whether the gates are checked: asked for, in an optimised build.
-bool checkGates()
-{
-#ifdef NDEBUG
-  static const bool asked = std::getenv("SFS_BENCH_GATES") != nullptr;
-  return asked;
-#else
-  return false;
-#endif
-}
-
-// One gate, `now` at most `limit`: printed, and checked when checkGates().
-void gate(const std::string& what, double now, double limit)
-{
-  const bool met = now <= limit;
-  std::printf("  gate %-58s: %.3f against %.3f: %s\n",
-              what.c_str(),
-              now,
-              limit,
-              met ? "met" : "MISSED");
-  if (checkGates())
-    CHECK(met);
-}
-
-double benchSend()
-{
-  Events events;
-  EventConsumer<TickEvent> consumer = events.consumer<TickEvent>();
-  double best = std::numeric_limits<double>::max();
-  for (int round = 0; round < kRounds; ++round)
-  {
-    const Clock::time_point start = Clock::now();
-    for (int i = 0; i < kEvents; ++i)
-      events.send(TickEvent{static_cast<uint64_t>(i), {}});
-    best = std::min(best, nsSince(start) / kEvents);
-    g_sink = g_sink + consumer.unread();
-    consumer.skip();
-    events.update();
-  }
-  return best;
-}
-
-/**
- * Sends events built beforehand, so the time is the send itself and not the
- * copy of a freshly built temporary.
- * @return the best nanoseconds per send over the rounds
- */
-double benchSendBuilt()
-{
-  Events events;
-  EventConsumer<TickEvent> consumer = events.consumer<TickEvent>();
-  std::vector<TickEvent> built;
-  built.reserve(kEvents);
-  for (int i = 0; i < kEvents; ++i)
-    built.push_back(TickEvent{static_cast<uint64_t>(i), {}});
-  double best = std::numeric_limits<double>::max();
-  for (int round = 0; round < kRounds; ++round)
-  {
-    const Clock::time_point start = Clock::now();
-    for (const TickEvent& tick : built)
-      events.send(tick);
-    best = std::min(best, nsSince(start) / kEvents);
-    g_sink = g_sink + consumer.unread();
-    consumer.skip();
-    events.update();
-  }
-  return best;
-}
-
-double benchPushBack()
-{
-  Registry registry;
-  registry.addSceneData<Ledger>();
-  double best = std::numeric_limits<double>::max();
-  for (int round = 0; round < kRounds; ++round)
-  {
-    const Clock::time_point start = Clock::now();
-    for (int i = 0; i < kEvents; ++i)
-      if (Ledger* ledger = registry.sceneData<Ledger>())
-        ledger->requests.push_back(TickEvent{static_cast<uint64_t>(i), {}});
-    best = std::min(best, nsSince(start) / kEvents);
-    Ledger* ledger = registry.sceneData<Ledger>();
-    g_sink = g_sink + ledger->requests.size();
-    ledger->requests.clear();
-  }
-  return best;
-}
-
-// The same events pushed onto a plain vector with room for them: what a
-// send's push_back costs alone, printed for context.
-double benchVectorPush()
-{
-  std::vector<TickEvent> ticks;
-  ticks.reserve(kEvents);
-  double best = std::numeric_limits<double>::max();
-  for (int round = 0; round < kRounds; ++round)
-  {
-    const Clock::time_point start = Clock::now();
-    for (int i = 0; i < kEvents; ++i)
-      ticks.push_back(TickEvent{static_cast<uint64_t>(i), {}});
-    best = std::min(best, nsSince(start) / kEvents);
-    g_sink = g_sink + ticks.size();
-    ticks.clear();
-  }
-  return best;
-}
-
-// The same reads from a plain vector, `consumers` times: what going through
-// the events costs alone, printed for context.
-double benchVectorRead(int consumers)
-{
-  std::vector<TickEvent> ticks;
-  for (int i = 0; i < kEvents; ++i)
-    ticks.push_back(TickEvent{static_cast<uint64_t>(i), {}});
-  double best = std::numeric_limits<double>::max();
-  for (int round = 0; round < kRounds; ++round)
-  {
-    uint64_t sum = 0;
-    const Clock::time_point start = Clock::now();
-    for (int r = 0; r < consumers; ++r)
-      for (const TickEvent& tick : ticks)
-        sum += tick.id;
-    best = std::min(best, nsSince(start) / (kEvents * consumers));
-    g_sink = g_sink + sum;
-  }
-  return best;
-}
-
-double benchRead(int consumers)
-{
-  Events events;
-  for (int i = 0; i < kEvents; ++i)
-    events.send(TickEvent{static_cast<uint64_t>(i), {}});
-  double best = std::numeric_limits<double>::max();
-  std::vector<EventConsumer<TickEvent>> made(
-      static_cast<std::size_t>(consumers));
-  for (int round = 0; round < kRounds; ++round)
-  {
-    for (EventConsumer<TickEvent>& consumer : made)
-      consumer = events.consumer<TickEvent>();
-    uint64_t sum = 0;
-    const Clock::time_point start = Clock::now();
-    for (EventConsumer<TickEvent>& consumer : made)
-      for (const TickEvent& tick : consumer.read())
-        sum += tick.id;
-    best = std::min(best, nsSince(start) / (kEvents * consumers));
-    g_sink = g_sink + sum;
-  }
-  return best;
-}
-
-template <int... Ns>
-void makeIdle(Events& events, std::integer_sequence<int, Ns...>)
-{
-  (events.consumer<Idle<Ns>>(), ...);
-}
-
-double benchIdleUpdate()
-{
-  Events events;
-  makeIdle(events, std::make_integer_sequence<int, 32>());
-  constexpr int repeats = 1000;
-  double best = std::numeric_limits<double>::max();
-  for (int round = 0; round < kRounds; ++round)
-  {
-    const Clock::time_point start = Clock::now();
-    for (int i = 0; i < repeats; ++i)
-      events.update();
-    best = std::min(best, nsSince(start) / repeats);
-  }
-  return best;
-}
-
 // A small trivially destructible event, so many queues of 10,000 fit in
 // memory.
 struct [[sfs::event_news]] MarkEvent
 {
   uint32_t id = 0;
 };
-
-// One update of a queue whose consumer has read the 10, or the 10,000, events
-// sent since the last (the common case: everything consumed, so the buffer
-// is cleared outright), in ns. A single update is too short for the clock, so
-// 256 queues, each in an Events of its own, are updated in a row, both counts
-// in every round (with their headers in cache, as in a game), and the rounds'
-// times are summed.
-std::pair<double, double> benchKeptUpdate()
-{
-  constexpr int kQueues = 256;
-  struct Set
-  {
-    int kept = 0;
-    std::vector<std::unique_ptr<Events>> all;
-    std::vector<EventConsumer<MarkEvent>> consumers;
-    double total = 0.0;
-  };
-  Set sets[2] = {{10, {}, {}, 0.0}, {kEvents, {}, {}, 0.0}};
-  for (Set& set : sets)
-    for (int q = 0; q < kQueues; ++q)
-    {
-      set.all.push_back(std::make_unique<Events>());
-      set.consumers.push_back(set.all.back()->consumer<MarkEvent>());
-    }
-  std::vector<EventStats> stats;
-  for (int round = 0; round < kRounds; ++round)
-    for (Set& set : sets)
-    {
-      for (const std::unique_ptr<Events>& events : set.all)
-        for (int i = 0; i < set.kept; ++i)
-          events->send(MarkEvent{static_cast<uint32_t>(i)});
-      for (EventConsumer<MarkEvent>& consumer : set.consumers)
-        consumer.skip();
-      for (const std::unique_ptr<Events>& events : set.all)
-        events->stats(stats);
-      const Clock::time_point start = Clock::now();
-      for (const std::unique_ptr<Events>& events : set.all)
-        events->update();
-      set.total += nsSince(start);
-      for (const std::unique_ptr<Events>& events : set.all)
-        events->update();
-    }
-  return {
-      sets[0].total / (kRounds * kQueues), sets[1].total / (kRounds * kQueues)};
-}
-
-// Frames of kEvents small events with one consumer that reads them all and one
-// that reads before the frame's second half is sent, so each frame boundary
-// keeps half the frame's events and compacts the buffer: what it costs, in ns
-// per event sent.
-double benchSlowReader()
-{
-  Events events;
-  EventConsumer<MarkEvent> fast = events.consumer<MarkEvent>();
-  EventConsumer<MarkEvent> slow = events.consumer<MarkEvent>();
-  constexpr int kFrames = 64;
-  double best = std::numeric_limits<double>::max();
-  uint64_t sum = 0;
-  for (int round = 0; round < kRounds / 8; ++round)
-  {
-    double total = 0.0;
-    for (int frame = 0; frame < kFrames; ++frame)
-    {
-      for (int i = 0; i < kEvents / 2; ++i)
-        events.send(MarkEvent{static_cast<uint32_t>(i)});
-      sum += slow.read().size();
-      for (int i = 0; i < kEvents / 2; ++i)
-        events.send(MarkEvent{static_cast<uint32_t>(i)});
-      sum += fast.read().size();
-      const Clock::time_point start = Clock::now();
-      events.update();
-      total += nsSince(start);
-    }
-    best = std::min(best, total / (kFrames * kEvents));
-  }
-  g_sink = g_sink + sum;
-  return best;
-}
-
-// Each of `threads` threads sends kEvents through its copy of one broadcast,
-// all at once: the best round's ns per send, as each thread sees it. The
-// frame boundary that takes them in is timed too, in ns per event.
-std::pair<double, double> benchBroadcast(int threads)
-{
-  Events events;
-  EventConsumer<TickEvent> consumer = events.consumer<TickEvent>();
-  const EventBroadcast<TickEvent> broadcast = events.broadcast<TickEvent>();
-  double best = std::numeric_limits<double>::max();
-  double bestDrain = std::numeric_limits<double>::max();
-  for (int round = 0; round < kRounds / 4; ++round)
-  {
-    std::atomic<int> ready{0};
-    std::atomic<bool> go{false};
-    std::vector<double> took(static_cast<std::size_t>(threads), 0.0);
-    std::vector<std::thread> workers;
-    for (int t = 0; t < threads; ++t)
-      workers.emplace_back(
-          [&, t, own = broadcast]() mutable
-          {
-            ready.fetch_add(1);
-            while (!go.load())
-            {
-            }
-            const Clock::time_point start = Clock::now();
-            for (int i = 0; i < kEvents; ++i)
-              own.send(TickEvent{static_cast<uint64_t>(i), {}});
-            took[static_cast<std::size_t>(t)] = nsSince(start) / kEvents;
-          });
-    while (ready.load() < threads)
-    {
-    }
-    go.store(true);
-    for (std::thread& worker : workers)
-      worker.join();
-    best = std::min(best, *std::max_element(took.begin(), took.end()));
-
-    const Clock::time_point start = Clock::now();
-    events.update();
-    bestDrain = std::min(bestDrain, nsSince(start) / (kEvents * threads));
-    g_sink = g_sink + consumer.unread();
-    consumer.skip();
-    events.update();
-  }
-  return {best, bestDrain};
-}
 
 // A keyed event, the size of TickEvent.
 struct [[sfs::event_entity_news]] KeyedTickEvent
@@ -493,66 +190,6 @@ private:
   std::function<void(Bencher&)> m_setUp;
 };
 
-// A registry with `count` flushed entities.
-std::vector<Entity> makeEntities(Registry& registry, int count)
-{
-  std::vector<Entity> made;
-  made.reserve(static_cast<std::size_t>(count));
-  for (int i = 0; i < count; ++i)
-    made.push_back(registry.createEntity());
-  registry.flushEntities();
-  return made;
-}
-
-// 10,000 keyed sends a round, to as many keys or all to the first: the best
-// round's ns per send.
-double benchKeyedSend(bool oneKey)
-{
-  Registry registry;
-  const std::vector<Entity> keys = makeEntities(registry, kEvents);
-  Events& events = registry.events();
-  KeyedTickEvent tick;
-  double best = std::numeric_limits<double>::max();
-  for (int round = 0; round < kRounds; ++round)
-  {
-    const Clock::time_point start = Clock::now();
-    for (int i = 0; i < kEvents; ++i)
-    {
-      tick.id = static_cast<uint64_t>(i);
-      events.send(oneKey ? keys[0] : keys[static_cast<std::size_t>(i)], tick);
-    }
-    best = std::min(best, nsSince(start) / kEvents);
-    events.update();
-    events.update();
-  }
-  return best;
-}
-
-// 10,000 requests a round from one requester, to as many entities: the best
-// round's ns per request (its ticket, then the append).
-double benchRequest()
-{
-  Registry registry;
-  const std::vector<Entity> keys = makeEntities(registry, kEvents);
-  EventRequester<AskRequest> asker;
-  registry.addSystem<Bencher>(
-      [&](Bencher& self)
-      { asker = self.requester<AskRequest>().onResponse(ignored); });
-  Events& events = registry.events();
-  double best = std::numeric_limits<double>::max();
-  for (int round = 0; round < kRounds; ++round)
-  {
-    const Clock::time_point start = Clock::now();
-    for (int i = 0; i < kEvents; ++i)
-      asker.request(keys[static_cast<std::size_t>(i)],
-                    AskRequest{static_cast<uint64_t>(i)});
-    best = std::min(best, nsSince(start) / kEvents);
-    events.update();
-    events.update();
-  }
-  return best;
-}
-
 // A system holding many requesters, each asking about its own entities.
 class Askers : public System
 {
@@ -564,53 +201,14 @@ protected:
   void create() override
   {
     askers.reserve(static_cast<std::size_t>(m_count));
+
     for (int i = 0; i < m_count; ++i)
-      askers.push_back(requester<AskRequest>().onResponse(ignored));
+      askers.push_back(requester<AskRequest>().onResponse(IGNORED));
   }
 
 private:
   int m_count;
 };
-
-// `count` requesters asking about one entity: the best round's ns per
-// request, waiting() and cancel, each requester once a round.
-double benchFanIn(int count)
-{
-  Registry registry;
-  const Entity target = makeEntities(registry, 1).front();
-  Askers& askers = registry.addSystem<Askers>(count);
-  double best = std::numeric_limits<double>::max();
-  uint64_t sum = 0;
-  for (int round = 0; round < 20; ++round)
-  {
-    const Clock::time_point start = Clock::now();
-    for (EventRequester<AskRequest>& asker : askers.askers)
-      asker.request(target, AskRequest{1});
-    for (EventRequester<AskRequest>& asker : askers.askers)
-      sum += asker.waiting(target) ? 1u : 0u;
-    for (EventRequester<AskRequest>& asker : askers.askers)
-      asker.cancel(target);
-    best = std::min(best, nsSince(start) / (3.0 * count));
-    registry.events().update();
-    registry.events().update();
-  }
-  g_sink = g_sink + sum;
-  return best;
-}
-
-// Destroying `count` requesters that each asked about one entity: ns per
-// requester.
-double benchRequestersGoing(int count)
-{
-  Registry registry;
-  const Entity target = makeEntities(registry, 1).front();
-  Askers& askers = registry.addSystem<Askers>(count);
-  for (EventRequester<AskRequest>& asker : askers.askers)
-    asker.request(target, AskRequest{1});
-  const Clock::time_point start = Clock::now();
-  askers.askers.clear();
-  return nsSince(start) / count;
-}
 
 // A system with `count` requesters, each handling its responses.
 class Listeners : public System
@@ -624,6 +222,7 @@ protected:
   void create() override
   {
     askers.reserve(static_cast<std::size_t>(m_count));
+
     for (int i = 0; i < m_count; ++i)
       askers.push_back(requester<AskRequest>().onResponse(
           [this](const Entity&, const ToldResponse& told)
@@ -633,6 +232,495 @@ protected:
 private:
   int m_count;
 };
+
+double nsSince(Clock::time_point start)
+{
+  return std::chrono::duration<double, std::nano>(Clock::now() - start).count();
+}
+
+void print(const char* name, int count, double ns)
+{
+  std::printf("bench %s %d %.3f\n", name, count, ns);
+}
+
+// Whether the gates are checked: asked for, in an optimised build.
+bool checkGates()
+{
+#ifdef NDEBUG
+  static const bool asked = std::getenv("SFS_BENCH_GATES") != nullptr;
+  return asked;
+#else
+  return false;
+#endif
+}
+
+// One gate, `now` at most `limit`: printed, and checked when checkGates().
+void gate(const std::string& what, double now, double limit)
+{
+  const bool met = now <= limit;
+  std::printf("  gate %-58s: %.3f against %.3f: %s\n",
+              what.c_str(),
+              now,
+              limit,
+              met ? "met" : "MISSED");
+
+  if (checkGates())
+    CHECK(met);
+}
+
+double benchSend()
+{
+  Events events;
+  EventConsumer<TickEvent> consumer = events.consumer<TickEvent>();
+  double best = std::numeric_limits<double>::max();
+
+  for (int round = 0; round < ROUNDS; ++round)
+  {
+    const Clock::time_point start = Clock::now();
+
+    for (int i = 0; i < EVENTS; ++i)
+      events.send(TickEvent{static_cast<uint64_t>(i), {}});
+
+    best = std::min(best, nsSince(start) / EVENTS);
+    g_sink = g_sink + consumer.unread();
+    consumer.skip();
+    events.update();
+  }
+
+  return best;
+}
+
+/**
+ * Sends events built beforehand, so the time is the send itself and not the
+ * copy of a freshly built temporary.
+ * @return the best nanoseconds per send over the rounds
+ */
+double benchSendBuilt()
+{
+  Events events;
+  EventConsumer<TickEvent> consumer = events.consumer<TickEvent>();
+  std::vector<TickEvent> built;
+  built.reserve(EVENTS);
+
+  for (int i = 0; i < EVENTS; ++i)
+    built.push_back(TickEvent{static_cast<uint64_t>(i), {}});
+
+  double best = std::numeric_limits<double>::max();
+
+  for (int round = 0; round < ROUNDS; ++round)
+  {
+    const Clock::time_point start = Clock::now();
+
+    for (const TickEvent& tick : built)
+      events.send(tick);
+
+    best = std::min(best, nsSince(start) / EVENTS);
+    g_sink = g_sink + consumer.unread();
+    consumer.skip();
+    events.update();
+  }
+
+  return best;
+}
+
+double benchPushBack()
+{
+  Registry registry;
+  registry.addSceneData<Ledger>();
+  double best = std::numeric_limits<double>::max();
+
+  for (int round = 0; round < ROUNDS; ++round)
+  {
+    const Clock::time_point start = Clock::now();
+
+    for (int i = 0; i < EVENTS; ++i)
+      if (Ledger* ledger = registry.sceneData<Ledger>())
+        ledger->requests.push_back(TickEvent{static_cast<uint64_t>(i), {}});
+
+    best = std::min(best, nsSince(start) / EVENTS);
+    Ledger* ledger = registry.sceneData<Ledger>();
+    g_sink = g_sink + ledger->requests.size();
+    ledger->requests.clear();
+  }
+
+  return best;
+}
+
+// The same events pushed onto a plain vector with room for them: what a
+// send's push_back costs alone, printed for context.
+double benchVectorPush()
+{
+  std::vector<TickEvent> ticks;
+  ticks.reserve(EVENTS);
+  double best = std::numeric_limits<double>::max();
+
+  for (int round = 0; round < ROUNDS; ++round)
+  {
+    const Clock::time_point start = Clock::now();
+
+    for (int i = 0; i < EVENTS; ++i)
+      ticks.push_back(TickEvent{static_cast<uint64_t>(i), {}});
+
+    best = std::min(best, nsSince(start) / EVENTS);
+    g_sink = g_sink + ticks.size();
+    ticks.clear();
+  }
+
+  return best;
+}
+
+// The same reads from a plain vector, `consumers` times: what going through
+// the events costs alone, printed for context.
+double benchVectorRead(int consumers)
+{
+  std::vector<TickEvent> ticks;
+
+  for (int i = 0; i < EVENTS; ++i)
+    ticks.push_back(TickEvent{static_cast<uint64_t>(i), {}});
+
+  double best = std::numeric_limits<double>::max();
+
+  for (int round = 0; round < ROUNDS; ++round)
+  {
+    uint64_t sum = 0;
+    const Clock::time_point start = Clock::now();
+
+    for (int r = 0; r < consumers; ++r)
+      for (const TickEvent& tick : ticks)
+        sum += tick.id;
+
+    best = std::min(best, nsSince(start) / (EVENTS * consumers));
+    g_sink = g_sink + sum;
+  }
+
+  return best;
+}
+
+double benchRead(int consumers)
+{
+  Events events;
+
+  for (int i = 0; i < EVENTS; ++i)
+    events.send(TickEvent{static_cast<uint64_t>(i), {}});
+
+  double best = std::numeric_limits<double>::max();
+  std::vector<EventConsumer<TickEvent>> made(
+      static_cast<std::size_t>(consumers));
+
+  for (int round = 0; round < ROUNDS; ++round)
+  {
+    for (EventConsumer<TickEvent>& consumer : made)
+      consumer = events.consumer<TickEvent>();
+
+    uint64_t sum = 0;
+    const Clock::time_point start = Clock::now();
+
+    for (EventConsumer<TickEvent>& consumer : made)
+      for (const TickEvent& tick : consumer.read())
+        sum += tick.id;
+
+    best = std::min(best, nsSince(start) / (EVENTS * consumers));
+    g_sink = g_sink + sum;
+  }
+
+  return best;
+}
+
+template <int... Ns>
+void makeIdle(Events& events, std::integer_sequence<int, Ns...>)
+{
+  (events.consumer<Idle<Ns>>(), ...);
+}
+
+double benchIdleUpdate()
+{
+  Events events;
+  makeIdle(events, std::make_integer_sequence<int, 32>());
+  constexpr int REPEATS = 1000;
+  double best = std::numeric_limits<double>::max();
+
+  for (int round = 0; round < ROUNDS; ++round)
+  {
+    const Clock::time_point start = Clock::now();
+
+    for (int i = 0; i < REPEATS; ++i)
+      events.update();
+
+    best = std::min(best, nsSince(start) / REPEATS);
+  }
+
+  return best;
+}
+
+// One update of a queue whose consumer has read the 10, or the 10,000, events
+// sent since the last (the common case: everything consumed, so the buffer
+// is cleared outright), in ns. A single update is too short for the clock, so
+// 256 queues, each in an Events of its own, are updated in a row, both counts
+// in every round (with their headers in cache, as in a game), and the rounds'
+// times are summed.
+std::pair<double, double> benchKeptUpdate()
+{
+  constexpr int QUEUES = 256;
+  struct Set
+  {
+    int kept = 0;
+    std::vector<std::unique_ptr<Events>> all;
+    std::vector<EventConsumer<MarkEvent>> consumers;
+    double total = 0.0;
+  };
+  Set sets[2] = {{10, {}, {}, 0.0}, {EVENTS, {}, {}, 0.0}};
+
+  for (Set& set : sets)
+    for (int q = 0; q < QUEUES; ++q)
+    {
+      set.all.push_back(std::make_unique<Events>());
+      set.consumers.push_back(set.all.back()->consumer<MarkEvent>());
+    }
+
+  std::vector<EventStats> stats;
+
+  for (int round = 0; round < ROUNDS; ++round)
+    for (Set& set : sets)
+    {
+      for (const std::unique_ptr<Events>& events : set.all)
+        for (int i = 0; i < set.kept; ++i)
+          events->send(MarkEvent{static_cast<uint32_t>(i)});
+
+      for (EventConsumer<MarkEvent>& consumer : set.consumers)
+        consumer.skip();
+
+      for (const std::unique_ptr<Events>& events : set.all)
+        events->stats(stats);
+
+      const Clock::time_point start = Clock::now();
+
+      for (const std::unique_ptr<Events>& events : set.all)
+        events->update();
+
+      set.total += nsSince(start);
+
+      for (const std::unique_ptr<Events>& events : set.all)
+        events->update();
+    }
+
+  return {sets[0].total / (ROUNDS * QUEUES), sets[1].total / (ROUNDS * QUEUES)};
+}
+
+// Frames of EVENTS small events with one consumer that reads them all and one
+// that reads before the frame's second half is sent, so each frame boundary
+// keeps half the frame's events and compacts the buffer: what it costs, in ns
+// per event sent.
+double benchSlowReader()
+{
+  Events events;
+  EventConsumer<MarkEvent> fast = events.consumer<MarkEvent>();
+  EventConsumer<MarkEvent> slow = events.consumer<MarkEvent>();
+  constexpr int FRAMES = 64;
+  double best = std::numeric_limits<double>::max();
+  uint64_t sum = 0;
+
+  for (int round = 0; round < ROUNDS / 8; ++round)
+  {
+    double total = 0.0;
+
+    for (int frame = 0; frame < FRAMES; ++frame)
+    {
+      for (int i = 0; i < EVENTS / 2; ++i)
+        events.send(MarkEvent{static_cast<uint32_t>(i)});
+
+      sum += slow.read().size();
+
+      for (int i = 0; i < EVENTS / 2; ++i)
+        events.send(MarkEvent{static_cast<uint32_t>(i)});
+
+      sum += fast.read().size();
+      const Clock::time_point start = Clock::now();
+      events.update();
+      total += nsSince(start);
+    }
+
+    best = std::min(best, total / (FRAMES * EVENTS));
+  }
+
+  g_sink = g_sink + sum;
+  return best;
+}
+
+// Each of `threads` threads sends EVENTS through its copy of one broadcast,
+// all at once: the best round's ns per send, as each thread sees it. The
+// frame boundary that takes them in is timed too, in ns per event.
+std::pair<double, double> benchBroadcast(int threads)
+{
+  Events events;
+  EventConsumer<TickEvent> consumer = events.consumer<TickEvent>();
+  const EventBroadcast<TickEvent> broadcast = events.broadcast<TickEvent>();
+  double best = std::numeric_limits<double>::max();
+  double bestDrain = std::numeric_limits<double>::max();
+
+  for (int round = 0; round < ROUNDS / 4; ++round)
+  {
+    std::atomic<int> ready{0};
+    std::atomic<bool> go{false};
+    std::vector<double> took(static_cast<std::size_t>(threads), 0.0);
+    std::vector<std::thread> workers;
+
+    for (int t = 0; t < threads; ++t)
+      workers.emplace_back(
+          [&, t, own = broadcast]() mutable
+          {
+            ready.fetch_add(1);
+
+            while (!go.load())
+            {
+            }
+
+            const Clock::time_point start = Clock::now();
+
+            for (int i = 0; i < EVENTS; ++i)
+              own.send(TickEvent{static_cast<uint64_t>(i), {}});
+
+            took[static_cast<std::size_t>(t)] = nsSince(start) / EVENTS;
+          });
+
+    while (ready.load() < threads)
+    {
+    }
+
+    go.store(true);
+
+    for (std::thread& worker : workers)
+      worker.join();
+
+    best = std::min(best, *std::max_element(took.begin(), took.end()));
+
+    const Clock::time_point start = Clock::now();
+    events.update();
+    bestDrain = std::min(bestDrain, nsSince(start) / (EVENTS * threads));
+    g_sink = g_sink + consumer.unread();
+    consumer.skip();
+    events.update();
+  }
+
+  return {best, bestDrain};
+}
+
+// A registry with `count` flushed entities.
+std::vector<Entity> makeEntities(Registry& registry, int count)
+{
+  std::vector<Entity> made;
+  made.reserve(static_cast<std::size_t>(count));
+
+  for (int i = 0; i < count; ++i)
+    made.push_back(registry.createEntity());
+
+  registry.flushEntities();
+  return made;
+}
+
+// 10,000 keyed sends a round, to as many keys or all to the first: the best
+// round's ns per send.
+double benchKeyedSend(bool oneKey)
+{
+  Registry registry;
+  const std::vector<Entity> keys = makeEntities(registry, EVENTS);
+  Events& events = registry.events();
+  KeyedTickEvent tick;
+  double best = std::numeric_limits<double>::max();
+
+  for (int round = 0; round < ROUNDS; ++round)
+  {
+    const Clock::time_point start = Clock::now();
+
+    for (int i = 0; i < EVENTS; ++i)
+    {
+      tick.id = static_cast<uint64_t>(i);
+      events.send(oneKey ? keys[0] : keys[static_cast<std::size_t>(i)], tick);
+    }
+
+    best = std::min(best, nsSince(start) / EVENTS);
+    events.update();
+    events.update();
+  }
+
+  return best;
+}
+
+// 10,000 requests a round from one requester, to as many entities: the best
+// round's ns per request (its ticket, then the append).
+double benchRequest()
+{
+  Registry registry;
+  const std::vector<Entity> keys = makeEntities(registry, EVENTS);
+  EventRequester<AskRequest> asker;
+  registry.addSystem<Bencher>(
+      [&](Bencher& self)
+      { asker = self.requester<AskRequest>().onResponse(IGNORED); });
+  Events& events = registry.events();
+  double best = std::numeric_limits<double>::max();
+
+  for (int round = 0; round < ROUNDS; ++round)
+  {
+    const Clock::time_point start = Clock::now();
+
+    for (int i = 0; i < EVENTS; ++i)
+      asker.request(keys[static_cast<std::size_t>(i)],
+                    AskRequest{static_cast<uint64_t>(i)});
+
+    best = std::min(best, nsSince(start) / EVENTS);
+    events.update();
+    events.update();
+  }
+
+  return best;
+}
+
+// `count` requesters asking about one entity: the best round's ns per
+// request, waiting() and cancel, each requester once a round.
+double benchFanIn(int count)
+{
+  Registry registry;
+  const Entity target = makeEntities(registry, 1).front();
+  Askers& askers = registry.addSystem<Askers>(count);
+  double best = std::numeric_limits<double>::max();
+  uint64_t sum = 0;
+
+  for (int round = 0; round < 20; ++round)
+  {
+    const Clock::time_point start = Clock::now();
+
+    for (EventRequester<AskRequest>& asker : askers.askers)
+      asker.request(target, AskRequest{1});
+
+    for (EventRequester<AskRequest>& asker : askers.askers)
+      sum += asker.waiting(target) ? 1u : 0u;
+
+    for (EventRequester<AskRequest>& asker : askers.askers)
+      asker.cancel(target);
+
+    best = std::min(best, nsSince(start) / (3.0 * count));
+    registry.events().update();
+    registry.events().update();
+  }
+
+  g_sink = g_sink + sum;
+  return best;
+}
+
+// Destroying `count` requesters that each asked about one entity: ns per
+// requester.
+double benchRequestersGoing(int count)
+{
+  Registry registry;
+  const Entity target = makeEntities(registry, 1).front();
+  Askers& askers = registry.addSystem<Askers>(count);
+
+  for (EventRequester<AskRequest>& asker : askers.askers)
+    asker.request(target, AskRequest{1});
+
+  const Clock::time_point start = Clock::now();
+  askers.askers.clear();
+  return nsSince(start) / count;
+}
 
 // `count` requesters each asking about its own entity, each answered once a
 // round: the best round's ns per response for the requesters' update (their
@@ -651,12 +739,14 @@ double benchManyRequesters(int count)
       responder.respond(ToldResponse{ask.id});
   };
   double best = std::numeric_limits<double>::max();
+
   for (int round = 0; round < 20; ++round)
   {
     for (int i = 0; i < count; ++i)
       listeners.askers[static_cast<std::size_t>(i)].request(
           keys[static_cast<std::size_t>(i)],
           AskRequest{static_cast<uint64_t>(i)});
+
     registry.updateSystem(server, 0.0);
     const Clock::time_point start = Clock::now();
     registry.updateSystem(listeners, 0.0);
@@ -664,6 +754,7 @@ double benchManyRequesters(int count)
     registry.events().update();
     registry.events().update();
   }
+
   g_sink = g_sink + listeners.heard;
   return best;
 }
@@ -675,14 +766,18 @@ double benchRequesterMemory()
   Registry registry;
   const std::vector<Entity> keys = makeEntities(registry, 20000);
   Askers& askers = registry.addSystem<Askers>(1000);
+
   for (std::size_t a = 0; a < askers.askers.size(); ++a)
     for (std::size_t e = 0; e < 20; ++e)
       askers.askers[a].request(keys[a * 20 + e], AskRequest{e});
+
   std::vector<EventStats> stats;
   registry.events().stats(stats);
   std::size_t bytes = 0;
+
   for (const EventStats& type : stats)
     bytes += type.requestBytes;
+
   std::printf(
       "  requests: 1,000 requesters x 20 entities hold %zu bytes\n", bytes);
   return static_cast<double>(bytes) / 20000.0;
@@ -694,20 +789,25 @@ double benchRequesterMemory()
 double benchRequesterFlush(bool requesters)
 {
   double best = std::numeric_limits<double>::max();
+
   for (int round = 0; round < 20; ++round)
   {
     Registry registry;
-    const std::vector<Entity> keys = makeEntities(registry, kEvents);
+    const std::vector<Entity> keys = makeEntities(registry, EVENTS);
     Askers& askers = registry.addSystem<Askers>(requesters ? 1000 : 0);
+
     for (std::size_t a = 0; a < askers.askers.size(); ++a)
       for (std::size_t e = 0; e < 10; ++e)
         askers.askers[a].request(keys[a * 10 + e], AskRequest{e});
+
     for (const Entity& key : keys)
       registry.destroyEntity(key);
+
     const Clock::time_point start = Clock::now();
     registry.flushEntities();
-    best = std::min(best, nsSince(start) / kEvents);
+    best = std::min(best, nsSince(start) / EVENTS);
   }
+
   return best;
 }
 
@@ -718,29 +818,35 @@ double benchFamilySend(bool plain)
 {
   Registry registry;
   EventConsumer<DamageEvent> damage;
+
   if (!plain)
     registry.addSystem<Bencher>([&](Bencher& self)
                                 { damage = self.consumer<DamageEvent>(); });
+
   Events& events = registry.events();
   FireDamageEvent fire;
   double best = std::numeric_limits<double>::max();
-  for (int round = 0; round < kRounds; ++round)
+
+  for (int round = 0; round < ROUNDS; ++round)
   {
     const Clock::time_point start = Clock::now();
-    for (int i = 0; i < kEvents; ++i)
+
+    for (int i = 0; i < EVENTS; ++i)
     {
       fire.id = static_cast<uint64_t>(i);
       events.send(fire);
     }
-    best = std::min(best, nsSince(start) / kEvents);
+
+    best = std::min(best, nsSince(start) / EVENTS);
     damage.skip();
     events.update();
     events.update();
   }
+
   return best;
 }
 
-// Times one update of a system, its handlers included, that receives kEvents
+// Times one update of a system, its handlers included, that receives EVENTS
 // events `fill` sends first each round: the best round's ns per event.
 double benchUpdate(const std::function<void(Bencher&)>& setUp,
                    const std::function<void(Registry&)>& fill,
@@ -749,29 +855,33 @@ double benchUpdate(const std::function<void(Bencher&)>& setUp,
   Registry registry;
   Bencher& bencher = registry.addSystem<Bencher>(setUp);
   uint64_t sum = 0;
+
   if (consume)
     bencher.body = [&](Bencher&) { sum += consume(); };
+
   double best = std::numeric_limits<double>::max();
-  for (int round = 0; round < kRounds; ++round)
+
+  for (int round = 0; round < ROUNDS; ++round)
   {
     fill(registry);
     const Clock::time_point start = Clock::now();
     registry.updateSystem(bencher, 0.0);
-    best = std::min(best, nsSince(start) / kEvents);
+    best = std::min(best, nsSince(start) / EVENTS);
     registry.events().update();
     registry.events().update();
   }
+
   g_sink = g_sink + sum;
   return best;
 }
 
 void sendHandled(Registry& registry)
 {
-  for (int i = 0; i < kEvents; ++i)
+  for (int i = 0; i < EVENTS; ++i)
     registry.events().send(HandledEvent{static_cast<uint64_t>(i), {}});
 }
 
-// kEvents events read by a loop in update().
+// EVENTS events read by a loop in update().
 double benchReadLoop()
 {
   EventConsumer<HandledEvent> handled;
@@ -781,8 +891,10 @@ double benchReadLoop()
                      [&]
                      {
                        uint64_t sum = 0;
+
                        for (const HandledEvent& event : handled.read())
                          sum += event.id;
+
                        return sum;
                      });
 }
@@ -811,7 +923,7 @@ double benchHandler(bool batch)
   return best;
 }
 
-// readLatest of kEvents keyed events, one per key.
+// readLatest of EVENTS keyed events, one per key.
 double benchLatest()
 {
   EventConsumer<KeyedTickEvent> ticks;
@@ -821,21 +933,24 @@ double benchLatest()
       [&](Registry& registry)
       {
         if (keys.empty())
-          keys = makeEntities(registry, kEvents);
-        for (int i = 0; i < kEvents; ++i)
+          keys = makeEntities(registry, EVENTS);
+
+        for (int i = 0; i < EVENTS; ++i)
           registry.events().send(keys[static_cast<std::size_t>(i)],
                                  KeyedTickEvent{static_cast<uint64_t>(i), {}});
       },
       [&]
       {
         uint64_t sum = 0;
+
         for (auto [key, tick] : ticks.readLatest())
           sum += tick.id;
+
         return sum;
       });
 }
 
-// A read of kEvents requests from a requester, one per key, each responded
+// A read of EVENTS requests from a requester, one per key, each responded
 // to at once.
 double benchResponders()
 {
@@ -846,68 +961,76 @@ double benchResponders()
       [&](Bencher& self)
       {
         asks = self.consumer<AskRequest>();
-        asker = self.requester<AskRequest>().onResponse(ignored);
+        asker = self.requester<AskRequest>().onResponse(IGNORED);
       },
       [&](Registry& registry)
       {
         if (keys.empty())
-          keys = makeEntities(registry, kEvents);
-        for (int i = 0; i < kEvents; ++i)
+          keys = makeEntities(registry, EVENTS);
+
+        for (int i = 0; i < EVENTS; ++i)
           asker.request(keys[static_cast<std::size_t>(i)],
                         AskRequest{static_cast<uint64_t>(i)});
       },
       [&]
       {
         uint64_t sum = 0;
+
         for (auto [key, ask, responder] : asks.read())
           sum += responder.respond(ToldResponse{ask.id}) ? 1u : 0u;
+
         return sum;
       });
 }
 
-// A server answering kEvents open requests later by entity, one per key:
+// A server answering EVENTS open requests later by entity, one per key:
 // the best round's ns per response.
 double benchRespondByEntity()
 {
   Registry registry;
-  const std::vector<Entity> keys = makeEntities(registry, kEvents);
+  const std::vector<Entity> keys = makeEntities(registry, EVENTS);
   EventConsumer<AskRequest> asks;
   EventRequester<AskRequest> asker;
   Bencher& system = registry.addSystem<Bencher>(
       [&](Bencher& self)
       {
         asks = self.consumer<AskRequest>();
-        asker = self.requester<AskRequest>().onResponse(ignored);
+        asker = self.requester<AskRequest>().onResponse(IGNORED);
       });
   double best = std::numeric_limits<double>::max();
   uint64_t sum = 0;
-  for (int round = 0; round < kRounds; ++round)
+
+  for (int round = 0; round < ROUNDS; ++round)
   {
-    for (int i = 0; i < kEvents; ++i)
+    for (int i = 0; i < EVENTS; ++i)
       asker.request(keys[static_cast<std::size_t>(i)],
                     AskRequest{static_cast<uint64_t>(i)});
+
     asks.skip();
     const Clock::time_point start = Clock::now();
-    for (int i = 0; i < kEvents; ++i)
+
+    for (int i = 0; i < EVENTS; ++i)
       sum += asks.respond(keys[static_cast<std::size_t>(i)],
                           ToldResponse{static_cast<uint64_t>(i)})
                  ? 1u
                  : 0u;
-    best = std::min(best, nsSince(start) / kEvents);
+
+    best = std::min(best, nsSince(start) / EVENTS);
     // The asker hears its responses, so nothing backs up.
     registry.updateSystem(system, 0.0);
     registry.events().update();
     registry.events().update();
   }
+
   g_sink = g_sink + sum;
   return best;
 }
 
-// A requester's onResponse handler over kEvents responses, one per key.
+// A requester's onResponse handler over EVENTS responses, one per key.
 double benchResponses()
 {
   Registry registry;
-  const std::vector<Entity> keys = makeEntities(registry, kEvents);
+  const std::vector<Entity> keys = makeEntities(registry, EVENTS);
   EventConsumer<AskRequest> asks;
   EventRequester<AskRequest> asker;
   uint64_t sum = 0;
@@ -925,66 +1048,74 @@ double benchResponses()
       responder.respond(ToldResponse{ask.id});
   };
   double best = std::numeric_limits<double>::max();
-  for (int round = 0; round < kRounds; ++round)
+
+  for (int round = 0; round < ROUNDS; ++round)
   {
-    for (int i = 0; i < kEvents; ++i)
+    for (int i = 0; i < EVENTS; ++i)
       asker.request(keys[static_cast<std::size_t>(i)],
                     AskRequest{static_cast<uint64_t>(i)});
+
     registry.updateSystem(server, 0.0);
     const Clock::time_point start = Clock::now();
     registry.updateSystem(client, 0.0);
-    best = std::min(best, nsSince(start) / kEvents);
+    best = std::min(best, nsSince(start) / EVENTS);
     registry.events().update();
     registry.events().update();
   }
+
   g_sink = g_sink + sum;
   return best;
 }
 
-// A worker's response to each of kEvents requests, as the worker sees it:
+// A worker's response to each of EVENTS requests, as the worker sees it:
 // ns per response.
 double benchWorkerResponse()
 {
   Registry registry;
-  const std::vector<Entity> keys = makeEntities(registry, kEvents);
+  const std::vector<Entity> keys = makeEntities(registry, EVENTS);
   EventConsumer<WorkAskRequest> asks;
   EventRequester<WorkAskRequest> asker;
   Bencher& server = registry.addSystem<Bencher>(
       [&](Bencher& self) { asks = self.consumer<WorkAskRequest>(); });
   Bencher& client = registry.addSystem<Bencher>(
       [&](Bencher& self)
-      { asker = self.requester<WorkAskRequest>().onResponse(ignored); });
+      { asker = self.requester<WorkAskRequest>().onResponse(IGNORED); });
   std::vector<Responder<WorkAskRequest>> responders;
-  responders.reserve(kEvents);
+  responders.reserve(EVENTS);
   server.body = [&](Bencher&)
   {
     for (auto [key, ask, responder] : asks.read())
       responders.push_back(std::move(responder));
   };
   double best = std::numeric_limits<double>::max();
-  for (int round = 0; round < kRounds / 4; ++round)
+
+  for (int round = 0; round < ROUNDS / 4; ++round)
   {
-    for (int i = 0; i < kEvents; ++i)
+    for (int i = 0; i < EVENTS; ++i)
       asker.request(keys[static_cast<std::size_t>(i)],
                     WorkAskRequest{static_cast<uint64_t>(i)});
+
     registry.updateSystem(server, 0.0);
     double took = 0.0;
     std::thread worker(
         [&]
         {
           const Clock::time_point start = Clock::now();
+
           for (const Responder<WorkAskRequest>& responder : responders)
             responder.respond(WorkToldResponse{responder.key().getId()});
+
           took = nsSince(start);
         });
     worker.join();
-    best = std::min(best, took / kEvents);
+    best = std::min(best, took / EVENTS);
     registry.events().takeIn();
     responders.clear();
     registry.updateSystem(client, 0.0);
     registry.events().update();
     registry.events().update();
   }
+
   return best;
 }
 
@@ -999,6 +1130,7 @@ long long benchTraffic()
     int* volatile block = new int(1);
     delete block;
   }
+
   if (metrics.allocationCount.load() == probe)
     return -1;
 
@@ -1040,8 +1172,10 @@ long long benchTraffic()
   {
     for (auto [key, ask, responder] : asks.read())
       responder.respond(ToldResponse{ask.id});
+
     for (auto [key, tick] : ticks.readLatest())
       sum += tick.id;
+
     for (auto [key, ask, responder] : workAsks.read())
       pending.push_back(std::move(responder));
   };
@@ -1053,12 +1187,16 @@ long long benchTraffic()
         for (;;)
         {
           const int now = phase.load();
+
           if (now == 2)
             return;
+
           if (now != 1)
             continue;
+
           for (const Responder<WorkAskRequest>& responder : pending)
             responder.respond(WorkToldResponse{responder.key().getId()});
+
           phase.store(0);
         }
       });
@@ -1066,10 +1204,13 @@ long long benchTraffic()
   const auto frame = [&]
   {
     events.update();
+
     for (int i = 0; i < 256; ++i)
       events.send(TickEvent{static_cast<uint64_t>(i), {}});
+
     for (int i = 0; i < 16; ++i)
       broadcast.send(TickEvent{static_cast<uint64_t>(i), {}});
+
     for (int i = 0; i < 64; ++i)
     {
       const Entity& key = keys[static_cast<std::size_t>(i)];
@@ -1079,25 +1220,34 @@ long long benchTraffic()
       events.send(FireDamageEvent{{static_cast<uint64_t>(i), 1.0f}, 2.0f, {}});
       events.send(key, KeyedTickEvent{static_cast<uint64_t>(i), {}});
     }
+
     registry.updateSystem(bencher, 0.0);
     phase.store(1);
+
     while (phase.load() != 0)
     {
     }
+
     pending.clear();
+
     for (const TickEvent& tick : first.read())
       sum += tick.id;
+
     for (const TickEvent& tick : second.read())
       sum += tick.id;
+
     events.stats(stats);
   };
+
   // Until both buffers (and the inbox's two vectors) have grown to a frame's
   // events, workers' included.
   for (int i = 0; i < 4; ++i)
     frame();
+
   const std::size_t before = metrics.allocationCount.load();
   {
     ScopedMemoryTracking track(MemoryTrackingPhase::Update);
+
     for (int i = 0; i < 1000; ++i)
       frame();
   }
@@ -1121,11 +1271,11 @@ int main()
     const double built = benchSendBuilt();
     const double send = benchSend();
     const double push = benchPushBack();
-    print("send-built", kEvents, built);
-    print("send", kEvents, send);
-    print("component-push-back", kEvents, push);
+    print("send-built", EVENTS, built);
+    print("send", EVENTS, send);
+    print("component-push-back", EVENTS, push);
     const double vector = benchVectorPush();
-    print("vector-push-back", kEvents, vector);
+    print("vector-push-back", EVENTS, vector);
     // Sending a freshly built temporary also pays for copying it through a
     // store-forwarding stall, as a plain push_back of one does, so the 4 ns
     // target is gated on events built beforehand.
@@ -1137,12 +1287,12 @@ int main()
   {
     const double one = benchRead(1);
     const double four = benchRead(4);
-    print("read-1", kEvents, one);
-    print("read-4", kEvents, four);
+    print("read-1", EVENTS, one);
+    print("read-4", EVENTS, four);
     const double vectorOne = benchVectorRead(1);
     const double vectorFour = benchVectorRead(4);
-    print("vector-read-1", kEvents, vectorOne);
-    print("vector-read-4", kEvents, vectorFour);
+    print("vector-read-1", EVENTS, vectorOne);
+    print("vector-read-4", EVENTS, vectorFour);
     // Where a plain vector's loop alone costs more, the events' may cost 10 %
     // more than it.
     gate("read, 1 consumer <= 0.5 ns, or a vector's loop + 10%",
@@ -1159,7 +1309,7 @@ int main()
     const auto [few, many] = benchKeptUpdate();
     print("update-32-idle", 32, idle);
     print("update-consumed", 10, few);
-    print("update-consumed", kEvents, many);
+    print("update-consumed", EVENTS, many);
     gate("update, 32 idle queues <= 100 ns", idle, 100.0);
     // Clearing a consumed buffer costs the same whatever it held; the margin
     // is the cache misses on the queue's consumers after 10,000 sends to each
@@ -1170,7 +1320,7 @@ int main()
     // Each event is moved at most about once as the slow consumer's are
     // compacted.
     const double slow = benchSlowReader();
-    print("update-slow-consumer", kEvents, slow);
+    print("update-slow-consumer", EVENTS, slow);
     gate("update with a slow consumer <= 0.5 ns per event sent", slow, 0.5);
   }
 
@@ -1178,10 +1328,10 @@ int main()
   {
     const auto [one, oneDrain] = benchBroadcast(1);
     const auto [four, fourDrain] = benchBroadcast(4);
-    print("broadcast-1", kEvents, one);
-    print("broadcast-4", kEvents, four);
-    print("drain", kEvents, oneDrain);
-    print("drain", 4 * kEvents, fourDrain);
+    print("broadcast-1", EVENTS, one);
+    print("broadcast-4", EVENTS, four);
+    print("drain", EVENTS, oneDrain);
+    print("drain", 4 * EVENTS, fourDrain);
     gate("EventBroadcast::send, 1 thread <= 50 ns", one, 50.0);
     gate("EventBroadcast::send, 4 contending <= 250 ns", four, 250.0);
     gate("drain <= 3 ns per event", std::max(oneDrain, fourDrain), 3.0);
@@ -1191,14 +1341,14 @@ int main()
   {
     const double many = benchKeyedSend(false);
     const double one = benchKeyedSend(true);
-    print("keyed-send", kEvents, many);
-    print("keyed-send-supersede", kEvents, one);
+    print("keyed-send", EVENTS, many);
+    print("keyed-send-supersede", EVENTS, one);
     // About 7 ns measured; the design's 8 with headroom for a loaded
     // machine.
     gate("keyed send <= 9 ns", many, 9.0);
     gate("keyed send superseding the key's last <= 9 ns", one, 9.0);
     const double request = benchRequest();
-    print("requester-request", kEvents, request);
+    print("requester-request", EVENTS, request);
     // Its ticket, found through the shorter of the requester's and the
     // entity's lists (the heads, then the ticket in its block: dependent
     // loads over a keyed send) and the fourth lane: about 14.5 ns, with
@@ -1216,13 +1366,13 @@ int main()
     const double responders = benchResponders();
     const double responses = benchResponses();
     const double worker = benchWorkerResponse();
-    print("read-loop", kEvents, loop);
-    print("on-event", kEvents, handler);
-    print("on-events", kEvents, batch);
-    print("read-latest", kEvents, readLatest);
-    print("read-responders", kEvents, responders);
-    print("on-response", kEvents, responses);
-    print("worker-response", kEvents, worker);
+    print("read-loop", EVENTS, loop);
+    print("on-event", EVENTS, handler);
+    print("on-events", EVENTS, batch);
+    print("read-latest", EVENTS, readLatest);
+    print("read-responders", EVENTS, responders);
+    print("on-response", EVENTS, responses);
+    print("worker-response", EVENTS, worker);
     // A handler is a call through std::function per event; the batch one
     // a single call for the span.
     gate("onEvent <= a read loop + 1.5 ns an event", handler, loop + 1.5);
@@ -1235,7 +1385,7 @@ int main()
         "read with responders, responding <= 24 ns an event", responders, 24.0);
     gate("onResponse <= 4 ns a response", responses, 4.0);
     const double byEntity = benchRespondByEntity();
-    print("respond-by-entity", kEvents, byEntity);
+    print("respond-by-entity", EVENTS, byEntity);
     // The key's stale check and its open tickets (one here), then a
     // response as a Responder's on this thread: about 17 ns, with headroom.
     gate("respond by entity <= 21 ns a response", byEntity, 21.0);
@@ -1250,8 +1400,8 @@ int main()
     const double none = benchRequesterFlush(false);
     const double asked = benchRequesterFlush(true);
     print("request-bytes", 20000, perRequest);
-    print("flush-no-requests", kEvents, none);
-    print("flush-with-requests", kEvents, asked);
+    print("flush-no-requests", EVENTS, none);
+    print("flush-with-requests", EVENTS, asked);
     // A ticket (32 bytes) per request, plus its share of the blocks and of
     // the entity pages.
     gate("bytes per outstanding request <= 64", perRequest, 64.0);
@@ -1292,8 +1442,8 @@ int main()
   {
     const double plain = benchFamilySend(true);
     const double family = benchFamilySend(false);
-    print("send-unused-base", kEvents, plain);
-    print("send-with-base", kEvents, family);
+    print("send-unused-base", EVENTS, plain);
+    print("send-with-base", EVENTS, family);
     // Two appends (the event, then its copy as the base) and the base's
     // consumer check.
     gate("send with one consumed base <= 2.5 x one with none",
@@ -1304,6 +1454,7 @@ int main()
   TEST("steady traffic should allocate nothing once warm")
   {
     const long long allocations = benchTraffic();
+
     if (allocations < 0)
       std::printf("  traffic: allocation tracking is off in this build (a "
                   "static build counts it)\n");

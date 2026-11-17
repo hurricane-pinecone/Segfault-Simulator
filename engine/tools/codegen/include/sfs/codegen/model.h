@@ -113,12 +113,12 @@ enum class EventKind
 /** One direct base of an event type. */
 struct EventBase
 {
+  bool operator==(const EventBase&) const = default;
+
   /** The base type as written, e.g. "DamageEvent". */
   std::string name;
   /** Whether it's a virtual base (`: virtual DamageEvent`). */
   bool isVirtual = false;
-
-  bool operator==(const EventBase&) const = default;
 };
 
 /**

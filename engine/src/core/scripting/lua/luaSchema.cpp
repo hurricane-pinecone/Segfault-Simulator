@@ -1,6 +1,11 @@
 #include "engine/core/scripting/luaSchema.h"
 
-#include <lua.hpp>
+#include "luaC.h"
+
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
+
+#include <cstddef>
 
 namespace sfs::luaschema
 {
@@ -24,8 +29,10 @@ bool numberField(lua_State* L, int table, const char* key, double& out)
 {
   lua_getfield(L, table, key);
   const bool ok = lua_isnumber(L, -1) != 0;
+
   if (ok)
     out = lua_tonumber(L, -1);
+
   lua_pop(L, 1);
   return ok;
 }
@@ -39,24 +46,29 @@ void readTable(lua_State* L, int tableIdx, void* obj, const LuaSchema& schema)
   for (const LuaField& f : schema)
   {
     double v = 0.0;
+
     switch (f.kind)
     {
     case FieldKind::Int:
       if (numberField(L, tableIdx, f.name.c_str(), v))
         *reinterpret_cast<int*>(memberAt(obj, f.offset)) = static_cast<int>(v);
+
       break;
 
     case FieldKind::Float:
       if (numberField(L, tableIdx, f.name.c_str(), v))
         *reinterpret_cast<float*>(memberAt(obj, f.offset)) =
             static_cast<float>(v);
+
       break;
 
     case FieldKind::Bool:
       lua_getfield(L, tableIdx, f.name.c_str());
+
       if (lua_isboolean(L, -1))
         *reinterpret_cast<bool*>(memberAt(obj, f.offset)) =
             lua_toboolean(L, -1) != 0;
+
       lua_pop(L, 1);
       break;
 
@@ -65,15 +77,19 @@ void readTable(lua_State* L, int tableIdx, void* obj, const LuaSchema& schema)
       double x = 0.0;
       double y = 0.0;
       lua_getfield(L, tableIdx, f.name.c_str());
+
       if (lua_istable(L, -1))
       {
         const int t = lua_gettop(L);
         auto* vec = reinterpret_cast<glm::vec2*>(memberAt(obj, f.offset));
+
         if (numberField(L, t, "x", x))
           vec->x = static_cast<float>(x);
+
         if (numberField(L, t, "y", y))
           vec->y = static_cast<float>(y);
       }
+
       lua_pop(L, 1);
       break;
     }
@@ -86,12 +102,14 @@ void readTable(lua_State* L, int tableIdx, void* obj, const LuaSchema& schema)
       // so the reader needn't know the type.
       const bool hasLo = numberField(L, tableIdx, (f.name + "Min").c_str(), lo);
       const bool hasHi = numberField(L, tableIdx, (f.name + "Max").c_str(), hi);
+
       if (hasLo && hasHi)
       {
         auto* range = reinterpret_cast<float*>(memberAt(obj, f.offset));
         range[0] = static_cast<float>(lo);
         range[1] = static_cast<float>(hi);
       }
+
       break;
     }
 
@@ -104,6 +122,7 @@ void readTable(lua_State* L, int tableIdx, void* obj, const LuaSchema& schema)
 void pushSchema(lua_State* L, const LuaSchema& schema)
 {
   lua_newtable(L);
+
   for (const LuaField& f : schema)
   {
     if (f.kind == FieldKind::Range)
@@ -124,9 +143,11 @@ void pushSchema(lua_State* L, const LuaSchema& schema)
 void pushValues(lua_State* L, const void* obj, const LuaSchema& schema)
 {
   lua_newtable(L);
+
   for (const LuaField& f : schema)
   {
     const char* at = memberAt(obj, f.offset);
+
     switch (f.kind)
     {
     case FieldKind::Int:
@@ -178,11 +199,13 @@ glm::vec3 readColor(lua_State* L, int idx)
   const auto channel = [&](const char* key, int arrayIndex) -> float
   {
     lua_getfield(L, idx, key);
+
     if (!lua_isnumber(L, -1))
     {
       lua_pop(L, 1);
       lua_rawgeti(L, idx, arrayIndex);
     }
+
     const float v = static_cast<float>(luaL_optnumber(L, -1, 0.0));
     lua_pop(L, 1);
     return v / 255.0f;

@@ -5,8 +5,10 @@
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/ecs/registry.h"
 #include "engine/core/hierarchy/hierarchy.h"
+#include "engine/core/particles/iParticleCollisionSource.h"
 #include "engine/core/util/algorithms/aabbSweep.h"
-#include "glm/glm/ext/vector_float2.hpp"
+
+#include <glm/glm/ext/vector_float2.hpp>
 
 namespace sfs
 {
@@ -14,6 +16,7 @@ namespace sfs
 ParticleHit ColliderParticleCollision::sweep(const ParticleSweep& m) const
 {
   ParticleHit best;
+
   if (!m_registry)
     return best;
 
@@ -28,6 +31,7 @@ ParticleHit ColliderParticleCollision::sweep(const ParticleSweep& m) const
 
     float t = 0.0f;
     glm::vec2 normal{0.0f, 0.0f};
+
     if (!sweepAabb(
             m.from, seg, centre - box.half, centre + box.half, t, normal))
       continue;

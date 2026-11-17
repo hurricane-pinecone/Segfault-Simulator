@@ -1,12 +1,16 @@
 #pragma once
 
+#include "engine/core/ecs/moduleSettings.h"
 #include "engine/core/particles/particleEngine.h"
+#include "engine/core/rendering/mesh.h"
+#include "engine/runtime/rendering/commands.h"
 #include "engine/runtime/rendering/modules/renderModule.h"
 #include "engine/runtime/rendering/renderContext.h"
 
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace sfs
 {
@@ -30,7 +34,7 @@ class ParticleModule : public CommandModule<RenderContext, MeshDrawCommand>,
 public:
   explicit ParticleModule(AssetStore& assets);
   ~ParticleModule() override;
-
+  void computeCommands(const RenderContext& context) override;
   /**
    * Let particles land and stain: they hit the scene's colliders (or, given
    * one, the terrain's surface) and stamp marks through `decals` (e.g. a
@@ -40,13 +44,12 @@ public:
                     const ITerrainSurfaceSource* terrain = nullptr);
 
   void init(const ModuleInit& init) override;
+  std::vector<ModuleSetting> settings(const RenderContext&) override;
   /**
    * Simulate `deltaTime` real seconds at the registry's time scale, or not at
    * all while it is paused (Registry::paused()).
    */
   void update(double deltaTime) override;
-  void computeCommands(const RenderContext& context) override;
-  std::vector<ModuleSetting> settings(const RenderContext&) override;
 
 protected:
   bool rebuildsEveryFrame() const override { return true; }

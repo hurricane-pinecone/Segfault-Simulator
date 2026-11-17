@@ -1,6 +1,5 @@
 #include "../../testHarness.h"
-
-#include <engine/core/noise/noise.h>
+#include "engine/core/noise/noise.h"
 
 #include <cmath>
 #include <utility>
@@ -17,6 +16,7 @@ int main()
     Noise b;
     b.setSeed(1234);
     b.setFrequency(0.1f);
+
     for (int i = 0; i < 20; ++i)
     {
       const float x = i * 1.3f;
@@ -32,14 +32,17 @@ int main()
     n.setFrequency(0.25f);
     const float first = n.get(0.0f, 0.0f);
     bool varied = false;
+
     for (int y = 0; y < 32; ++y)
       for (int x = 0; x < 32; ++x)
       {
         const float v = n.get(x * 0.5f, y * 0.5f);
         CHECK(v >= -1.0001f && v <= 1.0001f);
+
         if (std::fabs(v - first) > 1e-3f)
           varied = true;
       }
+
     CHECK(varied);
   }
 
@@ -52,10 +55,12 @@ int main()
     b.setSeed(2);
     b.setFrequency(0.1f);
     int differences = 0;
+
     for (int i = 0; i < 50; ++i)
       if (!testing::approx(
               a.get(i * 0.9f, i * 0.3f), b.get(i * 0.9f, i * 0.3f), 1e-4f))
         ++differences;
+
     CHECK(differences > 0);
   }
 

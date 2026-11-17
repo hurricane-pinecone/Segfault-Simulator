@@ -1,13 +1,36 @@
 #include "engine/runtime/navigation/vehicle/planner.h"
 
 #include "engine/core/util/cpuTiming.h"
+#include "engine/runtime/navigation/geometry.h"
+#include "engine/runtime/navigation/planScheduler.h"
+#include "engine/runtime/navigation/planState.h"
+#include "engine/runtime/navigation/space.h"
+#include "engine/runtime/navigation/vehicle/motions.h"
 #include "engine/runtime/navigation/vehicle/smoother.h"
 #include "engine/runtime/navigation/vehicle/speedProfile.h"
+#include "engine/runtime/navigation/vehicle/steering.h"
+#include "engine/runtime/navigation/vehicle/vehicleModel.h"
+#include "engine/runtime/navigation/vehicle/vehiclePath.h"
 #include "engine/runtime/navigation/vehicle/vehicleSearch.h"
 
+#include <glm/glm/common.hpp>
+#include <glm/glm/geometric.hpp>
+
 #include <algorithm>
+#include <any>
+#include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <optional>
+#include <ratio>
+#include <span>
+#include <string>
+#include <utility>
+#include <vector>
 
 namespace sfs::nav::vehicle
 {
@@ -65,9 +88,11 @@ void finish(const Motions& rig,
   const bool clear =
       rig.walk(q.from, driven, q.tunables.exactStep, true, w, true);
   r.stats.exactMs = msSince(te);
+
   if (!clear)
   {
     r.stats.exactMiss = true;
+
     if (w.hit)
       r.why = "the exact check touches " + std::to_string(w.hit->id) + " at (" +
               std::to_string(w.hit->point.x) + ", " +
@@ -77,6 +102,7 @@ void finish(const Motions& rig,
               ", " + std::to_string(w.end.position.y) +
               ") (swept, or the trailer's angle)";
   }
+
   const auto tp = std::chrono::steady_clock::now();
   profile(r.path, q.vehicle, q.speedCap);
   r.stats.profileMs = msSince(tp);
@@ -94,8 +120,10 @@ float priceOf(const PlanRequest& request,
   Motions::Walk w;
   w.hitch = hitch;
   w.escape = check && !rig.standsClear(from, hitch) ? kEscapeReach : 0.0f;
+
   if (!rig.walk(from, segments, request.tunables.checkStep, check, w))
     return kInf;
+
   return w.cost;
 }
 
@@ -104,6 +132,7 @@ touches(const PlanRequest& request, Pose2 pose, std::optional<float> hitch)
 {
   if (!request.space)
     return std::nullopt;
+
   return Motions(request, false).touches(pose, hitch);
 }
 
@@ -115,11 +144,14 @@ std::optional<float> touchesAlong(const PlanRequest& request,
 {
   if (!request.space || segments.empty())
     return std::nullopt;
+
   // (Either gear: the way's the game's, the check only says what it touches.)
   PlanRequest q = request;
   q.vehicle.mayReverse = true;
+
   for (VehicleModel::Mode& m : q.vehicle.modes)
     m.forwardOnly = false;
+
   const Motions rig(q, false);
   return touchesAlong(rig, from, hitch, segments, endIn, q.tunables.exactStep);
 }
@@ -133,59 +165,74 @@ std::optional<float> touchesAlong(const Motions& rig,
 {
   if (segments.empty())
     return std::nullopt;
+
   step = std::max(step, 0.01f);
   std::vector<Segment> segs(segments.begin(), segments.end());
+
   // Ending against what it's to come to: its last metres let off (cut).
   if (endIn && rig.touches(endOf(from, segs), std::nullopt))
   {
     float keep = std::max(lengthOf(segs) - kEscapeReach, 0.0f);
     std::vector<Segment> cut;
+
     for (const Segment& s : segs)
     {
       if (keep <= 0.0f)
         break;
+
       Segment c = s;
+
       if (s.length > keep)
       {
         c.length = keep;
         c.k1 = s.k0 + (s.k1 - s.k0) * keep / std::max(s.length, 1e-6f);
       }
+
       keep -= c.length;
       cut.push_back(c);
     }
+
     segs = std::move(cut);
   }
+
   Motions::Walk w;
   w.hitch = hitch;
   w.escape = rig.standsClear(from, hitch) ? 0.0f : kEscapeReach;
   w.slack = 0.06f; // (as the final check: finer than the search's)
   {
     Motions::Walk all = w;
+
     if (rig.walk(from, segs, step, true, all))
       return std::nullopt;
   }
   // Where: a step at a time, the walk carried on from one to the next.
   float s = 0.0f;
   Pose2 at = from;
+
   for (const Segment& seg : segs)
   {
     if (seg.length <= 0.0f)
       continue;
+
     const int n =
         std::max(1, static_cast<int>(std::ceil(seg.length / step - 1e-4f)));
     const float ds = seg.length / static_cast<float>(n);
+
     for (int i = 0; i < n; ++i)
     {
       const float k0 =
           seg.k0 + (seg.k1 - seg.k0) * ds * static_cast<float>(i) / seg.length;
       const Segment part{
           seg.gear, ds, k0, k0 + (seg.k1 - seg.k0) * ds / seg.length};
+
       if (!rig.walk(at, std::span<const Segment>(&part, 1), step, true, w))
         return s + ds;
+
       at = w.end;
       s += ds;
     }
   }
+
   return s; // (the whole walk failed where the steps didn't: at its end)
 }
 
@@ -218,6 +265,7 @@ PlanResult planNow(const PlanRequest& q,
                 r.stats.headingMs,
                 r.stats.wordsMs,
                 r.stats.nearMs);
+
   // (The final check, finer than the search's, found a touch the search's
   // looks missed: searched again looking as finely. Rare.)
   if (r.state == PlanState::Found && r.stats.exactMiss &&
@@ -241,6 +289,7 @@ PlanResult planNow(const PlanRequest& q,
     checked(again);
     return again;
   }
+
   checked(r);
   return r;
 }
@@ -252,14 +301,17 @@ PlanResult planOnce(const PlanRequest& q,
 {
   const auto t0 = std::chrono::steady_clock::now();
   PlanResult r;
+
   if (!q.space || (q.goals.empty() && !q.goalTest))
   {
     r.state = PlanState::Blocked;
     r.why = "no space or no goal";
     return r;
   }
+
   const Motions rig(q);
   r.stats.setupMs = msSince(t0);
+
   // A goal nothing can stand at (something stands on it) is never reached:
   // that's proof at once, not after growing every pose it could reach (a
   // parked truck's corner on another vehicle's parking spot: millions of
@@ -270,6 +322,7 @@ PlanResult planOnce(const PlanRequest& q,
     const bool startClear = rig.standsClear(q.from, q.hitch);
     std::vector<Space::Hit> onGoals;
     bool reachable = false;
+
     for (const Goal& g : q.goals)
     {
       if (!startClear &&
@@ -278,14 +331,18 @@ PlanResult planOnce(const PlanRequest& q,
         reachable = true;
         break;
       }
+
       const std::optional<Space::Hit> hit = rig.touches(g.pose, g.hitch);
+
       if (!hit)
       {
         reachable = true;
         break;
       }
+
       onGoals.push_back(*hit);
     }
+
     if (!reachable)
     {
       r.state = PlanState::Blocked;
@@ -297,14 +354,17 @@ PlanResult planOnce(const PlanRequest& q,
       return r;
     }
   }
+
   // The area searched: round the start and goals, widened if the search was
   // hemmed in only by it (no proof), up to everything there is.
   Rect area{q.from.position, q.from.position};
+
   for (const Goal& g : q.goals)
   {
     area.lo = glm::min(area.lo, g.pose.position);
     area.hi = glm::max(area.hi, g.pose.position);
   }
+
   Rect world = q.space->bounds();
   world.lo = glm::min(world.lo, area.lo) - 30.0f;
   world.hi = glm::max(world.hi, area.hi) + 30.0f;
@@ -313,6 +373,7 @@ PlanResult planOnce(const PlanRequest& q,
   // The coarse graph: the tight gaps on the way (shots aimed through them),
   // and for a long trip the corridor the search keeps to.
   std::vector<Pose2> vias;
+
   if (q.graph && !q.goals.empty())
   {
     const float half =
@@ -321,10 +382,12 @@ PlanResult planOnce(const PlanRequest& q,
     std::vector<glm::vec2> corridor =
         q.graph->route(q.from.position, q.goals[0].pose.position, half, &vias);
     r.stats.graphMs = msSince(tg);
+
     if (local.corridor.empty() && glm::length(q.goals[0].pose.position -
                                               q.from.position) > q.corridorFrom)
       local.corridor = std::move(corridor);
   }
+
   uint32_t budget = std::max<uint32_t>(q.nodeBudget, 1);
   uint32_t spent = 0;
   // A goal hemmed in where it stands (a pocket the rig can't drive out of):
@@ -342,6 +405,7 @@ PlanResult planOnce(const PlanRequest& q,
   {
     goalSideTried = true;
     uint32_t used = 0;
+
     for (const Goal& g : q.goals)
     {
       PlanRequest back = q;
@@ -352,35 +416,44 @@ PlanResult planOnce(const PlanRequest& q,
       const Motions backRig(back);
       const std::unique_ptr<ISearch> search =
           searches().make(q.search, SearchContext{backRig, a, {}, {}});
+
       if (!search)
         return false;
+
       const ISearch::Status st =
           search->run(std::max<uint32_t>(q.nodeBudget, 1));
       used += search->grown();
+
       if (st != ISearch::Status::Exhausted || search->leftArea())
         return false;
     }
+
     spent += used;
     return true;
   };
+
   for (;;)
   {
     Rect a{glm::max(area.lo - margin, world.lo),
            glm::min(area.hi + margin, world.hi)};
     const std::unique_ptr<ISearch> search =
         searches().make(q.search, SearchContext{rig, a, local.corridor, vias});
+
     if (!search)
     {
       r.state = PlanState::Partial;
       r.why = "no search named '" + q.search + "'";
       return r;
     }
+
     ISearch& s = *search;
+
     for (;;)
     {
       const ISearch::Status st = s.run(budget > spent ? budget - spent : 0);
       r.stats.nodes = spent + s.grown();
       r.stats.shots = s.shots();
+
       if (st == ISearch::Status::Found)
       {
         const Way c = s.found();
@@ -391,11 +464,13 @@ PlanResult planOnce(const PlanRequest& q,
         std::vector<Segment> segs;
         const Goal* goal =
             c.goal >= 0 ? &q.goals[static_cast<std::size_t>(c.goal)] : nullptr;
+
         if (q.smooth)
           segs = smooth(rig, c, goal);
         else
           for (const auto& l : c.links)
             segs.insert(segs.end(), l.begin(), l.end());
+
         r.stats.smoothMs = msSince(tf);
         finish(rig, q, std::move(segs), r);
         r.stats.finishMs = msSince(tf);
@@ -403,6 +478,7 @@ PlanResult planOnce(const PlanRequest& q,
         r.stats.ms = msSince(t0);
         return r;
       }
+
       if (!goalSideTried &&
           (st == ISearch::Status::Budget ||
            (st == ISearch::Status::Exhausted && s.leftArea())) &&
@@ -414,8 +490,10 @@ PlanResult planOnce(const PlanRequest& q,
         r.stats.ms = msSince(t0);
         return r;
       }
+
       if (st == ISearch::Status::Exhausted)
         break;
+
       if (st == ISearch::Status::Unknown)
       {
         // (A search that can't prove: never "no way", the clear way so far.)
@@ -424,6 +502,7 @@ PlanResult planOnce(const PlanRequest& q,
         r.stats.ms = msSince(t0);
         return r;
       }
+
       // Out of budget: the clear way so far, and on with twice the budget.
       if (q.cancel && q.cancel->load(std::memory_order_relaxed))
       {
@@ -432,23 +511,29 @@ PlanResult planOnce(const PlanRequest& q,
         r.stats.ms = msSince(t0);
         return r;
       }
+
       ++r.stats.rounds;
       {
         const Way c = s.bestSoFar();
         std::vector<Segment> segs;
+
         for (const auto& l : c.links)
           segs.insert(segs.end(), l.begin(), l.end());
+
         PlanResult partial = r;
         finish(rig, q, std::move(segs), partial);
         partial.state = PlanState::Partial;
         partial.why = "out of budget: searching on";
         partial.stats.ms = msSince(t0);
+
         if (budget >= q.budgetCap)
           return partial;
+
         if (onPartial)
           onPartial(partial);
       }
       budget = std::min(budget * 2, q.budgetCap);
+
       // (Kept to the corridor a while without getting there: the corridor's
       // no help (a gap the coarse grid let through that the rig can't
       // thread): on without it.)
@@ -456,7 +541,9 @@ PlanResult planOnce(const PlanRequest& q,
           budget > 4 * std::max<uint32_t>(q.nodeBudget, 1))
         break;
     }
+
     spent += s.grown();
+
     if (!local.corridor.empty() &&
         budget > 4 * std::max<uint32_t>(q.nodeBudget, 1))
     {
@@ -464,17 +551,22 @@ PlanResult planOnce(const PlanRequest& q,
       local.corridor.clear();
       continue;
     }
+
     const bool everything = a.lo.x <= world.lo.x && a.lo.y <= world.lo.y &&
                             a.hi.x >= world.hi.x && a.hi.y >= world.hi.y;
+
     if (s.leftArea() && (!local.corridor.empty() || !everything))
     {
       ++r.stats.widened;
+
       if (!local.corridor.empty())
         local.corridor.clear();
       else
         margin = margin * 2.5f + 10.0f;
+
       continue;
     }
+
     // Proven: every pose it could reach grown, nothing gets there.
     r.state = PlanState::Blocked;
     r.stats.nodes = spent;

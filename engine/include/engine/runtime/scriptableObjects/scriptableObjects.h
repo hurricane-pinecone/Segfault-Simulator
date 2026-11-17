@@ -2,8 +2,9 @@
 
 #include "engine/core/assets/scriptableObject.h"
 
-#include "nlohmann/json.hpp"
+#include <nlohmann/json.hpp>
 
+#include <functional>
 #include <map>
 #include <string>
 #include <string_view>
@@ -76,9 +77,11 @@ public:
   std::vector<Found<T>> all()
   {
     std::vector<Found<T>> found;
+
     for (const Entry& entry : list())
       if (const T* data = get<T>(entry.asset))
         found.push_back({entry.asset, entry.name, data});
+
     return found;
   }
 

@@ -13,10 +13,10 @@ namespace sfs
  */
 struct RenderLayerComponent
 {
-  int layer = 0;
-
   RenderLayerComponent() = default;
   explicit RenderLayerComponent(int layer) : layer(layer) {}
+
+  int layer = 0;
 };
 
 } // namespace sfs

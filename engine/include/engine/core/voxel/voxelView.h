@@ -1,7 +1,10 @@
 #pragma once
 
 #include "engine/core/voxel/blockType.h"
-#include "glm/glm/ext/vector_int3.hpp"
+
+#include <glm/glm/ext/vector_int3.hpp>
+
+#include <cstdint>
 
 namespace sfs
 {

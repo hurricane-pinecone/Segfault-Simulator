@@ -203,15 +203,16 @@ ctest --test-dir build-core --output-on-failure
 
 ### Formatting
 
-CI checks the engine's C++ with clang-format 17.0.6 against the repo's `.clang-format`. Turn on the pre-commit hook
-once per clone, and it formats the files you commit:
+CI checks the engine's C++ with clang-format 17.0.6 against the repo's `.clang-format`. The house style goes further:
+`sfs-lsp --format` runs clang-format and then the house passes ([docs/editor/sfs-lsp](docs/editor/sfs-lsp/index.md),
+"Formatting"). Turn on the pre-commit hook once per clone, and it fixes and formats the C++ you commit:
 
 ```bash
 git config core.hooksPath .githooks
 ```
 
-It installs clang-format 17.0.6 into `.git/` if that version isn't on your `PATH`. Skip it for one commit with
-`git commit --no-verify`.
+It needs sfs-lsp (on your `PATH`, named by `SFS_LSP`, or built in `build*/`), and installs clang-format 17.0.6 into
+`.git/` if that version isn't on your `PATH`. Skip it for one commit with `git commit --no-verify`.
 
 ## Licence
 

@@ -1,8 +1,10 @@
 #pragma once
 
 #include "engine/core/particles/decal.h" // DecalSurface
-#include "glm/glm/ext/vector_float2.hpp"
-#include "glm/glm/ext/vector_int2.hpp"
+
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_int2.hpp>
+
 #include <cstdint>
 
 namespace sfs
@@ -53,13 +55,13 @@ class IParticleCollisionSource
 public:
   virtual ~IParticleCollisionSource() = default;
 
-  // Sweep a particle's motion; return the first surface it crosses into this
-  // step (ParticleHit::hit == false if none).
-  virtual ParticleHit sweep(const ParticleSweep& motion) const = 0;
-
   // Surface elevation at a world position, so a burst spawned "on the ground"
   // lands at the right height. 0 where there's no heightfield (the flat path).
   virtual float groundElevation(glm::vec2 /*worldPos*/) const { return 0.0f; }
+
+  // Sweep a particle's motion; return the first surface it crosses into this
+  // step (ParticleHit::hit == false if none).
+  virtual ParticleHit sweep(const ParticleSweep& motion) const = 0;
 };
 
 } // namespace sfs

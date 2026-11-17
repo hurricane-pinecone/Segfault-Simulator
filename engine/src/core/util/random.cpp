@@ -3,6 +3,7 @@
 #include "engine/core/util/hash.h"
 
 #include <atomic>
+#include <cstdint>
 #include <random>
 
 namespace sfs::random
@@ -11,7 +12,7 @@ namespace sfs::random
 namespace
 {
 // splitmix64's increment: every state is visited once before any repeats.
-constexpr uint64_t kGamma = 0x9E3779B97F4A7C15ull;
+constexpr uint64_t GAMMA = 0x9E3779B97F4A7C15ull;
 
 std::atomic<uint64_t>& state()
 {
@@ -24,7 +25,7 @@ std::atomic<uint64_t>& state()
 
 uint64_t next()
 {
-  return mix64(state().fetch_add(kGamma, std::memory_order_relaxed) + kGamma);
+  return mix64(state().fetch_add(GAMMA, std::memory_order_relaxed) + GAMMA);
 }
 
 void seed(uint64_t seed) { state().store(seed, std::memory_order_relaxed); }

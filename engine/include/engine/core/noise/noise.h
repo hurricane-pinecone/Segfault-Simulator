@@ -15,22 +15,19 @@ public:
   };
 
   Noise();
-  ~Noise();
-
   Noise(Noise&&) noexcept;
-  Noise& operator=(Noise&&) noexcept;
-
   Noise(const Noise&) = delete;
+  ~Noise();
+  Noise& operator=(Noise&&) noexcept;
   Noise& operator=(const Noise&) = delete;
-
-  void setSeed(int seed);
-  void setFrequency(float frequency);
-  void setType(Type type);
-
   float get(float x, float y) const;
+  void setFrequency(float frequency);
+  void setSeed(int seed);
+  void setType(Type type);
 
 private:
   class Impl;
+
   std::unique_ptr<Impl> m_impl;
 };
 

@@ -1,6 +1,5 @@
 #include "../../testHarness.h"
-
-#include <engine/runtime/input/mouseInput.h>
+#include "engine/runtime/input/mouseInput.h"
 
 using namespace sfs;
 

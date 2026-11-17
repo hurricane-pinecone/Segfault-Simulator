@@ -1,6 +1,6 @@
 #pragma once
 
-#include "glm/glm/ext/vector_float3.hpp"
+#include <glm/glm/ext/vector_float3.hpp>
 
 namespace sfs
 {

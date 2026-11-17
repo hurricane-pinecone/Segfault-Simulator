@@ -1,7 +1,7 @@
 #pragma once
 
 #include "engine/core/ecs/component.h"
-#include "engine/core/ecs/entity.h"
+#include "engine/core/ecs/entityDeclaration.h"
 #include "engine/core/util/hash.h"
 
 #include <cstddef>
@@ -50,26 +50,6 @@ struct Query;
  */
 struct QuerySignature
 {
-  /** The components the entity must all have. */
-  Signature all;
-  /** The components it must have at least one of; empty: no such term. */
-  Signature any;
-  /** The components it must have none of. */
-  Signature excluding;
-
-  /**
-   * Whether an entity with these components belongs in the query's list.
-   * @param components the entity's component signature
-   * @return true if it has all of `all`, one of `any` (if any) and none of
-   *         `excluding`
-   */
-  bool matches(const Signature& components) const
-  {
-    return (components & all) == all &&
-           (any.none() || (components & any).any()) &&
-           (components & excluding).none();
-  }
-
   /**
    * The same query in its one canonical form: an Any group of one component
    * is that component in `all`, and an Any group sharing a component with
@@ -80,6 +60,7 @@ struct QuerySignature
   QuerySignature canonical() const
   {
     QuerySignature result = *this;
+
     if (result.any.count() == 1)
     {
       result.all |= result.any;
@@ -87,6 +68,7 @@ struct QuerySignature
     }
     else if ((result.any & result.all).any())
       result.any.reset();
+
     return result;
   }
 
@@ -105,7 +87,27 @@ struct QuerySignature
             (any.any() && (any & ~other.any).none()));
   }
 
+  /**
+   * Whether an entity with these components belongs in the query's list.
+   * @param components the entity's component signature
+   * @return true if it has all of `all`, one of `any` (if any) and none of
+   *         `excluding`
+   */
+  bool matches(const Signature& components) const
+  {
+    return (components & all) == all &&
+           (any.none() || (components & any).any()) &&
+           (components & excluding).none();
+  }
+
   bool operator==(const QuerySignature&) const = default;
+
+  /** The components the entity must all have. */
+  Signature all;
+  /** The components it must have at least one of; empty: no such term. */
+  Signature any;
+  /** The components it must have none of. */
+  Signature excluding;
 };
 
 /**
@@ -167,8 +169,7 @@ struct QueryTerm
                 "const goes on the components inside an sfs::Any, "
                 "sfs::Excluding or sfs::Query (sfs::Query<const A, B>), not "
                 "on the group or list");
-  /** How many Any<...> groups the term holds (a query takes one at most). */
-  static constexpr int anyGroups = 0;
+
   /**
    * Adds the term's components to the signature's all, any or excluding set.
    * @param signature the signature being built
@@ -177,6 +178,9 @@ struct QueryTerm
   {
     signature.all.set(Component<TComponent>::getId());
   }
+
+  /** How many Any<...> groups the term holds (a query takes one at most). */
+  static constexpr int anyGroups = 0;
 };
 
 template <typename... TComponents>
@@ -187,11 +191,13 @@ struct QueryTerm<Any<TComponents...>>
   static_assert(!(isQueryFilter<std::remove_cv_t<TComponents>> || ...),
                 "sfs::Any takes components, not filter groups or "
                 "sfs::Query lists");
-  static constexpr int anyGroups = 1;
+
   static void addTo(QuerySignature& signature)
   {
     (signature.any.set(Component<TComponents>::getId()), ...);
   }
+
+  static constexpr int anyGroups = 1;
 };
 
 template <typename... TComponents>
@@ -202,11 +208,13 @@ struct QueryTerm<Excluding<TComponents...>>
   static_assert(!(isQueryFilter<std::remove_cv_t<TComponents>> || ...),
                 "sfs::Excluding takes components, not filter groups or "
                 "sfs::Query lists");
-  static constexpr int anyGroups = 0;
+
   static void addTo(QuerySignature& signature)
   {
     (signature.excluding.set(Component<TComponents>::getId()), ...);
   }
+
+  static constexpr int anyGroups = 0;
 };
 
 // A Query list adds each of its terms, as if they were written out.
@@ -268,12 +276,15 @@ struct std::hash<sfs::QuerySignature>
   {
     const std::hash<sfs::Signature> hashOf;
     uint64_t hash = hashOf(signature.all);
+
     // Salted, so the same set as `any` or as `excluding` hashes apart.
     if (signature.any.any())
       hash = sfs::hashCombine(hash, sfs::mix64(hashOf(signature.any) ^ 1u));
+
     if (signature.excluding.any())
       hash =
           sfs::hashCombine(hash, sfs::mix64(hashOf(signature.excluding) ^ 2u));
+
     return static_cast<std::size_t>(hash);
   }
 };

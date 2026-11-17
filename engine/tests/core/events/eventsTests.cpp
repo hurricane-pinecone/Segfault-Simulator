@@ -1,19 +1,21 @@
 #include "../../testHarness.h"
-
-#include <engine/core/ecs/ecs.h>
-#include <engine/core/events/events.h>
-#include <engine/core/logger/logger.h>
-#include <engine/core/util/allocationMetrics.h>
-#include <engine/core/util/debugFeatures.h>
+#include "engine/core/ecs/ecs.h"
+#include "engine/core/events/eventBroadcast.h"
+#include "engine/core/events/eventQueue.h"
+#include "engine/core/events/eventRows.h"
+#include "engine/core/events/events.h"
+#include "engine/core/logger/logger.h"
+#include "engine/core/util/allocationMetrics.h"
+#include "engine/core/util/debugFeatures.h"
+#include "engine/core/util/typeKey.h"
 
 #include <atomic>
-#include <cstdint>
 #include <cstdio>
-#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 #include <vector>
 
 using namespace sfs;
@@ -112,9 +114,11 @@ struct LogCapture
   int count(Logger::Level level, std::string_view part) const
   {
     int found = 0;
+
     for (const auto& [at, line] : lines)
       if (at == level && line.find(part) != std::string::npos)
         ++found;
+
     return found;
   }
 };
@@ -123,8 +127,10 @@ struct LogCapture
 std::vector<int> readValues(EventConsumer<PingEvent>& consumer)
 {
   std::vector<int> values;
+
   for (const PingEvent& ping : consumer.read())
     values.push_back(ping.value);
+
   return values;
 }
 
@@ -150,8 +156,10 @@ int main()
     Events events;
     EventConsumer<PingEvent> consumer = events.consumer<PingEvent>();
     CHECK(consumer.read().empty());
+
     for (int i = 0; i < 5; ++i)
       events.send(PingEvent{i});
+
     CHECK((readValues(consumer) == std::vector<int>{0, 1, 2, 3, 4}));
     CHECK(consumer.read().empty());
     events.send(PingEvent{5});
@@ -193,8 +201,10 @@ int main()
     EventConsumer<PingEvent> first = events.consumer<PingEvent>();
     EventConsumer<PingEvent> second = events.consumer<PingEvent>();
     events.send(PingEvent{1});
+
     for (int i = 0; i < 5; ++i)
       events.update();
+
     CHECK(first.unread() == 1u);
     CHECK((readValues(first) == std::vector<int>{1}));
     events.update();
@@ -257,8 +267,10 @@ int main()
     const EventRange<PingEvent> range = consumer.read();
     CHECK(range.size() == 3u);
     std::vector<int> values;
+
     for (auto it = range.begin(); it != range.end(); ++it)
       values.push_back(it->value);
+
     CHECK((values == std::vector<int>{2, 3, 4}));
   }
 
@@ -269,21 +281,27 @@ int main()
     events.setMaxKept(2);
     EventConsumer<MissedEvent> consumer = events.consumer<MissedEvent>();
     LogCapture log;
+
     for (int i = 1; i <= 5; ++i)
       events.send(MissedEvent{i});
+
     events.update();
     CHECK(log.count(Logger::Level::ERROR,
                     "so its oldest 3 were dropped. They were held by a "
                     "consumer") == 1);
     std::vector<int> values;
+
     for (const MissedEvent& missed : consumer.read())
       values.push_back(missed.value);
+
     CHECK((values == std::vector<int>{4, 5}));
     std::vector<EventStats> stats;
     events.stats(stats);
     CHECK(stats.size() == 1u);
+
     if (!stats.empty())
       CHECK(stats[0].missed == 3u);
+
     CHECK(log.count(Logger::Level::WARN, "a consumer missed 3") == 1);
   }
 
@@ -319,11 +337,14 @@ int main()
   {
     Events events;
     EventConsumer<PingEvent> consumer = events.consumer<PingEvent>();
+
     for (int i = 0; i < 4; ++i)
       events.send(PingEvent{i});
+
     for (const PingEvent& ping : consumer.read())
       if (ping.value == 1)
         break;
+
     CHECK(consumer.unread() == 0u);
   }
 
@@ -345,9 +366,12 @@ int main()
     const NamedEvent copied{"copied"};
     events.send(copied);
     std::vector<std::string> texts;
+
     for (const NamedEvent& event : consumer.read())
       texts.push_back(event.text);
+
     CHECK(texts.size() == 2u);
+
     if (texts.size() == 2u)
     {
       CHECK(texts[0] == std::string(100, 'x'));
@@ -366,8 +390,10 @@ int main()
     events.update();
     events.send(FixedEvent{3});
     std::vector<int> ids;
+
     for (const FixedEvent& fixed : consumer.read())
       ids.push_back(fixed.id);
+
     CHECK((ids == std::vector<int>{1, 2, 3}));
   }
 
@@ -376,21 +402,28 @@ int main()
   {
     Events events;
     EventConsumer<WhileReadEvent> consumer = events.consumer<WhileReadEvent>();
+
     for (int i = 0; i < 3; ++i)
       events.send(WhileReadEvent{i});
+
     std::vector<int> seen;
+
     for (const WhileReadEvent& event : consumer.read())
     {
       // Enough sends to move a buffer that wasn't held still.
       for (int i = 0; i < 64; ++i)
         events.send(WhileReadEvent{100 + event.value});
+
       seen.push_back(event.value);
     }
+
     CHECK((seen == std::vector<int>{0, 1, 2}));
     CHECK(consumer.unread() == 192u);
     std::vector<int> next;
+
     for (const WhileReadEvent& event : consumer.read())
       next.push_back(event.value);
+
     CHECK(next.size() == 192u);
     CHECK((next.size() == 192u && next.front() == 100 && next[64] == 101 &&
            next.back() == 102));
@@ -407,12 +440,14 @@ int main()
     LogCapture log;
     {
       std::optional<EventRange<KeptRangeEvent>> kept(keeper.read());
+
       for (int frame = 0; frame < 5; ++frame)
       {
         events.send(KeptRangeEvent{frame + 1});
         events.send(KeptRangeEvent{frame + 1});
         events.update();
       }
+
       std::vector<EventStats> stats;
       events.stats(stats);
       // The cap covers the buffer and the lane together.
@@ -439,6 +474,7 @@ int main()
       // A member re-read each update: the new range begins before the old
       // one ends, so a range is always alive.
       EventRange<IdleRangeEvent> last = keeper.read();
+
       for (int frame = 0; frame < 20; ++frame)
       {
         events.send(IdleRangeEvent{frame});
@@ -447,6 +483,7 @@ int main()
         events.update();
         last = keeper.read();
       }
+
       std::vector<EventStats> stats;
       events.stats(stats);
       CHECK((stats.size() == 1u && stats[0].kept == 16u));
@@ -472,12 +509,14 @@ int main()
     registry.flushEntities();
     CHECK(reused.getId() == doomed.getId());
     int read = 0;
+
     for (const GoneEvent& gone : consumer.read())
     {
       ++read;
       CHECK(!gone.entity.isValid());
       CHECK(!gone.entity);
     }
+
     CHECK(read == 1);
   }
 
@@ -504,6 +543,7 @@ int main()
     asker.join();
     CHECK(log.count(Logger::Level::ERROR,
                     "::OffThreadConsumerEvent>() was called off") == 1);
+
     if (made)
       CHECK(made->unread() == 0u);
   }
@@ -526,8 +566,10 @@ int main()
             tries.fetch_add(1);
           }
         });
+
     for (int frame = 0; frame < 2000 || tries.load() < 100; ++frame)
       events.update();
+
     stop.store(true);
     worker.join();
     events.update();
@@ -556,73 +598,84 @@ int main()
   TEST("4 threads' events through broadcasts should all arrive at the next "
        "swap, each thread's in order, ahead of the main thread's")
   {
-    constexpr int kThreads = 4;
-    constexpr int kEach = 10000;
+    constexpr int THREADS = 4;
+    constexpr int EACH = 10000;
     Events events;
     EventConsumer<FromWorkerEvent> consumer =
         events.consumer<FromWorkerEvent>();
     const EventBroadcast<FromWorkerEvent> broadcast =
         events.broadcast<FromWorkerEvent>();
     std::vector<std::thread> workers;
-    std::vector<int> failed(kThreads, 0);
-    for (int t = 0; t < kThreads; ++t)
+    std::vector<int> failed(THREADS, 0);
+
+    for (int t = 0; t < THREADS; ++t)
       workers.emplace_back(
           [broadcast, t, &failed]() mutable
           {
-            for (int i = 0; i < kEach; ++i)
+            for (int i = 0; i < EACH; ++i)
               if (!broadcast.send(FromWorkerEvent{t, i}))
                 ++failed[t];
           });
+
     for (std::thread& worker : workers)
       worker.join();
+
     CHECK(consumer.unread() == 0u);
     std::vector<EventStats> stats;
     events.stats(stats);
+
     if (!stats.empty())
-      CHECK(stats[0].staged == static_cast<std::size_t>(kThreads * kEach));
+      CHECK(stats[0].staged == static_cast<std::size_t>(THREADS * EACH));
 
     events.update();
     events.send(FromWorkerEvent{-1, 0});
-    std::vector<int> next(kThreads, 0);
+    std::vector<int> next(THREADS, 0);
     bool ordered = true;
     int count = 0;
     bool mainLast = false;
+
     for (const FromWorkerEvent& event : consumer.read())
     {
       ++count;
+
       if (event.thread < 0)
       {
-        mainLast = count == kThreads * kEach + 1;
+        mainLast = count == THREADS * EACH + 1;
         continue;
       }
+
       ordered = ordered && event.index == next[event.thread];
       ++next[event.thread];
     }
-    CHECK(count == kThreads * kEach + 1);
+
+    CHECK(count == THREADS * EACH + 1);
     CHECK(ordered);
     CHECK(mainLast);
-    for (int t = 0; t < kThreads; ++t)
+
+    for (int t = 0; t < THREADS; ++t)
       CHECK(failed[t] == 0);
   }
 
   TEST("broadcasts sending while the owner swaps should lose nothing")
   {
-    constexpr int kThreads = 4;
-    constexpr int kEach = 5000;
+    constexpr int THREADS = 4;
+    constexpr int EACH = 5000;
     Events events;
     EventConsumer<FromWorkerEvent> consumer =
         events.consumer<FromWorkerEvent>();
     const EventBroadcast<FromWorkerEvent> broadcast =
         events.broadcast<FromWorkerEvent>();
     std::vector<std::thread> workers;
-    for (int t = 0; t < kThreads; ++t)
+
+    for (int t = 0; t < THREADS; ++t)
       workers.emplace_back(
           [broadcast, t]() mutable
           {
-            for (int i = 0; i < kEach; ++i)
+            for (int i = 0; i < EACH; ++i)
               broadcast.send(FromWorkerEvent{t, i});
           });
-    std::vector<int> next(kThreads, 0);
+
+    std::vector<int> next(THREADS, 0);
     bool ordered = true;
     int count = 0;
     const auto drain = [&]
@@ -634,16 +687,19 @@ int main()
         ++count;
       }
     };
-    while (count < kThreads * kEach && events.frame() < 1000000)
+
+    while (count < THREADS * EACH && events.frame() < 1000000)
     {
       events.update();
       drain();
     }
+
     for (std::thread& worker : workers)
       worker.join();
+
     events.update();
     drain();
-    CHECK(count == kThreads * kEach);
+    CHECK(count == THREADS * EACH);
     CHECK(ordered);
   }
 
@@ -672,6 +728,7 @@ int main()
     std::vector<EventStats> stats;
     events.stats(stats);
     CHECK(stats.size() == 1u);
+
     if (!stats.empty())
     {
       CHECK(stats[0].type == "{anonymous}::PingEvent" ||
@@ -698,6 +755,7 @@ int main()
     events.update();
     events.send(FloodEvent{1});
     debugFeatures::setLogEvents("");
+
     if (debugFeatures::enabled())
     {
       CHECK(log.count(Logger::Level::INFO,
@@ -707,6 +765,7 @@ int main()
                       "#1 to #1 taken in from workers "
                       "in frame 1") == 1);
     }
+
     CHECK(log.count(Logger::Level::INFO, "FloodEvent") == 0);
     debugFeatures::setLogEvents("*");
     CHECK(debugFeatures::logEvents("Anything") == debugFeatures::enabled());
@@ -719,10 +778,13 @@ int main()
     Events events;
     EventConsumer<FloodEvent> consumer = events.consumer<FloodEvent>();
     LogCapture log;
+
     for (int i = 0; i < 70000; ++i)
       events.send(FloodEvent{i});
+
     events.update();
     events.update();
+
     if (debugFeatures::enabled())
       CHECK(log.count(Logger::Level::WARN,
                       "FloodEvent events are kept, held by a consumer") == 1);
@@ -745,6 +807,7 @@ int main()
                    "nothing to count\n");
       continue;
     }
+
     Events events;
     EventConsumer<PingEvent> first = events.consumer<PingEvent>();
     EventConsumer<PingEvent> second = events.consumer<PingEvent>();
@@ -754,24 +817,32 @@ int main()
     const auto frame = [&]
     {
       events.update();
+
       for (int i = 0; i < 64; ++i)
         events.send(PingEvent{i});
+
       for (int i = 0; i < 8; ++i)
         broadcast.send(PingEvent{i});
+
       for (const PingEvent& ping : first.read())
         sum += ping.value;
+
       for (const PingEvent& ping : second.read())
         sum += ping.value;
+
       events.stats(stats);
     };
+
     // Until both buffers (and the inbox's two vectors) have grown to a frame's
     // events, workers' included.
     for (int i = 0; i < 4; ++i)
       frame();
+
     MemoryMetrics& metrics = getMemoryMetrics();
     const std::size_t before = metrics.allocationCount.load();
     {
       ScopedMemoryTracking track(MemoryTrackingPhase::Update);
+
       for (int i = 0; i < 100; ++i)
         frame();
     }

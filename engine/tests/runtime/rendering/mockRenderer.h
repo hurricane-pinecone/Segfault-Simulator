@@ -1,11 +1,21 @@
 #pragma once
 
-#include <engine/runtime/rendering/iRenderer.h>
+#include "engine/core/rendering/debugLines.h"
+#include "engine/core/rendering/grass.h"
+#include "engine/core/rendering/lighting.h"
+#include "engine/core/rendering/mesh.h"
+#include "engine/runtime/rendering/frame.h"
+#include "engine/runtime/rendering/iRenderer.h"
+#include "engine/runtime/rendering/uiDraw.h"
+
+#include <glm/glm/ext/vector_int2.hpp>
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <optional>
+#include <span>
 #include <vector>
 
 namespace sfs::testing3d
@@ -15,17 +25,63 @@ namespace sfs::testing3d
 class MockRenderer : public sfs::IRenderer
 {
 public:
-  MeshHandle createMesh(const MeshData& mesh) override
+  struct Batch
   {
-    if (mesh.empty())
-      return {};
-    live.push_back(++nextId);
-    return MeshHandle{nextId};
+    MeshHandle mesh;
+    std::size_t instances = 0;
+    std::size_t shadowInstances = 0;
+    std::vector<MaterialHandle> materials;
+    std::size_t lightShadowInstances = 0;
+    bool together = false;
+    std::size_t feedInstances = 0;
+  };
+  struct MapUpdate
+  {
+    GrassHandle grass;
+    GrassGrid grid;
+    glm::ivec2 from, to;
+    std::vector<uint8_t> shape; // coverage, length, 0, 0 a texel
+  };
+  struct TrampleUpdate
+  {
+    GrassHandle grass;
+    glm::ivec2 size;
+  };
+  struct GroundUpdate
+  {
+    GrassHandle grass;
+    GrassGrid grid;
+  };
+
+  // Camera feeds: the textures a UI showed (as the test says), and this
+  // frame's feed (none: nothing filmed).
+  void beginFeed(const FeedView& view, const UiTexture& into) override
+  {
+    feed = view;
+    feedInto = into.id;
   }
 
-  void destroyMesh(MeshHandle mesh) override
+  void beginFrame(const FrameParams& params) override
   {
-    live.erase(std::remove(live.begin(), live.end(), mesh.id), live.end());
+    frame = params;
+    lights.assign(params.pointLights.begin(), params.pointLights.end());
+    batches.clear();
+    feed.reset();
+    drawn.clear();
+    grassDrawn.clear();
+    uiDrawn.clear();
+    linesDrawn.clear();
+    ++frames;
+  }
+
+  GrassHandle createGrass(const GrassGround& ground) override
+  {
+    if (ground.empty())
+      return {};
+
+    const GrassHandle handle{++nextGrassId};
+    liveGrass[handle.id] = ground.groundTexels();
+    return handle;
   }
 
   MaterialHandle createMaterial(const MeshMaterial&) override
@@ -34,10 +90,16 @@ public:
     return MaterialHandle{nextMaterialId};
   }
 
-  void updateMaterial(MaterialHandle, const MeshMaterial&) override
+  MeshHandle createMesh(const MeshData& mesh) override
   {
-    ++materialUpdates;
+    if (mesh.empty())
+      return {};
+
+    live.push_back(++nextId);
+    return MeshHandle{nextId};
   }
+
+  void destroyGrass(GrassHandle grass) override { liveGrass.erase(grass.id); }
 
   void destroyMaterial(MaterialHandle material) override
   {
@@ -46,13 +108,46 @@ public:
         liveMaterials.end());
   }
 
-  GrassHandle createGrass(const GrassGround& ground) override
+  void destroyMesh(MeshHandle mesh) override
   {
-    if (ground.empty())
-      return {};
-    const GrassHandle handle{++nextGrassId};
-    liveGrass[handle.id] = ground.groundTexels();
-    return handle;
+    live.erase(std::remove(live.begin(), live.end(), mesh.id), live.end());
+  }
+
+  void drawGrass(const GrassBatch& batch) override
+  {
+    grassDrawn.push_back(batch);
+  }
+
+  void drawLines(std::span<const DebugLineVertex> vertices) override
+  {
+    linesDrawn.insert(linesDrawn.end(), vertices.begin(), vertices.end());
+  }
+
+  void drawMesh(const MeshBatch& batch) override
+  {
+    batches.push_back({batch.mesh,
+                       batch.instances.size(),
+                       batch.shadowInstances.size(),
+                       {batch.materials.begin(), batch.materials.end()},
+                       batch.lightShadowInstances.size(),
+                       batch.together,
+                       batch.feedInstances.size()});
+    drawn.insert(drawn.end(), batch.instances.begin(), batch.instances.end());
+  }
+
+  void drawUi(const UiDrawList& list) override
+  {
+    uiDrawn.clear();
+    list.forEach([&](const UiQuad& quad) { uiDrawn.push_back(quad); });
+  }
+
+  void endFrame() override {}
+
+  uint32_t shadowMapResolution() const override { return 1024; }
+
+  bool textureShown(uint32_t id) const override
+  {
+    return std::find(shown.begin(), shown.end(), id) != shown.end();
   }
 
   void updateGrassGround(GrassHandle grass, const GrassGround& ground) override
@@ -82,76 +177,13 @@ public:
       trampleUpdates.push_back({grass, image.size});
   }
 
-  void destroyGrass(GrassHandle grass) override { liveGrass.erase(grass.id); }
-
-  void drawGrass(const GrassBatch& batch) override
+  void updateMaterial(MaterialHandle, const MeshMaterial&) override
   {
-    grassDrawn.push_back(batch);
-  }
-
-  void drawUi(const UiDrawList& list) override
-  {
-    uiDrawn.clear();
-    list.forEach([&](const UiQuad& quad) { uiDrawn.push_back(quad); });
-  }
-
-  void drawLines(std::span<const DebugLineVertex> vertices) override
-  {
-    linesDrawn.insert(linesDrawn.end(), vertices.begin(), vertices.end());
+    ++materialUpdates;
   }
 
   glm::ivec2 viewportSize() const override { return viewport; }
-  uint32_t shadowMapResolution() const override { return 1024; }
 
-  void beginFrame(const FrameParams& params) override
-  {
-    frame = params;
-    lights.assign(params.pointLights.begin(), params.pointLights.end());
-    batches.clear();
-    feed.reset();
-    drawn.clear();
-    grassDrawn.clear();
-    uiDrawn.clear();
-    linesDrawn.clear();
-    ++frames;
-  }
-
-  void drawMesh(const MeshBatch& batch) override
-  {
-    batches.push_back({batch.mesh,
-                       batch.instances.size(),
-                       batch.shadowInstances.size(),
-                       {batch.materials.begin(), batch.materials.end()},
-                       batch.lightShadowInstances.size(),
-                       batch.together,
-                       batch.feedInstances.size()});
-    drawn.insert(drawn.end(), batch.instances.begin(), batch.instances.end());
-  }
-
-  void endFrame() override {}
-
-  struct Batch
-  {
-    MeshHandle mesh;
-    std::size_t instances = 0;
-    std::size_t shadowInstances = 0;
-    std::vector<MaterialHandle> materials;
-    std::size_t lightShadowInstances = 0;
-    bool together = false;
-    std::size_t feedInstances = 0;
-  };
-
-  // Camera feeds: the textures a UI showed (as the test says), and this
-  // frame's feed (none: nothing filmed).
-  void beginFeed(const FeedView& view, const UiTexture& into) override
-  {
-    feed = view;
-    feedInto = into.id;
-  }
-  bool textureShown(uint32_t id) const override
-  {
-    return std::find(shown.begin(), shown.end(), id) != shown.end();
-  }
   std::vector<uint32_t> shown;
   std::optional<FeedView> feed;
   uint32_t feedInto = 0;
@@ -173,26 +205,9 @@ public:
   std::vector<GrassBatch> grassDrawn;        // this frame
   std::vector<UiQuad> uiDrawn;               // this frame's UI
   std::vector<DebugLineVertex> linesDrawn;   // this frame's debug lines
-  struct MapUpdate
-  {
-    GrassHandle grass;
-    GrassGrid grid;
-    glm::ivec2 from, to;
-    std::vector<uint8_t> shape; // coverage, length, 0, 0 a texel
-  };
-  std::vector<MapUpdate> mapUpdates; // all of them
-  struct TrampleUpdate
-  {
-    GrassHandle grass;
-    glm::ivec2 size;
-  };
+  std::vector<MapUpdate> mapUpdates;         // all of them
   std::vector<TrampleUpdate> trampleUpdates; // all of them
-  struct GroundUpdate
-  {
-    GrassHandle grass;
-    GrassGrid grid;
-  };
-  std::vector<GroundUpdate> groundUpdates; // all of them
+  std::vector<GroundUpdate> groundUpdates;   // all of them
 };
 
 } // namespace sfs::testing3d

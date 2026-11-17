@@ -1,9 +1,9 @@
 #pragma once
 
-#include "glm/glm/ext/matrix_float4x4.hpp"
-#include "glm/glm/ext/vector_float2.hpp"
-#include "glm/glm/ext/vector_float3.hpp"
-#include "nlohmann/json.hpp"
+#include <glm/glm/ext/matrix_float4x4.hpp>
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
+#include <nlohmann/json.hpp>
 
 #include <cstdint>
 
@@ -41,6 +41,14 @@ namespace sfs
  */
 struct RainSettings
 {
+  /** Missing keys keep `defaults`' values. */
+  static RainSettings fromJson(const nlohmann::json& json,
+                               const RainSettings& defaults);
+  static RainSettings fromJson(const nlohmann::json& json);
+
+  bool operator==(const RainSettings&) const = default;
+  nlohmann::json toJson() const;
+
   bool enabled = true;
   float density = 1.0f;
   float length = 0.5f;
@@ -50,14 +58,6 @@ struct RainSettings
   float ripples = 1.0f;
   float veil = 1.0f;
   float drips = 1.0f;
-
-  nlohmann::json toJson() const;
-  /** Missing keys keep `defaults`' values. */
-  static RainSettings fromJson(const nlohmann::json& json,
-                               const RainSettings& defaults);
-  static RainSettings fromJson(const nlohmann::json& json);
-
-  bool operator==(const RainSettings&) const = default;
 };
 
 /** The most streaks drawn (density 1, rain 1). */
@@ -151,11 +151,11 @@ inline constexpr float kRainDriftPeriod = 840.0f;
  */
 struct RainDrift
 {
+  void advance(const glm::vec2& target, float seconds);
+
   glm::vec2 drift{0.0f};
   glm::vec2 wind{0.0f};
   bool started = false; // eased from the first wind it's given
-
-  void advance(const glm::vec2& target, float seconds);
 };
 
 } // namespace sfs

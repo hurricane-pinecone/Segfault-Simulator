@@ -28,21 +28,9 @@ template <typename T>
 class Pool : public IPool
 {
 public:
-  // Components a page: one page is allocated for each run of this many ids
-  // that has any.
-  static constexpr size_t kPageSize = 64;
-
   Pool() = default;
   virtual ~Pool() = default;
 
-  bool isEmpty() const { return m_count == 0; }
-  // One past the highest id given a component (not the number stored).
-  size_t getSize() const { return m_size; }
-  void resize(size_t size)
-  {
-    m_pages.resize((size + kPageSize - 1) / kPageSize);
-    m_size = size;
-  }
   void clear()
   {
     m_pages.clear();
@@ -50,17 +38,39 @@ public:
     m_count = 0;
   }
 
+  // The component at `index`, or null.
+  T* find(size_t index)
+  {
+    Page* page = pageOf(index);
+    std::optional<T>* slot = page ? &(*page)[index % kPageSize] : nullptr;
+    return slot && *slot ? &**slot : nullptr;
+  }
+
+  // The component at `index`, which must be there (see has()).
+  T& get(size_t index)
+  {
+    return *(*m_pages[index / kPageSize])[index % kPageSize];
+  }
+
+  // One past the highest id given a component (not the number stored).
+  size_t getSize() const { return m_size; }
+
   bool has(size_t index) const
   {
     const Page* page = pageOf(index);
     return page && (*page)[index % kPageSize].has_value();
   }
 
+  bool isEmpty() const { return m_count == 0; }
+
+  T& operator[](size_t index) { return get(index); }
+
   void remove(size_t index) override
   {
     if (Page* page = pageOf(index))
     {
       std::optional<T>& slot = (*page)[index % kPageSize];
+
       if (slot)
       {
         slot.reset();
@@ -81,36 +91,35 @@ public:
     }
   }
 
+  void resize(size_t size)
+  {
+    m_pages.resize((size + kPageSize - 1) / kPageSize);
+    m_size = size;
+  }
+
   template <typename... TArgs>
   void set(size_t index, TArgs&&... args)
   {
     const size_t page = index / kPageSize;
+
     if (page >= m_pages.size())
       m_pages.resize(page + 1);
+
     if (!m_pages[page])
       m_pages[page] = std::make_unique<Page>();
+
     std::optional<T>& slot = (*m_pages[page])[index % kPageSize];
+
     if (!slot)
       ++m_count;
+
     m_size = std::max(m_size, index + 1);
     slot.emplace(std::forward<TArgs>(args)...);
   }
 
-  // The component at `index`, which must be there (see has()).
-  T& get(size_t index)
-  {
-    return *(*m_pages[index / kPageSize])[index % kPageSize];
-  }
-
-  // The component at `index`, or null.
-  T* find(size_t index)
-  {
-    Page* page = pageOf(index);
-    std::optional<T>* slot = page ? &(*page)[index % kPageSize] : nullptr;
-    return slot && *slot ? &**slot : nullptr;
-  }
-
-  T& operator[](size_t index) { return get(index); }
+  // Components a page: one page is allocated for each run of this many ids
+  // that has any.
+  static constexpr size_t kPageSize = 64;
 
 private:
   using Page = std::array<std::optional<T>, kPageSize>;

@@ -35,14 +35,14 @@ void logStr(const char* label, WGPUStringView s)
 // them by yielding to it (the program is built with ASYNCIFY); natively, wgpu
 // answers before the request returns.
 #ifdef __EMSCRIPTEN__
-constexpr WGPUCallbackMode kRequestMode = WGPUCallbackMode_AllowSpontaneous;
+constexpr WGPUCallbackMode REQUEST_MODE = WGPUCallbackMode_AllowSpontaneous;
 void waitFor(const bool& answered)
 {
   while (!answered)
     emscripten_sleep(1);
 }
 #else
-constexpr WGPUCallbackMode kRequestMode = WGPUCallbackMode_AllowProcessEvents;
+constexpr WGPUCallbackMode REQUEST_MODE = WGPUCallbackMode_AllowProcessEvents;
 void waitFor(const bool&) {}
 #endif
 
@@ -57,9 +57,11 @@ WGPUInstance createInstance()
   WGPUInstanceExtras extras = {};
   extras.chain.sType = static_cast<WGPUSType>(WGPUSType_InstanceExtras);
   extras.backends = WGPUInstanceBackend_All;
+
   if (const char* name = std::getenv("SFS_WGPU_BACKEND"))
   {
     const std::string backend(name);
+
     if (backend == "vulkan")
       extras.backends = WGPUInstanceBackend_Vulkan;
     else if (backend == "gl")
@@ -68,8 +70,10 @@ WGPUInstance createInstance()
       extras.backends = WGPUInstanceBackend_Metal;
     else if (backend == "dx12")
       extras.backends = WGPUInstanceBackend_DX12;
+
     LOG_INFO("WebGPU backends limited to " + backend);
   }
+
   WGPUInstanceDescriptor desc = {};
   desc.nextInChain = &extras.chain;
   return wgpuCreateInstance(&desc);
@@ -87,7 +91,7 @@ WGPUAdapter requestAdapterSync(WGPUInstance instance, WGPUSurface surface)
   opts.compatibleSurface = surface;
   opts.powerPreference = WGPUPowerPreference_HighPerformance;
   WGPURequestAdapterCallbackInfo cb = {};
-  cb.mode = kRequestMode;
+  cb.mode = REQUEST_MODE;
   cb.callback = [](WGPURequestAdapterStatus status,
                    WGPUAdapter adapter,
                    WGPUStringView message,
@@ -95,10 +99,12 @@ WGPUAdapter requestAdapterSync(WGPUInstance instance, WGPUSurface surface)
                    void*)
   {
     Out& out = *static_cast<Out*>(ud1);
+
     if (status == WGPURequestAdapterStatus_Success)
       out.adapter = adapter;
     else
       logStr("requestAdapter failed", message);
+
     out.answered = true;
   };
   cb.userdata1 = &out;
@@ -121,11 +127,13 @@ WGPUDevice requestDeviceSync(WGPUAdapter adapter,
   // binding default) are allowed.
   WGPULimits limits = {};
   wgpuAdapterGetLimits(adapter, &limits);
+
   // An adapter with no buffer-size cap (e.g. Vulkan) reports UINT64_MAX, which
   // is also WGPU_LIMIT_U64_UNDEFINED: passed back as-is it reads as "unset" and
   // the device silently gets the 256MB default.
   if (limits.maxBufferSize == WGPU_LIMIT_U64_UNDEFINED)
     limits.maxBufferSize = WGPU_LIMIT_U64_UNDEFINED - 1;
+
   WGPUAdapterInfo info = {};
   wgpuAdapterGetInfo(adapter, &info);
   LOG_INFO("WebGPU adapter: " + wgpu::str(info.device) +
@@ -140,6 +148,7 @@ WGPUDevice requestDeviceSync(WGPUAdapter adapter,
   *hasTimestamps =
       wgpuAdapterHasFeature(adapter, WGPUFeatureName_TimestampQuery);
   *hasPassTimestamps = false;
+
   if (*hasTimestamps)
   {
     desc.requiredFeatureCount = 1;
@@ -198,11 +207,12 @@ WGPUDevice requestDeviceSync(WGPUAdapter adapter,
         (device && device->releasing.load()))
       return;
     logStr("The WebGPU device was lost", message);
+
     if (device)
       device->lost.store(true);
   };
   WGPURequestDeviceCallbackInfo cb = {};
-  cb.mode = kRequestMode;
+  cb.mode = REQUEST_MODE;
   cb.callback = [](WGPURequestDeviceStatus status,
                    WGPUDevice device,
                    WGPUStringView message,
@@ -210,10 +220,12 @@ WGPUDevice requestDeviceSync(WGPUAdapter adapter,
                    void*)
   {
     Out& out = *static_cast<Out*>(ud1);
+
     if (status == WGPURequestDeviceStatus_Success)
       out.device = device;
     else
       logStr("requestDevice failed", message);
+
     out.answered = true;
   };
   cb.userdata1 = &out;
@@ -258,6 +270,7 @@ WGPUSurface createSurface(WGPUInstance instance, SDL_Window* window)
 bool WebGpuContext::init(SDL_Window* window)
 {
   m_instance = createInstance();
+
   if (!m_instance)
   {
     LOG_ERROR("Failed to create WebGPU instance");
@@ -266,6 +279,7 @@ bool WebGpuContext::init(SDL_Window* window)
 
   m_surface = createSurface(m_instance, window);
   m_adapter = requestAdapterSync(m_instance, m_surface);
+
   if (m_adapter)
   {
     WGPUAdapterInfo info = {};
@@ -274,6 +288,7 @@ bool WebGpuContext::init(SDL_Window* window)
                  info.backendType == WGPUBackendType_OpenGLES;
     wgpuAdapterInfoFreeMembers(info);
   }
+
   if (!m_adapter)
   {
     LOG_ERROR("Failed to acquire WebGPU adapter");
@@ -283,11 +298,13 @@ bool WebGpuContext::init(SDL_Window* window)
   m_deviceState = new WebGpuDeviceState; // kept: see m_deviceState
   m_device = requestDeviceSync(
       m_adapter, &m_hasTimestamps, &m_hasPassTimestamps, m_deviceState);
+
   if (!m_device)
   {
     LOG_ERROR("Failed to acquire WebGPU device");
     return false;
   }
+
   m_queue = wgpuDeviceGetQueue(m_device);
   readLimits();
 
@@ -301,6 +318,7 @@ bool WebGpuContext::init(SDL_Window* window)
   // timing reflects real GPU throughput (Mailbox = no tearing; else
   // Immediate); fall back to vsync (Fifo, always available).
   m_unsynced = WGPUPresentMode_Fifo;
+
   for (size_t i = 0; i < caps.presentModeCount; ++i)
   {
     if (caps.presentModes[i] == WGPUPresentMode_Mailbox)
@@ -308,9 +326,11 @@ bool WebGpuContext::init(SDL_Window* window)
       m_unsynced = WGPUPresentMode_Mailbox;
       break;
     }
+
     if (caps.presentModes[i] == WGPUPresentMode_Immediate)
       m_unsynced = WGPUPresentMode_Immediate;
   }
+
   if (const char* forced = std::getenv("SFS_PRESENT_MODE"))
   {
     const std::string name = forced;
@@ -319,9 +339,11 @@ bool WebGpuContext::init(SDL_Window* window)
                                    : name == "mailbox" ? WGPUPresentMode_Mailbox
                                    : name == "fifo"    ? WGPUPresentMode_Fifo
                                                     : WGPUPresentMode_Undefined;
+
     for (size_t i = 0; i < caps.presentModeCount; ++i)
       if (wanted != WGPUPresentMode_Undefined && caps.presentModes[i] == wanted)
         m_forcedPresent = wanted;
+
     if (m_forcedPresent != WGPUPresentMode_Undefined)
       LOG_INFO("Presenting with " + name + " (SFS_PRESENT_MODE)");
     else
@@ -329,6 +351,7 @@ bool WebGpuContext::init(SDL_Window* window)
                ": not a present mode this window has (immediate, mailbox, "
                "fifo); ignored");
   }
+
   m_present = mainPresentMode();
   wgpuSurfaceCapabilitiesFreeMembers(caps);
 
@@ -338,6 +361,7 @@ bool WebGpuContext::init(SDL_Window* window)
 void WebGpuContext::readLimits()
 {
   WGPULimits limits = {};
+
   if (wgpuDeviceGetLimits(m_device, &limits) == WGPUStatus_Success &&
       limits.maxTextureDimension2D > 0 &&
       limits.maxTextureDimension2D != WGPU_LIMIT_U32_UNDEFINED)
@@ -348,9 +372,12 @@ void WebGpuContext::setVsync(bool vsync)
 {
   m_vsync = vsync;
   const WGPUPresentMode present = mainPresentMode();
+
   if (present == m_present)
     return;
+
   m_present = present;
+
   if (m_surface && m_width > 0 && m_height > 0)
     configure(m_width, m_height);
 }
@@ -359,6 +386,7 @@ WGPUPresentMode WebGpuContext::mainPresentMode() const
 {
   if (m_forcedPresent != WGPUPresentMode_Undefined)
     return m_forcedPresent;
+
   return m_vsync ? WGPUPresentMode_Fifo : m_unsynced;
 }
 
@@ -370,12 +398,15 @@ bool WebGpuContext::deviceLost() const
 bool WebGpuContext::initHeadless(WGPUTextureFormat format)
 {
   m_instance = createInstance();
+
   if (!m_instance)
   {
     LOG_ERROR("Failed to create WebGPU instance");
     return false;
   }
+
   m_adapter = requestAdapterSync(m_instance, nullptr);
+
   if (m_adapter)
   {
     WGPUAdapterInfo info = {};
@@ -384,19 +415,23 @@ bool WebGpuContext::initHeadless(WGPUTextureFormat format)
                  info.backendType == WGPUBackendType_OpenGLES;
     wgpuAdapterInfoFreeMembers(info);
   }
+
   if (!m_adapter)
   {
     LOG_ERROR("Failed to acquire WebGPU adapter");
     return false;
   }
+
   m_deviceState = new WebGpuDeviceState; // kept: see m_deviceState
   m_device = requestDeviceSync(
       m_adapter, &m_hasTimestamps, &m_hasPassTimestamps, m_deviceState);
+
   if (!m_device)
   {
     LOG_ERROR("Failed to acquire WebGPU device");
     return false;
   }
+
   m_queue = wgpuDeviceGetQueue(m_device);
   readLimits();
   m_format = format;
@@ -408,6 +443,7 @@ void WebGpuContext::configure(int width, int height)
 {
   if (!m_surface || width <= 0 || height <= 0)
     return;
+
   m_width = width;
   m_height = height;
   configureSurface(m_surface, width, height);
@@ -420,16 +456,19 @@ void WebGpuContext::configureSurface(WGPUSurface surface,
   // A surface of no size can't be configured (a minimized window's).
   if (!surface || !m_device || width <= 0 || height <= 0)
     return;
+
   WGPUSurfaceConfiguration cfg = {};
   cfg.device = m_device;
   cfg.format = m_surfaceFormat;
   cfg.usage = WGPUTextureUsage_RenderAttachment;
+
   // Drawn through sRGB views of it where it isn't sRGB itself.
   if (m_format != m_surfaceFormat)
   {
     cfg.viewFormatCount = 1;
     cfg.viewFormats = &m_format;
   }
+
   cfg.width = static_cast<uint32_t>(width);
   cfg.height = static_cast<uint32_t>(height);
   cfg.presentMode = surface == m_surface ? m_present : m_unsynced;
@@ -474,7 +513,7 @@ std::optional<std::string> WebGpuContext::endValidation() const
     bool answered = false;
   } out;
   WGPUPopErrorScopeCallbackInfo cb = {};
-  cb.mode = kRequestMode;
+  cb.mode = REQUEST_MODE;
   cb.callback = [](WGPUPopErrorScopeStatus status,
                    WGPUErrorType type,
                    WGPUStringView message,
@@ -482,9 +521,11 @@ std::optional<std::string> WebGpuContext::endValidation() const
                    void*)
   {
     Out& out = *static_cast<Out*>(ud1);
+
     if (status == WGPUPopErrorScopeStatus_Success &&
         type != WGPUErrorType_NoError)
       out.error = wgpu::str(message);
+
     out.answered = true;
   };
   cb.userdata1 = &out;
@@ -497,20 +538,27 @@ void WebGpuContext::release()
 {
   if (m_deviceState)
     m_deviceState->releasing.store(true);
+
   if (m_surface && m_width > 0)
     wgpuSurfaceUnconfigure(m_surface);
+
   // Device last but one (what was made on it holds references to it), then
   // what it came from.
   if (m_queue)
     wgpuQueueRelease(m_queue);
+
   if (m_device)
     wgpuDeviceRelease(m_device);
+
   if (m_adapter)
     wgpuAdapterRelease(m_adapter);
+
   if (m_surface)
     wgpuSurfaceRelease(m_surface);
+
   if (m_instance)
     wgpuInstanceRelease(m_instance);
+
   m_queue = nullptr;
   m_device = nullptr;
   m_adapter = nullptr;

@@ -1,14 +1,25 @@
 #include "../testHarness.h"
+#include "document.h"
 #include "lspFeatures.h"
 #include "lspTestSupport.h"
+#include "projectIndex.h"
 #include "server.h"
+#include "sfs/codegen/model.h"
+#include "sfs/codegen/parser.h"
+#include "sfs/codegen/rules.h"
 
-#include <sfs/codegen/parser.h>
+#include <nlohmann/json.hpp>
 
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
+#include <filesystem>
 #include <fstream>
+#include <memory>
 #include <sstream>
+#include <string>
+#include <utility>
+#include <vector>
 
 using namespace sfs::lsp;
 using nlohmann::json;
@@ -64,6 +75,8 @@ struct Project
   ~Project() { std::filesystem::remove_all(root); }
 };
 
+const std::string kQueryHead = "using namespace sfs;\nvoid f()\n{\n";
+
 // The fix of the first diagnostic of `rule`, applied, and the result analysed
 // again.
 std::unique_ptr<Document> fixed(const Document& document,
@@ -71,8 +84,10 @@ std::unique_ptr<Document> fixed(const Document& document,
                                 const ProjectIndex* index = nullptr)
 {
   const sfs::codegen::Diagnostic* diagnostic = lspTest::first(document, rule);
+
   if (!diagnostic)
     return lspTest::analysed(document.text, document.path, index);
+
   return lspTest::analysed(lspTest::applyEdits(document.text, diagnostic->fix),
                            document.path,
                            index);
@@ -151,8 +166,6 @@ std::vector<std::pair<std::string, std::string>> everyRuleFixtures()
        "inline int g = sfs::detail::EventHost::kind;\n"},
   };
 }
-
-const std::string kQueryHead = "using namespace sfs;\nvoid f()\n{\n";
 
 } // namespace
 
@@ -310,8 +323,10 @@ int main()
   TEST("the walk should survive code nested tens of thousands deep")
   {
     std::string sum = "int f() { return 1";
+
     for (int i = 0; i < 60000; ++i)
       sum += "+1";
+
     sum += "; }\n";
     const auto deepSum = lspTest::analysed(sum, "/t/deep.cpp");
     CHECK(deepSum->diagnostics.empty());
@@ -411,6 +426,7 @@ int main()
     bool local = false;
     bool observed = false;
     bool update = false;
+
     for (const auto& d : doc->diagnostics)
     {
       local = local ||
@@ -426,6 +442,7 @@ int main()
                           d.message.starts_with("This consumer<Moved>() is "
                                                 "made in update()"));
     }
+
     CHECK(local);
     CHECK(observed);
     CHECK(update);
@@ -478,6 +495,7 @@ int main()
               "when onCreate() returns and receives nothing. Assign it to a "
               "data member of the object.");
     bool update = false;
+
     for (const auto& d : doc->diagnostics)
       update = update ||
                (d.range.startRow == 12u &&
@@ -485,6 +503,7 @@ int main()
                              "outside onCreate(), so it has no owner to run "
                              "its handlers. Make it in onCreate() and keep it "
                              "as a member.");
+
     CHECK(update);
   }
 
@@ -658,6 +677,7 @@ int main()
     std::size_t handlers = 0;
     bool destructor = false;
     bool trigger = false;
+
     for (const auto& d : doc->diagnostics)
     {
       handlers +=
@@ -669,6 +689,7 @@ int main()
                                           "onCreate(), so it has no owner") !=
                                std::string::npos;
     }
+
     CHECK(handlers == 2u);
     CHECK(destructor);
     CHECK(trigger);
@@ -696,11 +717,13 @@ int main()
         "                    { m_moved = consumer<Moved>(); });\n"
         "  }\n};\n");
     std::size_t handlers = 0;
+
     for (const auto& d : doc->diagnostics)
       handlers +=
           d.rule == RuleId::EventHandleOutsideCreate &&
           d.message.find("is made in an event handler, outside "
                          "create(), so it's refused") != std::string::npos;
+
     CHECK(handlers == 4u);
   }
 
@@ -846,15 +869,19 @@ int main()
     // and a base written three times.
     const auto start = std::chrono::steady_clock::now();
     std::string dense;
+
     for (int i = 0; i < 4; ++i)
     {
       dense += "class D" + std::to_string(i) + " :";
+
       for (int j = 0, n = 0; j < 4; ++j)
         if (j != i)
           dense +=
               std::string(n++ ? "," : "") + " public D" + std::to_string(j);
+
       dense += " { void onUpdate(double) override; };\n";
     }
+
     dense += "void D0::onUpdate(double) { m_x = "
              "scene().events().consumer<Moved>(); }\n";
     CHECK(lspTest::count(*lspTest::analysed(dense),
@@ -984,8 +1011,10 @@ int main()
                             project.root / "scripts/systems/Sender.cpp",
                             &project.index);
       const auto* found = lspTest::first(*doc, RuleId::ResponseSentTwice);
+
       if (!found)
         return std::string();
+
       const std::size_t by = found->message.find(", and ");
       const std::size_t end = found->message.find(" already");
       return found->message.substr(by + 6, end - by - 6);
@@ -1022,10 +1051,13 @@ int main()
     std::filesystem::remove_all(root);
     lspTest::writeFile(root / "project.sfsproj", "{}");
     std::string events = "#pragma once\n";
+
     for (int i = 0; i <= 400; ++i)
       events += "struct [[sfs::event_response]] R" + std::to_string(i) +
                 "Response {};\n";
+
     lspTest::writeFile(root / "scripts/events/Responses.h", events);
+
     for (int i = 0; i < 400; ++i)
     {
       const std::string n = std::to_string(i);
@@ -1042,6 +1074,7 @@ int main()
                              "Response{}); r.respond(R" + next +
                              "Response{}); }\n");
     }
+
     const std::filesystem::path output = root / "out.txt";
     const auto start = std::chrono::steady_clock::now();
     // Warnings only: it exits with 0.
@@ -1056,16 +1089,20 @@ int main()
     std::stringstream printed;
     printed << in.rdbuf();
     std::size_t reported = 0;
+
     for (std::size_t at = printed.str().find("[response-sent-twice]");
          at != std::string::npos;
          at = printed.str().find("[response-sent-twice]", at + 1))
       ++reported;
+
     // Each S<n> sends R<n+1>, which S<n+1> sends too (S0's R0 and the last
     // R400 have one sender each).
     CHECK(reported == 1596u);
     CHECK(seconds < 15.0);
+
     if (seconds >= 15.0)
       std::printf("      --check took %.1f s\n", seconds);
+
     std::filesystem::remove_all(root);
   }
 
@@ -1077,11 +1114,13 @@ int main()
         std::filesystem::temp_directory_path() / "sfsLspManyFiles";
     std::filesystem::remove_all(root);
     lspTest::writeFile(root / "project.sfsproj", "{}");
+
     for (int i = 0; i < 4000; ++i)
       lspTest::writeFile(
           root / ("scripts/jobs/Job" + std::to_string(i) + ".cpp"),
           "void Job::run() { r.respond(A{}); r.respond(B{}); "
           "r.progress(A{}); r.respond(C{}); }\n");
+
     ProjectIndex index;
     index.start(root);
     const auto start = std::chrono::steady_clock::now();
@@ -1090,8 +1129,10 @@ int main()
         std::chrono::duration<double>(std::chrono::steady_clock::now() - start)
             .count();
     CHECK(seconds < 8.0);
+
     if (seconds >= 8.0)
       std::printf("      indexing took %.1f s\n", seconds);
+
     std::filesystem::remove_all(root);
   }
 
@@ -1109,8 +1150,10 @@ int main()
     const auto sendsFrom = [&](std::string_view system)
     {
       std::size_t n = 0;
+
       for (const auto& send : project.index.sendersOf("PathFoundResponse"))
         n += send.system == system;
+
       return n;
     };
     CHECK(sendsFrom("RouteSystem") == 1u);
@@ -1172,6 +1215,7 @@ int main()
     bool requester = false;
     bool broadcast = false;
     bool responder = false;
+
     for (const auto& d : doc->diagnostics)
     {
       requester = requester ||
@@ -1183,6 +1227,7 @@ int main()
       responder = responder || d.message.starts_with(
                                    "The component Asked holds a responder");
     }
+
     CHECK(requester);
     CHECK(broadcast);
     CHECK(responder);
@@ -1286,8 +1331,10 @@ int main()
     const auto after = fixed(*doc, RuleId::UnknownAttribute);
     CHECK(after->text.starts_with("[[nodiscard]] int f();"));
     std::vector<sfs::codegen::TextEdit> all;
+
     for (const auto& d : doc->diagnostics)
       all.insert(all.end(), d.fix.begin(), d.fix.end());
+
     const std::string text = lspTest::applyEdits(doc->text, all);
     CHECK(text.find("[[sfs::hide]] int a; [[sfs::hide]] int b;") !=
           std::string::npos);
@@ -1335,8 +1382,10 @@ int main()
         "/t/f.h");
     const auto* diagnostic = lspTest::first(*doc, RuleId::SingleAny);
     CHECK(diagnostic != nullptr);
+
     if (!diagnostic)
       continue;
+
     const std::string onLine = lspTest::applyEdits(
         doc->text, ignoreEdits(*doc, RuleId::SingleAny, 3, false));
     CHECK(
@@ -1468,10 +1517,12 @@ int main()
               "reaches the registry. Do work over lists of entities in a "
               "System.");
     std::size_t lists = 0;
+
     for (const auto& diagnostic : doc->diagnostics)
       if (diagnostic.message.find("never reaches a list of entities") !=
           std::string::npos)
         ++lists;
+
     CHECK(lists == 1u);
   }
 
@@ -1654,9 +1705,11 @@ int main()
         "registry->getComponent<Motion>(e) : nullptr;\n}\n");
     CHECK(lspTest::count(*ternary, RuleId::HasThenGet) == 2u);
     std::vector<sfs::codegen::TextEdit> both;
+
     for (const auto& d : ternary->diagnostics)
       if (d.rule == RuleId::HasThenGet)
         both.insert(both.end(), d.fix.begin(), d.fix.end());
+
     CHECK(lspTest::applyEdits(ternary->text, both) ==
           "void f(sfs::Entity e)\n{\n  Motion* m = e.getComponent<Motion>();\n"
           "  Motion* n = registry->getComponent<Motion>(e);\n}\n");
@@ -1668,9 +1721,11 @@ int main()
         "  if ((e.isValid() && e.hasComponent<Fault>()))\n"
         "    e.getComponent<Fault>().on = true;\n}\n");
     std::vector<sfs::codegen::TextEdit> each;
+
     for (const auto& d : valid->diagnostics)
       if (d.rule == RuleId::HasThenGet)
         each.insert(each.end(), d.fix.begin(), d.fix.end());
+
     CHECK(lspTest::applyEdits(valid->text, each) ==
           "void f(sfs::Entity e)\n{\n  Motion* m = e.getComponent<Motion>();\n"
           "  if (Fault* fault = e.getComponent<Fault>())\n"
@@ -1733,8 +1788,10 @@ int main()
         "(!x.isAlive()) {}\n}\n");
     CHECK(lspTest::count(*doc, RuleId::IsAlive) == 5u);
     std::vector<sfs::codegen::TextEdit> all;
+
     for (const auto& d : doc->diagnostics)
       all.insert(all.end(), d.fix.begin(), d.fix.end());
+
     const std::string text = lspTest::applyEdits(doc->text, all);
     CHECK(text.find("if (e.isValid()) {}") != std::string::npos);
     CHECK(text.find("if (!h.target.isValid()) {}") != std::string::npos);
@@ -1755,9 +1812,11 @@ int main()
         "  bool fine = !y.isValid() || y.isAlive();\n}\n");
     CHECK(lspTest::count(*chain, RuleId::IsAlive) == 2u);
     std::vector<sfs::codegen::TextEdit> all;
+
     for (const auto& d : chain->diagnostics)
       if (d.rule == RuleId::IsAlive)
         all.insert(all.end(), d.fix.begin(), d.fix.end());
+
     CHECK(lspTest::applyEdits(chain->text, all) ==
           "void f(sfs::Entity x, sfs::Entity y)\n{\n"
           "  if (x != sfs::Entity{} && ready && !x.isValid()) gone(x);\n"
@@ -1769,6 +1828,7 @@ int main()
         "  if (x.isValid())\n    if (!x.isAlive()) gone(x);\n"
         "  if (!y.isValid())\n    return;\n  if (!y.isAlive()) gone(y);\n}\n");
     CHECK(lspTest::count(*guarded, RuleId::IsAlive) == 2u);
+
     for (const auto& d : guarded->diagnostics)
       if (d.rule == RuleId::IsAlive)
         CHECK(d.fix.empty() &&
@@ -1885,9 +1945,11 @@ int main()
         "  for (const sfs::Entity& v : registry->query<A>())\n"
         "    v.getComponent<A>().x = a;\n}\n");
     CHECK(lspTest::count(*doc, RuleId::RowLookup) == 4u);
+
     for (const auto& d : doc->diagnostics)
       if (d.rule == RuleId::RowLookup)
         CHECK(d.fix.empty());
+
     // A copy of a list isn't its rows.
     CHECK(lspTest::count(*lspTest::analysed(
                              "void f()\n{\n  for (sfs::Entity v : "
@@ -1986,10 +2048,13 @@ int main()
         "      if (const Ticket* ticket = e.getComponent<Ticket>())\n"
         "        show(ticket);\n  }\n};\n");
     CHECK(lspTest::count(*reported, RuleId::FilterInLoop) == 6u);
+
     for (const auto& d : reported->diagnostics)
       if (d.rule == RuleId::FilterInLoop)
         CHECK(d.fix.empty());
+
     bool systemMessage = false;
+
     for (const auto& d : reported->diagnostics)
       systemMessage =
           systemMessage ||
@@ -1997,6 +2062,7 @@ int main()
                        "skips those without a Ticket. Go through a query "
                        "that also lists Ticket so it only visits the "
                        "entities that have one.";
+
     CHECK(systemMessage);
 
     // Reported on the loop's `for`, so a comment beside or above the loop
@@ -2008,6 +2074,7 @@ int main()
         lspTest::first(*lspTest::analysed("void f()\n{\n" + loop + "\n" + body),
                        RuleId::FilterInLoop)
             ->range.startRow == 2u);
+
     for (const std::string& hidden :
          {"void f()\n{\n" + loop + " // sfs-ignore(filter-in-loop)\n" + body,
           "void f()\n{\n  // sfs-ignore-next-line(filter-in-loop)\n" + loop +
@@ -2127,14 +2194,17 @@ int main()
           "This loop unpacks each row's entity but never uses it. Loop over "
           "the components alone, with `.components()`.");
     std::string text = several->text;
+
     for (int i = 0; i < 3; ++i)
     {
       const auto now = lspTest::analysed(text);
       const auto* next = lspTest::first(*now, RuleId::UnusedRowEntity);
       CHECK(next && !next->fix.empty());
+
       if (next)
         text = lspTest::applyEdits(text, next->fix);
     }
+
     CHECK(text ==
           "void f()\n{\n"
           "  for (const auto& [motion, command] :\n"
@@ -2182,11 +2252,13 @@ int main()
                                             "registry->query<A>())\n" +
                                             body + "}\n"),
                          RuleId::UnusedRowEntity) == 0u);
+
     // A member named like the entity isn't it.
     CHECK(lspTest::count(
               *lspTest::analysed("void f()\n{\n  for (auto [e, a] : "
                                  "registry->query<A>())\n    a.e = 1;\n}\n"),
               RuleId::UnusedRowEntity) == 1u);
+
     // Not unpacked, not a row, or not the row's shape.
     for (const std::string loop :
          {"  for (const sfs::Entity& e : registry->query<A>())\n",
@@ -2200,6 +2272,7 @@ int main()
     // Reported on the entity's name, so a comment beside or above hides it.
     const std::string loop = "  for (auto [e, a] : registry->query<A>())";
     const std::string body = "    a.n = 1;\n}\n";
+
     for (const std::string& hidden :
          {"void f()\n{\n" + loop + " // sfs-ignore(unused-row-entity)\n" + body,
           "void f()\n{\n  // sfs-ignore-next-line(unused-row-entity): the "
@@ -2237,12 +2310,15 @@ int main()
         "    total += leaf.size;\n}\n");
     CHECK(lspTest::count(*constant, RuleId::RowComponentCopy) == 2u);
     std::string text = constant->text;
+
     for (int i = 0; i < 2; ++i)
     {
       const auto now = lspTest::analysed(text);
+
       if (const auto* next = lspTest::first(*now, RuleId::RowComponentCopy))
         text = lspTest::applyEdits(text, next->fix);
     }
+
     CHECK(text ==
           "void f(sfs::Entity root)\n{\n"
           "  for (const Leaf& leaf : sfs::hierarchy::childrenOf<Leaf>(root))\n"
@@ -2312,8 +2388,10 @@ int main()
                           "    v.getComponent<Tool>()->x = 1;\n}\n");
     CHECK(lspTest::count(*doc, RuleId::FilterInLoop) == 1u);
     CHECK(lspTest::count(*doc, RuleId::RowLookup) == 1u);
+
     for (const auto& d : doc->diagnostics)
       CHECK(d.fix.empty());
+
     // A free helper, outside any class.
     CHECK(lspTest::count(
               *lspTest::analysed(
@@ -2389,6 +2467,7 @@ int main()
         "    use(named->name);\n  }\n}\n");
     CHECK(lspTest::count(*skipping, RuleId::FilterInLoop) == 2u);
     bool queryMessage = false;
+
     for (const auto& d : skipping->diagnostics)
       queryMessage =
           queryMessage ||
@@ -2397,6 +2476,7 @@ int main()
                         "skips those without a Name or a Transform. Add Name "
                         "and Transform to the query so it only visits the "
                         "entities that have them.");
+
     CHECK(queryMessage);
 
     // Not a filter: something before the test, a return or break instead of
@@ -2599,6 +2679,7 @@ int main()
         "    if (e.hasComponent<Tag>())\n"
         "      show(\"one \\\n      two\");\n}\n");
     CHECK(lspTest::count(*verbatim, RuleId::FilterInLoop) == 2u);
+
     for (const auto& d : verbatim->diagnostics)
       if (d.rule == RuleId::FilterInLoop)
         CHECK(d.fix.empty());
@@ -2641,6 +2722,7 @@ int main()
                     "      if (e.hasComponent<Tag>())\n        count(e);\n"
                     "  }\n};\n"),
                 RuleId::FilterInLoop) == 0u);
+
     // Every prefix of these, and each with one character gone, as an editor
     // sees them while they're typed.
     const std::vector<std::string> sources = {
@@ -2686,16 +2768,20 @@ int main()
         "    auto a = consumer();\n"
         "    auto b = requester<>();\n  }\n};\n"};
     std::size_t runs = 0;
+
     for (const std::string& source : sources)
       for (std::size_t cut = 0; cut <= source.size(); ++cut)
       {
         lspTest::analysed(source.substr(0, cut));
         std::string missing = source;
+
         if (cut < source.size())
           missing.erase(cut, 1);
+
         lspTest::analysed(missing);
         runs += 2;
       }
+
     CHECK(runs > 1000u);
   }
 
@@ -2774,6 +2860,7 @@ int main()
         "class Plain { Plain() { registerComponent<A>(); } };\n",
         "/t/Refused.h");
     CHECK(lspTest::count(*refused, RuleId::SetupInConstructor) == 3u);
+
     for (const auto& d : refused->diagnostics)
       if (d.rule == RuleId::SetupInConstructor)
         CHECK(d.fix.empty());
@@ -2802,11 +2889,15 @@ int main()
     CHECK(lspTest::count(*doc, RuleId::SetupInConstructor) == 2u);
     const auto* found = lspTest::first(*doc, RuleId::SetupInConstructor);
     CHECK(found != nullptr);
+
     if (!found)
       continue;
+
     std::vector<sfs::codegen::TextEdit> inSource, inHeader;
+
     for (const sfs::codegen::TextEdit& edit : found->fix)
       (edit.file.empty() ? inSource : inHeader).push_back(edit);
+
     CHECK(!inHeader.empty() && inHeader.front().file == header);
     CHECK(lspTest::applyEdits(sourceText, inSource) ==
           "#include \"GateSystem.h\"\n\nvoid GateSystem::create()\n{\n"
@@ -2831,8 +2922,10 @@ int main()
         "  auto q = e.getComponent<A>();\n}\n");
     CHECK(lspTest::count(*doc, RuleId::ComponentPointer) == 4u);
     std::vector<sfs::codegen::TextEdit> all;
+
     for (const auto& d : doc->diagnostics)
       all.insert(all.end(), d.fix.begin(), d.fix.end());
+
     const std::string text = lspTest::applyEdits(doc->text, all);
     CHECK(text ==
           "void f(sfs::Entity e)\n{\n  e.getComponent<A>()->x = 1;\n"
@@ -2867,9 +2960,11 @@ int main()
         "    e.getComponent<A>().x = e.isValid();\n}\n");
     CHECK(lspTest::count(*byValue, RuleId::RowLookup) == 3u);
     std::size_t withFix = 0;
+
     for (const auto& d : byValue->diagnostics)
       if (d.rule == RuleId::RowLookup && !d.fix.empty())
         ++withFix;
+
     CHECK(withFix == 1u);
 
     // An early-out whose test isn't first (or after the handle's validity)
@@ -2924,13 +3019,16 @@ int main()
     CHECK(lspTest::count(*doc, RuleId::ComponentPointer) == 4u);
     std::vector<std::string> passed;
     std::vector<sfs::codegen::TextEdit> all;
+
     for (const auto& d : doc->diagnostics)
       if (d.rule == RuleId::ComponentPointer)
       {
         if (d.fix.empty())
           passed.push_back(d.message);
+
         all.insert(all.end(), d.fix.begin(), d.fix.end());
       }
+
     CHECK(passed.size() == 3u);
     CHECK(passed.size() == 3u &&
           passed[0] == "This passes getComponent<Ticket>() to free(), which "
@@ -3052,8 +3150,10 @@ int main()
   {
     // A whole rule gone quiet shows here: each must report at least once.
     Project project;
+
     for (const auto& [path, text] : everyRuleFixtures())
       lspTest::writeFile(project.root / "scripts" / path, text);
+
     const std::filesystem::path output = project.root / "every.txt";
     const std::string run = "cd \"" +
                             std::filesystem::temp_directory_path().string() +
@@ -3066,18 +3166,23 @@ int main()
     std::ifstream in(output);
     std::stringstream printed;
     printed << in.rdbuf();
+
     // House rules need a .sfs-lint: lspHouseLintTests checks them.
     for (const sfs::codegen::RuleInfo& rule : sfs::codegen::rules())
     {
       if (rule.reserved || rule.house)
         continue;
+
       const bool reported = printed.str().find("[" + std::string(rule.name) +
                                                "]") != std::string::npos;
+
       if (!reported)
         std::printf(
             "      --check didn't report %s\n", std::string(rule.name).c_str());
+
       CHECK(reported);
     }
+
     // Paths with no C++ files under them are an error, not a clean run.
     const std::filesystem::path errors = project.root / "errors.txt";
     CHECK(std::system(
@@ -3093,9 +3198,11 @@ int main()
     // Fixtures that make every rule report, codegen's included.
     Project project;
     std::vector<std::unique_ptr<Document>> docs;
+
     for (const auto& [path, text] : everyRuleFixtures())
       docs.push_back(lspTest::analysed(
           text, project.root / "scripts" / path, &project.index));
+
     std::vector<std::size_t> seen(static_cast<std::size_t>(RuleId::Count), 0);
     const auto sentence = [](std::string_view text)
     {
@@ -3104,26 +3211,33 @@ int main()
               text.front() == '`') &&
              text.back() == '.';
     };
+
     for (const auto& doc : docs)
       for (const auto& d : doc->diagnostics)
       {
         ++seen[static_cast<std::size_t>(d.rule)];
+
         if (!sentence(d.message))
           std::printf("      not a sentence [%s]: %s\n",
                       std::string(sfs::codegen::ruleInfo(d.rule).name).c_str(),
                       d.message.c_str());
+
         CHECK(sentence(d.message));
       }
+
     for (const sfs::codegen::RuleInfo& rule : sfs::codegen::rules())
     {
       // The summary reads the same way (a code name may start it).
       CHECK(sentence(rule.summary));
+
       // House rules need a .sfs-lint: lspHouseLintTests checks them.
       if (rule.reserved || rule.house)
         continue;
+
       if (seen[static_cast<std::size_t>(rule.id)] == 0)
         std::printf(
             "      no fixture reports %s\n", std::string(rule.name).c_str());
+
       CHECK(seen[static_cast<std::size_t>(rule.id)] > 0);
     }
   }

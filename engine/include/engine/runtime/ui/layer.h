@@ -94,8 +94,10 @@ public:
   Hasher& add(const std::vector<T>& values)
   {
     mix(values.size());
+
     for (const T& value : values)
       add(value);
+
     return *this;
   }
   template <typename A, typename B>

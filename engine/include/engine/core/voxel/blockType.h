@@ -1,7 +1,9 @@
 #pragma once
 
 #include "engine/core/components/surfaceEffect.h"
-#include "glm/glm/ext/vector_float4.hpp"
+
+#include <glm/glm/ext/vector_float4.hpp>
+
 #include <cstdint>
 #include <string>
 

@@ -23,12 +23,15 @@
 
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/components/worldTransformComponent.h"
+#include "engine/core/ecs/entity.h"
 #include "engine/core/ecs/hierarchyLinks.h"
+#include "engine/core/ecs/query.h"
 #include "engine/core/ecs/registry.h"
 #include "engine/core/util/debugFeatures.h"
-#include "glm/glm/ext/matrix_float4x3.hpp"
-#include "glm/glm/ext/matrix_float4x4.hpp"
-#include "glm/glm/ext/vector_float3.hpp"
+
+#include <glm/glm/ext/matrix_float4x3.hpp>
+#include <glm/glm/ext/matrix_float4x4.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
 
 #include <cstddef>
 #include <cstdint>
@@ -136,9 +139,9 @@ public:
   }
 
   iterator begin() const { return {m_registry, m_first}; }
-  iterator end() const { return {m_registry, HierarchyLinks::kNone}; }
   /** Whether there are no children. */
   bool empty() const { return m_first == HierarchyLinks::kNone; }
+  iterator end() const { return {m_registry, HierarchyLinks::kNone}; }
 
 private:
   Registry* m_registry = nullptr;
@@ -204,9 +207,11 @@ public:
     {
       const QuerySignature& signature = detail::querySignature<TTerms...>();
       const std::vector<HierarchyNode>& nodes = m_registry->links().nodes;
+
       while (m_id != HierarchyLinks::kNone &&
              !m_registry->matches(m_id, signature))
         m_id = nodes[m_id].nextSibling;
+
       if (m_id != HierarchyLinks::kNone)
         m_current = m_registry->getEntity(m_id);
     }
@@ -227,9 +232,6 @@ public:
   {
     return m_registry ? iterator(m_registry, m_first) : iterator();
   }
-  iterator end() const { return {}; }
-  /** Whether no child matches. */
-  bool empty() const { return begin() == end(); }
   /**
    * The same rows without their entity: `for (auto [wheel, transform] :
    * childrenOf<Wheel, TransformComponent>(root).components())`.
@@ -238,6 +240,9 @@ public:
   {
     return ComponentView<ChildRows>(*this);
   }
+  /** Whether no child matches. */
+  bool empty() const { return begin() == end(); }
+  iterator end() const { return {}; }
 
 private:
   Registry* m_registry = nullptr;
@@ -253,6 +258,7 @@ ChildRows<TTerm, TTerms...> childrenOf(const Entity& entity)
 {
   if (!entity.isValid())
     return {};
+
   Registry* registry = detail::EntityAccess::registry(entity);
   return {registry, registry->links().nodes[entity.getId()].firstChild};
 }
@@ -278,6 +284,7 @@ template <typename TTerm, typename... TTerms>
 void findChildren(const Entity& entity, std::vector<Entity>& out)
 {
   out.clear();
+
   for (const Entity& child : childrenOf<TTerm, TTerms...>(entity))
     out.push_back(child);
 }
@@ -307,11 +314,10 @@ public:
         : m_registry(registry), m_root(root), m_id(id)
     {
     }
-
-    /** The entity here. */
-    Entity operator*() const { return m_registry->getEntity(m_id); }
     /** The id of the entity here (HierarchyLinks::kNone at the end). */
     Entity::EntityId id() const { return m_id; }
+    /** The entity here. */
+    Entity operator*() const { return m_registry->getEntity(m_id); }
     iterator& operator++();
     iterator operator++(int)
     {
@@ -408,9 +414,11 @@ public:
     void settle()
     {
       const QuerySignature& signature = detail::querySignature<TTerms...>();
+
       while (m_walk.id() != HierarchyLinks::kNone &&
              !m_registry->matches(m_walk.id(), signature))
         ++m_walk;
+
       if (m_walk.id() != HierarchyLinks::kNone)
         m_current = m_registry->getEntity(m_walk.id());
     }
@@ -434,7 +442,6 @@ public:
                                  m_registry->links().nodes[m_root].firstChild)
                       : iterator();
   }
-  iterator end() const { return {}; }
   /**
    * The same rows without their entity (its iterator has no
    * skipChildren()).
@@ -443,6 +450,7 @@ public:
   {
     return ComponentView<DescendantRows>(*this);
   }
+  iterator end() const { return {}; }
 
 private:
   Registry* m_registry = nullptr;

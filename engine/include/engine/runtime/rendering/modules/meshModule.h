@@ -1,9 +1,14 @@
 #pragma once
 
+#include "engine/core/rendering/mesh.h"
 #include "engine/runtime/rendering/commands.h"
+#include "engine/runtime/rendering/frame.h"
 #include "engine/runtime/rendering/modules/renderModule.h"
 #include "engine/runtime/rendering/renderContext.h"
 
+#include <glm/glm/ext/matrix_float4x4.hpp>
+
+#include <cstddef>
 #include <cstdint>
 #include <unordered_map>
 #include <vector>
@@ -31,22 +36,14 @@ struct WorldTransformComponent;
 class MeshModule : public CommandModule<RenderContext, MeshDrawCommand>
 {
 public:
-  void init(const ModuleInit& m) override { m_registry = m.registry; }
-
   void computeCommands(const RenderContext& context) override;
+
+  void init(const ModuleInit& m) override { m_registry = m.registry; }
 
 protected:
   bool rebuildsEveryFrame() const override { return true; }
 
 private:
-  // One entity's instance, into the command for its mesh and materials;
-  // `check`: debugFeatures::checkTransforms(), read once a frame.
-  void addEntity(const RenderContext& context,
-                 const Entity& entity,
-                 const MeshRendererComponent& renderer,
-                 const WorldTransformComponent& world,
-                 bool check);
-
   // Where each of an instance's draws goes.
   enum Pass : uint8_t
   {
@@ -55,6 +52,14 @@ private:
     LightShadow = 4,
     Feed = 8, // seen by the frame's camera feed (RenderContext::feedOn)
   };
+
+  // One entity's instance, into the command for its mesh and materials;
+  // `check`: debugFeatures::checkTransforms(), read once a frame.
+  void addEntity(const RenderContext& context,
+                 const Entity& entity,
+                 const MeshRendererComponent& renderer,
+                 const WorldTransformComponent& world,
+                 bool check);
 
   // An instance of `mesh` (with the materials in m_materials) into its
   // command's lists for `passes`.

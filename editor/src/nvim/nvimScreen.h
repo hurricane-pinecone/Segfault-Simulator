@@ -2,6 +2,7 @@
 
 #include "nvim/msgpack.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -18,7 +19,8 @@ class NvimScreen
 public:
   struct Cell
   {
-    std::string text = " "; // one screen cell's UTF-8 text ("" for the right half of a wide char)
+    std::string text = " "; // one screen cell's UTF-8 text ("" for the right
+                            // half of a wide char)
     int highlight = 0;
   };
 
@@ -26,7 +28,7 @@ public:
   {
     std::optional<uint32_t> foreground; // 0xRRGGBB
     std::optional<uint32_t> background;
-    std::optional<uint32_t> special;    // underline/undercurl colour
+    std::optional<uint32_t> special; // underline/undercurl colour
     bool bold = false;
     bool italic = false;
     bool underline = false;
@@ -51,35 +53,34 @@ public:
 
   /** Apply the params of one `redraw` notification (a batch of events). */
   void applyRedraw(const msgpack::Array& events);
-
-  int columns() const { return m_front.columns; }
-  int rows() const { return m_front.rows; }
   const Cell& cell(int row, int column) const;
-  const Highlight& highlight(int id) const;
-
   /** A cell's resolved colours: defaults filled in, reverse applied. */
   Colors colorsOf(const Cell& cell) const;
-  uint32_t defaultBackground() const { return m_defaultBackground; }
-
-  int cursorRow() const { return m_front.cursorRow; }
+  int columns() const { return m_front.columns; }
   int cursorColumn() const { return m_front.cursorColumn; }
-  CursorShape cursorShape() const { return m_cursorShape; }
   /** How much of the cell a bar/underline cursor covers (0..100). */
   int cursorPercentage() const { return m_cursorPercentage; }
-
+  int cursorRow() const { return m_front.cursorRow; }
+  CursorShape cursorShape() const { return m_cursorShape; }
+  uint32_t defaultBackground() const { return m_defaultBackground; }
+  const Highlight& highlight(int id) const;
+  int rows() const { return m_front.rows; }
   /** Window title Neovim asks for (set_title), e.g. the current file. */
   const std::string& title() const { return m_title; }
 
 private:
   struct Grid
   {
+    Cell& at(int row, int column)
+    {
+      return cells[static_cast<std::size_t>(row * columns + column)];
+    }
+
     int columns = 0;
     int rows = 0;
     int cursorRow = 0;
     int cursorColumn = 0;
     std::vector<Cell> cells;
-
-    Cell& at(int row, int column) { return cells[static_cast<std::size_t>(row * columns + column)]; }
   };
 
   struct ModeInfo

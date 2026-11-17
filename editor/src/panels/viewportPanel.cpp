@@ -1,79 +1,107 @@
 #include "panels/viewportPanel.h"
 
 #include "assets/assetDrop.h"
+#include "camera/viewportCamera.h"
 #include "editorContext.h"
-#include "history/editorHistory.h"
-#include "scene/editorScene.h"
-#include "scene/entityLabel.h"
-#include "scene/prefabs.h"
-
+#include "engine/core/assets/assetDatabase.h"
 #include "engine/core/components/cameraComponent.h"
 #include "engine/core/components/grassComponent.h"
 #include "engine/core/components/meshRendererComponent.h"
 #include "engine/core/components/pointLightComponent.h"
 #include "engine/core/components/transformComponent.h"
-#include "engine/core/ecs/ecs.h" // IWYU pragma: keep (Entity templates)
+#include "engine/core/ecs/ecs.h"
 #include "engine/core/hierarchy/hierarchy.h"
 #include "engine/core/logger/logger.h"
+#include "engine/core/rendering/aabb.h"
+#include "engine/core/rendering/camera.h"
+#include "engine/core/rendering/debugLines.h"
 #include "engine/core/rendering/grass.h"
+#include "engine/core/rendering/mesh.h"
 #include "engine/core/rendering/terrain.h"
 #include "engine/runtime/assetStore/textureImporter.h"
+#include "engine/runtime/rendering/backend/iRenderBackend.h"
 #include "engine/runtime/rendering/debug/colliderLines.h"
 #include "engine/runtime/rendering/meshLibrary.h"
 #include "engine/runtime/rendering/modules/grassModule.h"
 #include "engine/runtime/rendering/picking.h"
 #include "engine/runtime/rendering/renderSystem.h"
+#include "engine/runtime/rendering/space2D.h"
 #include "engine/runtime/rendering/util/activeCamera.h"
 #include "engine/runtime/serialization/sceneSerializer.h"
-#include "glm/glm/gtc/matrix_transform.hpp"
-#include "glm/glm/gtc/quaternion.hpp"
-#include "glm/glm/gtc/type_ptr.hpp"
+#include "history/editorHistory.h"
+#include "panels/panel.h"
+#include "scene/editorScene.h"
+#include "scene/entityLabel.h"
+#include "scene/prefabs.h"
 
-#include "imgui_internal.h" // FindWindowByName, a window's dock node
-#include "imguizmo/ImGuizmo.h"
+#include <glm/glm/common.hpp>
+#include <glm/glm/ext/matrix_transform.hpp>
+#include <glm/glm/ext/quaternion_common.hpp>
+#include <glm/glm/ext/quaternion_float.hpp>
+#include <glm/glm/ext/quaternion_trigonometric.hpp>
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
+#include <glm/glm/geometric.hpp>
+#include <glm/glm/gtc/quaternion.hpp>
+#include <glm/glm/gtc/type_ptr.hpp>
+#include <imgui.h>
+#include <imgui_internal.h> // FindWindowByName, a window's dock node
+#include <imguizmo/ImGuizmo.h>
+#include <nlohmann/json.hpp>
 
 #include <algorithm>
-#include <limits>
-#include <span>
 #include <array>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <limits>
+#include <memory>
+#include <optional>
+#include <span>
+#include <string>
+#include <utility>
+#include <vector>
 
 namespace
 {
-constexpr float kMoveSnap = 0.5f;    // world units
-constexpr float kRotateSnap = 15.0f; // degrees
-constexpr float kScaleSnap = 0.1f;
+constexpr float MOVE_SNAP = 0.5f;    // world units
+constexpr float ROTATE_SNAP = 15.0f; // degrees
+constexpr float SCALE_SNAP = 0.1f;
+
+constexpr ImU32 SELECTION_COLOR = IM_COL32(255, 170, 40, 255);
+// What a texture or material dragged over the viewport would land on.
+constexpr ImU32 DROP_COLOR = IM_COL32(90, 210, 255, 255);
+constexpr ImU32 LIGHT_COLOR = IM_COL32(255, 220, 120, 255);
+constexpr ImU32 CAMERA_COLOR = IM_COL32(230, 230, 230, 255);
+constexpr ImU32 INACTIVE_CAMERA_COLOR = IM_COL32(140, 140, 140, 200);
+
+// How far ahead a camera's outline reaches, as a fraction of its distance from
+// the viewer, so it stays about the same size on screen.
+constexpr float CAMERA_ICON_SCALE = 0.08f;
 
 // Whether an entity has grass the brush can paint: a GrassComponent on a mesh.
 bool hasGrass(const sfs::Entity& entity)
 {
-  return entity.isValid() &&
-         entity.hasComponent<sfs::GrassComponent>() &&
+  return entity.isValid() && entity.hasComponent<sfs::GrassComponent>() &&
          entity.hasComponent<sfs::MeshRendererComponent>();
 }
 
 // The terrain an entity is drawn with (its first material slot's, as drawn
 // now: a visual style's variant may be one); null if it isn't one.
-std::shared_ptr<const sfs::TerrainMaterial> terrainOf(const EditorContext& context, const sfs::Entity& entity)
+std::shared_ptr<const sfs::TerrainMaterial>
+terrainOf(const EditorContext& context, const sfs::Entity& entity)
 {
   const auto* meshRenderer = entity.getComponent<sfs::MeshRendererComponent>();
-  if (!context.render || !meshRenderer || meshRenderer->materials.empty() || meshRenderer->materials[0].empty())
+
+  if (!context.render || !meshRenderer || meshRenderer->materials.empty() ||
+      meshRenderer->materials[0].empty())
     return nullptr;
+
   sfs::MeshLibrary& meshes = context.render->meshes();
-  const sfs::MeshMaterial* drawn = meshes.materialData(meshes.material(meshRenderer->materials[0]));
+  const sfs::MeshMaterial* drawn =
+      meshes.materialData(meshes.material(meshRenderer->materials[0]));
   return drawn ? drawn->terrain : nullptr;
 }
-
-constexpr ImU32 kSelectionColor = IM_COL32(255, 170, 40, 255);
-// What a texture or material dragged over the viewport would land on.
-constexpr ImU32 kDropColor = IM_COL32(90, 210, 255, 255);
-constexpr ImU32 kLightColor = IM_COL32(255, 220, 120, 255);
-constexpr ImU32 kCameraColor = IM_COL32(230, 230, 230, 255);
-constexpr ImU32 kInactiveCameraColor = IM_COL32(140, 140, 140, 200);
-
-// How far ahead a camera's outline reaches, as a fraction of its distance from
-// the viewer, so it stays about the same size on screen.
-constexpr float kCameraIconScale = 0.08f;
 
 // What a click on `hit` selects: the outermost prefab instance it's part of
 // (the thing placed, not a mesh deep in its model); or, once that instance or
@@ -81,20 +109,29 @@ constexpr float kCameraIconScale = 0.08f;
 sfs::Entity clickTarget(const sfs::Entity& hit, const sfs::Entity& selected)
 {
   sfs::Entity root = sfs::SceneSerializer::instanceRootOf(hit);
+
   if (!root.isValid())
     return hit;
-  for (sfs::Entity above = sfs::SceneSerializer::instanceRootOf(sfs::hierarchy::parentOf(root)); above.isValid();
-       above = sfs::SceneSerializer::instanceRootOf(sfs::hierarchy::parentOf(root)))
+
+  for (sfs::Entity above =
+           sfs::SceneSerializer::instanceRootOf(sfs::hierarchy::parentOf(root));
+       above.isValid();
+       above =
+           sfs::SceneSerializer::instanceRootOf(sfs::hierarchy::parentOf(root)))
     root = above;
-  for (sfs::Entity in = selected; in.isValid(); in = sfs::hierarchy::parentOf(in))
+
+  for (sfs::Entity in = selected; in.isValid();
+       in = sfs::hierarchy::parentOf(in))
     if (in == root)
       return hit;
+
   return root;
 }
 } // namespace
 
 ViewportPanel::ViewportPanel(sfs::IRenderBackend& backend, std::string title)
-    : Panel(std::move(title)), m_backend(backend), m_target(backend.createRenderTarget())
+    : Panel(std::move(title)), m_backend(backend),
+      m_target(backend.createRenderTarget())
 {
 }
 
@@ -102,30 +139,6 @@ ViewportPanel::~ViewportPanel()
 {
   if (m_active)
     m_backend.setSceneTarget(nullptr);
-}
-
-void ViewportPanel::setActive(bool active)
-{
-  m_active = active;
-  if (active && m_target)
-    m_backend.setSceneTarget(m_target.get());
-}
-
-void ViewportPanel::beforeBegin()
-{
-  if (m_dockWith.empty())
-    return;
-  if (const ImGuiWindow* other = ImGui::FindWindowByName(m_dockWith.c_str()); other && other->DockId)
-    ImGui::SetNextWindowDockID(other->DockId, ImGuiCond_Always);
-  m_dockWith.clear();
-}
-
-int ViewportPanel::windowFlags() const
-{
-  // The image fills the panel; scrolling would only fight camera zoom. Keys
-  // are for the viewport (shortcuts) and the game, not ImGui navigation.
-  return ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
-         ImGuiWindowFlags_NoNavInputs | (m_unsaved ? ImGuiWindowFlags_UnsavedDocument : 0);
 }
 
 void ViewportPanel::update(EditorContext&)
@@ -137,28 +150,16 @@ void ViewportPanel::update(EditorContext&)
     m_target->resize(open() ? m_desiredSize : glm::ivec2(0, 0));
 }
 
-ViewportPanel::View ViewportPanel::currentView(const EditorContext& context,
-                                               ImVec2 origin,
-                                               ImVec2 size) const
+void ViewportPanel::beforeBegin()
 {
-  const sfs::Camera& camera = context.render->camera();
-  View view;
-  view.view = camera.viewMatrix();
-  view.projection = camera.projectionMatrix(size.x / std::max(size.y, 1.0f));
-  view.viewProjection = view.projection * view.view;
-  view.origin = origin;
-  view.size = size;
-  return view;
-}
+  if (m_dockWith.empty())
+    return;
 
-std::optional<ImVec2> ViewportPanel::toScreen(const View& view, const glm::vec3& world) const
-{
-  const glm::vec4 clip = view.viewProjection * glm::vec4(world, 1.0f);
-  if (clip.w <= 1.0e-4f)
-    return std::nullopt; // behind the camera
-  const glm::vec2 ndc = glm::vec2(clip) / clip.w;
-  return ImVec2(view.origin.x + (ndc.x * 0.5f + 0.5f) * view.size.x,
-                view.origin.y + (0.5f - ndc.y * 0.5f) * view.size.y);
+  if (const ImGuiWindow* other = ImGui::FindWindowByName(m_dockWith.c_str());
+      other && other->DockId)
+    ImGui::SetNextWindowDockID(other->DockId, ImGuiCond_Always);
+
+  m_dockWith.clear();
 }
 
 void ViewportPanel::drawContents(EditorContext& context)
@@ -170,20 +171,26 @@ void ViewportPanel::drawContents(EditorContext& context)
   if (!m_active)
   {
     if (m_target && m_target->valid())
-      ImGui::Image(static_cast<ImTextureID>(m_target->imguiTexture()), available);
+      ImGui::Image(
+          static_cast<ImTextureID>(m_target->imguiTexture()), available);
     else
       ImGui::Dummy(available);
+
     if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows))
       m_activationRequested = true;
+
     if (context.playing)
     {
-      ImGui::SetCursorScreenPos(ImVec2(ImGui::GetItemRectMin().x + 12.0f, ImGui::GetItemRectMin().y + 12.0f));
+      ImGui::SetCursorScreenPos(ImVec2(ImGui::GetItemRectMin().x + 12.0f,
+                                       ImGui::GetItemRectMin().y + 12.0f));
       ImGui::TextUnformatted("Stop playing to edit here");
     }
+
     return;
   }
 
-  if (!m_target || !m_target->valid() || m_target->size() != m_desiredSize || !context.render)
+  if (!m_target || !m_target->valid() || m_target->size() != m_desiredSize ||
+      !context.render)
   {
     // First frame, or mid-resize: the correctly sized target arrives next
     // frame.
@@ -194,6 +201,7 @@ void ViewportPanel::drawContents(EditorContext& context)
   // A 2D game's view is its plane seen straight on; changing the scene's
   // style turns the view to match. (While playing, the game's camera rules.)
   const bool planar = context.render->space2D().has_value();
+
   if (!context.playing)
   {
     if (planar)
@@ -201,6 +209,7 @@ void ViewportPanel::drawContents(EditorContext& context)
     else if (m_wasPlanar)
       ViewportCamera::makeAngled(context.render->camera());
   }
+
   m_wasPlanar = planar;
 
   const ImVec2 origin = ImGui::GetCursorScreenPos();
@@ -219,15 +228,19 @@ void ViewportPanel::drawContents(EditorContext& context)
     if (context.focusRequest.isValid())
       if (const auto bounds = branchBounds(context, context.focusRequest))
         m_navigation.focus(context.render->camera(), *bounds);
+
     context.focusRequest = {};
   }
+
   const View view = currentView(context, origin, available);
+
   if (!context.playing)
     dropAsset(context, view); // targets the image, so straight after it
 
   // ImGui positions are on the desktop; the game wants them in the window.
   const ImGuiViewport* host = ImGui::GetWindowViewport();
-  context.viewportWindowId = static_cast<uint32_t>(reinterpret_cast<intptr_t>(host->PlatformHandle));
+  context.viewportWindowId =
+      static_cast<uint32_t>(reinterpret_cast<intptr_t>(host->PlatformHandle));
   context.viewportRect = {static_cast<int>(origin.x - host->Pos.x),
                           static_cast<int>(origin.y - host->Pos.y),
                           static_cast<int>(available.x),
@@ -236,11 +249,15 @@ void ViewportPanel::drawContents(EditorContext& context)
   // Editor overlays are hidden during Play unless asked for, so the viewport
   // looks like the game.
   bool gizmoActive = false;
+
   // A stroke ends with its tool (or when Play starts).
   if (m_tool != Tool::GrassBrush || context.playing || !gizmosVisible(context))
     endGrassStroke(context);
-  if (m_tool != Tool::TerrainBrush || context.playing || !gizmosVisible(context))
+
+  if (m_tool != Tool::TerrainBrush || context.playing ||
+      !gizmosVisible(context))
     endTerrainStroke(context);
+
   if (gizmosVisible(context))
   {
     // Kept inside the image: an icon near its edge mustn't spill onto the
@@ -251,12 +268,14 @@ void ViewportPanel::drawContents(EditorContext& context)
     drawCameraIcons(context, view);
     drawSelectionOutline(context, view);
     drawColliders(context, view);
+
     if (m_tool == Tool::GrassBrush && !context.playing)
       gizmoActive = paintGrass(context, view, imageHovered);
     else if (m_tool == Tool::TerrainBrush && !context.playing)
       gizmoActive = paintTerrain(context, view, imageHovered);
     else
       gizmoActive = drawGizmo(context, view);
+
     ImGui::PopClipRect();
   }
 
@@ -267,8 +286,10 @@ void ViewportPanel::drawContents(EditorContext& context)
     const bool focused = ImGui::IsWindowFocused();
     context.gameHasInput = focused;
     context.gameHasMouse = imageHovered;
+
     if (imageHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
       ImGui::SetWindowFocus();
+
     const ImU32 border =
         focused ? IM_COL32(90, 200, 120, 255) : IM_COL32(200, 160, 60, 255);
     ImGui::GetWindowDrawList()->AddRect(
@@ -278,6 +299,7 @@ void ViewportPanel::drawContents(EditorContext& context)
         0.0f,
         0,
         2.0f);
+
     if (!focused)
     {
       ImGui::SetCursorScreenPos(
@@ -288,8 +310,10 @@ void ViewportPanel::drawContents(EditorContext& context)
   else if (imageHovered)
   {
     handleShortcuts(context);
+
     if (!gizmoActive && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
       pick(context, view);
+
     navigate(context, available.y);
   }
 
@@ -302,11 +326,13 @@ void ViewportPanel::drawContents(EditorContext& context)
   ImGui::SetCursorScreenPos(ImVec2(origin.x + 12.0f, origin.y + 12.0f));
   ImGui::BeginGroup();
   drawToolbar(context);
+
   if (m_toolbarExtras)
   {
     ImGui::SameLine(0.0f, 18.0f);
     m_toolbarExtras(context);
   }
+
   ImGui::EndGroup();
   drawList->ChannelsSetCurrent(0);
   const ImVec2 barMin = ImGui::GetItemRectMin(),
@@ -318,9 +344,555 @@ void ViewportPanel::drawContents(EditorContext& context)
   drawList->ChannelsMerge();
 }
 
-bool ViewportPanel::gizmosVisible(const EditorContext& context) const
+int ViewportPanel::windowFlags() const
 {
-  return context.playing ? m_gizmosInPlay : m_gizmosInEdit;
+  // The image fills the panel; scrolling would only fight camera zoom. Keys
+  // are for the viewport (shortcuts) and the game, not ImGui navigation.
+  return ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
+         ImGuiWindowFlags_NoNavInputs |
+         (m_unsaved ? ImGuiWindowFlags_UnsavedDocument : 0);
+}
+
+std::optional<sfs::Aabb>
+ViewportPanel::branchBounds(const EditorContext& context,
+                            const sfs::Entity& entity) const
+{
+  // Its own bounds, or (with meshes below it, e.g. a prefab's empty root)
+  // those of the meshes in its branch.
+  const sfs::MeshLibrary& meshes = context.render->meshes();
+  sfs::Aabb meshBounds;
+  const auto add = [&](const sfs::Entity& part)
+  {
+    if (part.hasComponent<sfs::MeshRendererComponent>())
+      if (const auto bounds = sfs::entityBounds(part, meshes, context.render))
+        meshBounds.expand(*bounds);
+  };
+  add(entity);
+
+  for (const sfs::Entity& part : sfs::hierarchy::descendants(entity))
+    add(part);
+
+  if (!meshBounds.empty())
+    return meshBounds;
+
+  return sfs::entityBounds(entity, meshes, context.render);
+}
+
+ViewportPanel::View ViewportPanel::currentView(const EditorContext& context,
+                                               ImVec2 origin,
+                                               ImVec2 size) const
+{
+  const sfs::Camera& camera = context.render->camera();
+  View view;
+  view.view = camera.viewMatrix();
+  view.projection = camera.projectionMatrix(size.x / std::max(size.y, 1.0f));
+  view.viewProjection = view.projection * view.view;
+  view.origin = origin;
+  view.size = size;
+  return view;
+}
+
+void ViewportPanel::drawCameraIcons(const EditorContext& context,
+                                    const View& view) const
+{
+  ImDrawList* drawList = ImGui::GetWindowDrawList();
+  const float aspect = view.size.x / std::max(view.size.y, 1.0f);
+  const sfs::Entity gameCamera = context.render->sceneCamera();
+  const glm::vec3 viewer = context.render->camera().position();
+
+  for (auto [entity, lens, transform] :
+       context.scene->query<sfs::CameraComponent, sfs::TransformComponent>())
+  {
+    // The camera's view, as the game would set it up.
+    sfs::Camera camera;
+    sfs::viewThrough(lens, sfs::hierarchy::worldMatrix(entity), camera);
+    const glm::vec3 eye = camera.position();
+    const glm::vec3 forward = camera.viewDirection();
+    const glm::vec3 right = camera.orientation() * glm::vec3(0.0f, -1.0f, 0.0f);
+    const glm::vec3 up = glm::cross(right, forward);
+    const float depth =
+        std::max(glm::distance(eye, viewer) * CAMERA_ICON_SCALE, 0.3f);
+
+    // A pyramid from the eye to a rectangle the shape of the view (a box for
+    // orthographic), plus a notch marking up.
+    const bool orthographic =
+        camera.projection == sfs::Camera::Projection::Orthographic;
+    const float halfHeight = orthographic
+                                 ? std::min(camera.orthoHeight * 0.5f, depth)
+                                 : std::tan(camera.fieldOfView * 0.5f) * depth;
+    const float halfWidth = halfHeight * aspect;
+    const glm::vec3 centre = eye + forward * depth;
+    const std::array<glm::vec3, 4> far{
+        centre + right * halfWidth + up * halfHeight,
+        centre - right * halfWidth + up * halfHeight,
+        centre - right * halfWidth - up * halfHeight,
+        centre + right * halfWidth - up * halfHeight};
+    const std::array<glm::vec3, 4> near =
+        orthographic ? std::array<glm::vec3, 4>{far[0] - forward * depth,
+                                                far[1] - forward * depth,
+                                                far[2] - forward * depth,
+                                                far[3] - forward * depth}
+                     : std::array<glm::vec3, 4>{eye, eye, eye, eye};
+
+    const ImU32 color =
+        entity == gameCamera ? CAMERA_COLOR : INACTIVE_CAMERA_COLOR;
+    const auto line = [&](const glm::vec3& a, const glm::vec3& b)
+    {
+      const std::optional<ImVec2> from = toScreen(view, a);
+      const std::optional<ImVec2> to = toScreen(view, b);
+
+      if (from && to)
+        drawList->AddLine(*from, *to, color, 1.5f);
+    };
+
+    for (int i = 0; i < 4; ++i)
+    {
+      line(near[i], far[i]);
+      line(far[i], far[(i + 1) % 4]);
+
+      if (orthographic)
+        line(near[i], near[(i + 1) % 4]);
+    }
+
+    const glm::vec3 notch = centre + up * (halfHeight * 1.4f);
+    line(far[0], notch);
+    line(far[1], notch);
+  }
+}
+
+void ViewportPanel::drawColliders(const EditorContext& context,
+                                  const View& view) const
+{
+  if (!context.hasSelection() ||
+      !context.selection.hasComponent<sfs::TransformComponent>())
+    return;
+
+  // The engine's lines for them (as the scene's Draw Colliders draws every
+  // collider), over the image: the selection's always, whether or not that's
+  // on. Their colours pack as ImGui's do (red in the low byte).
+  sfs::DebugLines lines;
+  sfs::colliderLines::append(
+      context.selection, context.render->space2D(), lines);
+  ImDrawList* drawList = ImGui::GetWindowDrawList();
+  const std::span<const sfs::DebugLineVertex> ends = lines.vertices();
+
+  for (std::size_t i = 0; i + 1 < ends.size(); i += 2)
+  {
+    const std::optional<ImVec2> from = toScreen(view, ends[i].position);
+    const std::optional<ImVec2> to = toScreen(view, ends[i + 1].position);
+
+    if (from && to)
+      drawList->AddLine(*from, *to, ends[i].color, 1.5f);
+  }
+}
+
+void ViewportPanel::drawDropTarget(const EditorContext& context,
+                                   const View& view,
+                                   const sfs::SurfaceHit& hit) const
+{
+  drawOutline(context, view, hit.entity, DROP_COLOR, 2.5f);
+
+  // Above the cursor (the drag's own tooltip is below it): the object, and for
+  // a model with several materials, the one (slot) it would replace.
+  std::string text = entityLabel(hit.entity);
+
+  if (sfs::MeshRendererComponent* meshRenderer =
+          hit.entity.getComponent<sfs::MeshRendererComponent>())
+  {
+    const std::vector<sfs::MeshSection> slots =
+        context.render->meshes().sections(meshRenderer->mesh);
+
+    if (slots.size() > 1 && hit.section < slots.size())
+      text += " : " + (slots[hit.section].name.empty()
+                           ? "Material " + std::to_string(hit.section + 1)
+                           : slots[hit.section].name);
+  }
+
+  const ImVec2 mouse = ImGui::GetMousePos();
+  const ImVec2 size = ImGui::CalcTextSize(text.c_str());
+  const ImVec2 at(mouse.x + 12.0f, mouse.y - size.y - 14.0f);
+  ImDrawList* drawList = ImGui::GetWindowDrawList();
+  drawList->AddRectFilled(ImVec2(at.x - 4.0f, at.y - 2.0f),
+                          ImVec2(at.x + size.x + 4.0f, at.y + size.y + 2.0f),
+                          IM_COL32(20, 20, 20, 200),
+                          3.0f);
+  drawList->AddText(at, DROP_COLOR, text.c_str());
+}
+
+bool ViewportPanel::drawGizmo(EditorContext& context, const View& view)
+{
+  if (!context.hasSelection() ||
+      !context.selection.hasComponent<sfs::TransformComponent>())
+    return false;
+
+  ImGuizmo::SetDrawlist();
+  ImGuizmo::SetRect(view.origin.x, view.origin.y, view.size.x, view.size.y);
+  ImGuizmo::SetOrthographic(context.render->camera().projection ==
+                            sfs::Camera::Projection::Orthographic);
+
+  ImGuizmo::OPERATION operation = ImGuizmo::TRANSLATE;
+  float snapValue = MOVE_SNAP;
+
+  if (m_tool == Tool::Rotate)
+  {
+    operation = ImGuizmo::ROTATE;
+    snapValue = ROTATE_SNAP;
+  }
+  else if (m_tool == Tool::Scale)
+  {
+    operation = ImGuizmo::SCALE;
+    snapValue = SCALE_SNAP;
+  }
+
+  const bool snapping = m_snap || ImGui::GetIO().KeyCtrl;
+  const std::array<float, 3> snap{snapValue, snapValue, snapValue};
+
+  if (context.render->space2D())
+    return drawPlanarGizmo(context, view, snapping);
+
+  // Several selected: the handles in the middle of them (see moveGroup()).
+  const std::vector<sfs::Entity> group = movableSelection(context);
+
+  if (context.selected().size() > 1 && !group.empty())
+    return drawGroupGizmo(
+        context, view, group, operation, snapping ? snap.data() : nullptr);
+
+  // Manipulate a copy, so an edit can be bracketed for undo before it lands:
+  // the snapshot is taken the frame the drag starts, while the scene is still
+  // unchanged. The gizmo works in world space; the result goes back into the
+  // transform relative to the parent.
+  glm::mat4 model = sfs::hierarchy::worldMatrix(context.selection);
+  const bool wasUsing = ImGuizmo::IsUsing();
+  const bool changed =
+      ImGuizmo::Manipulate(glm::value_ptr(view.view),
+                           glm::value_ptr(view.projection),
+                           operation,
+                           m_localSpace ? ImGuizmo::LOCAL : ImGuizmo::WORLD,
+                           glm::value_ptr(model),
+                           nullptr,
+                           snapping ? snap.data() : nullptr);
+  const bool usingNow = ImGuizmo::IsUsing();
+
+  if (!wasUsing && usingNow)
+    context.history->beginChange();
+
+  if (changed)
+    sfs::hierarchy::setWorldMatrix(context.selection, model);
+
+  if (wasUsing && !usingNow)
+    context.history->endChange();
+
+  return usingNow || ImGuizmo::IsOver();
+}
+
+bool ViewportPanel::drawGroupGizmo(EditorContext& context,
+                                   const View& view,
+                                   const std::vector<sfs::Entity>& group,
+                                   int operation,
+                                   const float* snap)
+{
+  // The handles: at their middle (the average of where they are), lined up
+  // with the world, or with the one selected last in Local. While dragging
+  // they're kept from frame to frame, so each frame's change is the step
+  // since the last.
+  const bool wasUsing = ImGuizmo::IsUsing();
+
+  if (!wasUsing)
+  {
+    glm::vec3 middle(0.0f);
+
+    for (const sfs::Entity& entity : group)
+      middle += glm::vec3(sfs::hierarchy::worldMatrix(entity)[3]);
+
+    middle /= static_cast<float>(group.size());
+    glm::mat4 turn(1.0f);
+
+    if (m_localSpace)
+    {
+      const glm::mat4 world = sfs::hierarchy::worldMatrix(context.selection);
+      turn = glm::mat4(glm::mat3(glm::normalize(glm::vec3(world[0])),
+                                 glm::normalize(glm::vec3(world[1])),
+                                 glm::normalize(glm::vec3(world[2]))));
+    }
+
+    m_groupHandles = turn;
+    m_groupHandles[3] = glm::vec4(middle, 1.0f);
+  }
+
+  glm::mat4 handles = m_groupHandles;
+  const bool changed =
+      ImGuizmo::Manipulate(glm::value_ptr(view.view),
+                           glm::value_ptr(view.projection),
+                           static_cast<ImGuizmo::OPERATION>(operation),
+                           m_localSpace ? ImGuizmo::LOCAL : ImGuizmo::WORLD,
+                           glm::value_ptr(handles),
+                           nullptr,
+                           snap);
+  const bool usingNow = ImGuizmo::IsUsing();
+
+  if (!wasUsing && usingNow)
+    context.history->beginChange();
+
+  if (changed)
+  {
+    // The step: how far the handles moved, turned and scaled. Each one moves
+    // as far, and turns and scales as much about its own origin.
+    const auto axes = [](const glm::mat4& m)
+    {
+      return glm::vec3(glm::length(glm::vec3(m[0])),
+                       glm::length(glm::vec3(m[1])),
+                       glm::length(glm::vec3(m[2])));
+    };
+    const auto turnOf = [&](const glm::mat4& m)
+    {
+      const glm::vec3 s = axes(m);
+      return glm::quat_cast(glm::mat3(
+          glm::vec3(m[0]) / s.x, glm::vec3(m[1]) / s.y, glm::vec3(m[2]) / s.z));
+    };
+    const glm::vec3 moved =
+        glm::vec3(handles[3]) - glm::vec3(m_groupHandles[3]);
+    const glm::quat turned =
+        turnOf(handles) * glm::inverse(turnOf(m_groupHandles));
+    const glm::vec3 scaled = axes(handles) / axes(m_groupHandles);
+
+    for (const sfs::Entity& entity : group)
+    {
+      const glm::mat4 world = sfs::hierarchy::worldMatrix(entity);
+      const glm::vec3 scale = axes(world) * scaled;
+      const glm::quat rotation = turned * turnOf(world);
+      glm::mat4 next = glm::mat4_cast(rotation);
+      next[0] *= scale.x;
+      next[1] *= scale.y;
+      next[2] *= scale.z;
+      next[3] = glm::vec4(glm::vec3(world[3]) + moved, 1.0f);
+      sfs::hierarchy::setWorldMatrix(entity, next);
+    }
+
+    m_groupHandles = handles;
+  }
+
+  if (wasUsing && !usingNow)
+    context.history->endChange();
+
+  return usingNow || ImGuizmo::IsOver();
+}
+
+void ViewportPanel::drawLightIcons(const EditorContext& context,
+                                   const View& view) const
+{
+  ImDrawList* drawList = ImGui::GetWindowDrawList();
+
+  for (auto [entity, light, transform] :
+       context.scene
+           ->query<sfs::PointLightComponent, sfs::TransformComponent>())
+  {
+    // Where the renderer puts it: the offset turns and scales with the entity.
+    const std::optional<ImVec2> at =
+        toScreen(view,
+                 glm::vec3(sfs::hierarchy::worldMatrix(entity) *
+                           glm::vec4(light.offset, 1.0f)));
+
+    if (!at)
+      continue;
+
+    // A spot: a line a metre along its axis, the way it shines.
+    if (light.spot)
+    {
+      const glm::mat4 world = sfs::hierarchy::worldMatrix(entity);
+      const glm::vec3 from(world * glm::vec4(light.offset, 1.0f));
+
+      if (const std::optional<ImVec2> ahead =
+              toScreen(view, from + glm::normalize(glm::vec3(world[0]))))
+        drawList->AddLine(*at, *ahead, LIGHT_COLOR, 2.0f);
+    }
+
+    // A small sun: a disc with rays.
+    drawList->AddCircleFilled(*at, 5.0f, LIGHT_COLOR);
+
+    for (int i = 0; i < 8; ++i)
+    {
+      const float angle = static_cast<float>(i) * 0.785398f;
+      const ImVec2 direction{std::cos(angle), std::sin(angle)};
+      drawList->AddLine(
+          ImVec2(at->x + direction.x * 8.0f, at->y + direction.y * 8.0f),
+          ImVec2(at->x + direction.x * 12.0f, at->y + direction.y * 12.0f),
+          LIGHT_COLOR,
+          1.5f);
+    }
+  }
+}
+
+void ViewportPanel::drawOutline(const EditorContext& context,
+                                const View& view,
+                                const sfs::Entity& entity,
+                                ImU32 color,
+                                float thickness) const
+{
+  const std::optional<sfs::Aabb> bounds = branchBounds(context, entity);
+
+  if (!bounds)
+    return;
+
+  // The box's 8 corners (bit i of the index picks min/max on axis i) and 12
+  // edges (corners differing in one bit).
+  std::array<std::optional<ImVec2>, 8> corners;
+
+  for (int i = 0; i < 8; ++i)
+    corners[i] = toScreen(view,
+                          {(i & 1) ? bounds->max.x : bounds->min.x,
+                           (i & 2) ? bounds->max.y : bounds->min.y,
+                           (i & 4) ? bounds->max.z : bounds->min.z});
+
+  ImDrawList* drawList = ImGui::GetWindowDrawList();
+
+  for (int a = 0; a < 8; ++a)
+    for (const int bit : {1, 2, 4})
+    {
+      const int b = a | bit;
+
+      if (b != a && corners[a] && corners[b])
+        drawList->AddLine(*corners[a], *corners[b], color, thickness);
+    }
+}
+
+bool ViewportPanel::drawPlanarGizmo(EditorContext& context,
+                                    const View& view,
+                                    bool snapping)
+{
+  // The selection where its plane puts it (several: their middle, turned as
+  // the one selected last); the handles move them across the plane, each by
+  // as much (an isometric sprite always faces the view, so they don't turn).
+  // It works on world transforms, so a child moves where it's seen.
+  const sfs::Space2D& space = *context.render->space2D();
+  const bool isometric =
+      space.projection == sfs::Space2D::Projection::Isometric;
+  const std::vector<sfs::Entity> group = movableSelection(context);
+
+  if (group.empty())
+    return false;
+
+  const bool wasUsing = ImGuizmo::IsUsing();
+
+  if (!wasUsing)
+  {
+    // The handles, and where everything is as a drag starts: each frame's
+    // drag is applied to that, so nothing drifts or sticks while snapping.
+    m_planarStart.clear();
+    glm::vec3 middle(0.0f);
+
+    for (const sfs::Entity& entity : group)
+    {
+      const sfs::TransformComponent world =
+          sfs::hierarchy::worldTransform(entity);
+      m_planarStart.emplace_back(entity, world);
+      middle += space.place(world.position2D(), world.position.z);
+    }
+
+    middle /= static_cast<float>(group.size());
+    const sfs::TransformComponent primary = sfs::hierarchy::worldTransform(
+        context.selection.hasComponent<sfs::TransformComponent>()
+            ? context.selection
+            : group.front());
+    const float turn = isometric ? 0.0f : primary.yaw() * space.ySign();
+    // A mirrored (negative) scale stays the entity's: the handles get its size.
+    const glm::vec2 size =
+        group.size() == 1 ? glm::abs(primary.scale2D()) : glm::vec2(1.0f);
+    m_groupHandles =
+        glm::translate(glm::mat4(1.0f), middle) *
+        glm::rotate(glm::mat4(1.0f), turn, glm::vec3(0.0f, 0.0f, 1.0f)) *
+        glm::scale(glm::mat4(1.0f), glm::vec3(size, 1.0f));
+    m_planarHandles = m_groupHandles;
+  }
+
+  ImGuizmo::OPERATION operation = ImGuizmo::TRANSLATE_X | ImGuizmo::TRANSLATE_Y;
+
+  if (m_tool == Tool::Rotate && !isometric)
+    operation = ImGuizmo::ROTATE_Z;
+  else if (m_tool == Tool::Scale)
+    operation = ImGuizmo::SCALE_X | ImGuizmo::SCALE_Y;
+
+  const std::array<float, 3> turnSnap{ROTATE_SNAP, ROTATE_SNAP, ROTATE_SNAP};
+  const std::array<float, 3> scaleSnap{SCALE_SNAP, SCALE_SNAP, SCALE_SNAP};
+  const float* snap = !snapping                         ? nullptr
+                      : operation == ImGuizmo::ROTATE_Z ? turnSnap.data()
+                      : m_tool == Tool::Scale           ? scaleSnap.data()
+                                              : nullptr; // moves snap below
+
+  const bool changed = ImGuizmo::Manipulate(glm::value_ptr(view.view),
+                                            glm::value_ptr(view.projection),
+                                            operation,
+                                            ImGuizmo::LOCAL,
+                                            glm::value_ptr(m_planarHandles),
+                                            nullptr,
+                                            snap);
+  const bool usingNow = ImGuizmo::IsUsing();
+
+  if (!wasUsing && usingNow)
+    context.history->beginChange();
+
+  if (changed)
+  {
+    // The drag so far: how far the handles moved, turned and scaled.
+    const auto axes = [](const glm::mat4& m)
+    {
+      return glm::vec2(
+          glm::length(glm::vec3(m[0])), glm::length(glm::vec3(m[1])));
+    };
+    const auto turnOf = [](const glm::mat4& m)
+    { return std::atan2(m[0][1], m[0][0]); };
+    const glm::vec3 moved =
+        glm::vec3(m_planarHandles[3]) - glm::vec3(m_groupHandles[3]);
+    const float turned =
+        (turnOf(m_planarHandles) - turnOf(m_groupHandles)) * space.ySign();
+    const glm::vec2 scaled = axes(m_planarHandles) /
+                             glm::max(axes(m_groupHandles), glm::vec2(1.0e-6f));
+
+    for (const auto& [entity, start] : m_planarStart)
+    {
+      if (!entity.isValid())
+        continue;
+
+      sfs::TransformComponent world = start;
+      // Back onto the game's plane, at the same height: whole pixels (flat)
+      // or half tiles (isometric) when snapping.
+      const float height = start.position.z;
+      glm::vec2 position = space.unplace(
+          glm::vec2(space.place(start.position2D(), height) + moved), height);
+
+      if (snapping && m_tool == Tool::Move)
+      {
+        const float step = isometric ? 0.5f : 1.0f;
+        position = glm::round(position / step) * step;
+      }
+
+      world.setPosition2D(position);
+
+      if (!isometric)
+        world.rotation = glm::angleAxis(turned, glm::vec3(0.0f, 0.0f, 1.0f)) *
+                         start.rotation;
+
+      world.scale.x = start.scale.x * scaled.x;
+      world.scale.y = start.scale.y * scaled.y;
+      sfs::hierarchy::setWorldTransform(entity, world);
+    }
+  }
+
+  if (wasUsing && !usingNow)
+    context.history->endChange();
+
+  return usingNow || ImGuizmo::IsOver();
+}
+
+void ViewportPanel::drawSelectionOutline(const EditorContext& context,
+                                         const View& view) const
+{
+  // Everything selected; the one selected last (the gizmo's) bolder.
+  for (const sfs::Entity& entity : context.selected())
+    drawOutline(context,
+                view,
+                entity,
+                SELECTION_COLOR,
+                entity == context.selection ? 1.5f : 1.0f);
 }
 
 void ViewportPanel::drawToolbar(const EditorContext& context)
@@ -332,6 +904,7 @@ void ViewportPanel::drawToolbar(const EditorContext& context)
   ImGui::SetItemTooltip(
       "Show light icons, the selection outline and the gizmo\n(remembered "
       "separately for editing and Play)");
+
   // While editing, whether animated materials and grass's wind move; Play
   // always does.
   if (!context.playing)
@@ -342,22 +915,29 @@ void ViewportPanel::drawToolbar(const EditorContext& context)
         "Move animated materials and sway grass in the wind while editing\n"
         "(Play always does)");
   }
+
   if (context.render)
     context.render->setAnimating(context.playing || m_animate);
+
   if (!gizmosVisible(context))
     return;
+
   ImGui::SameLine();
 
   const auto toolButton = [&](const char* label, Tool tool, const char* tip)
   {
     const bool active = m_tool == tool;
+
     if (active)
       ImGui::PushStyleColor(
           ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+
     if (ImGui::Button(label))
       m_tool = tool;
+
     if (active)
       ImGui::PopStyleColor();
+
     ImGui::SetItemTooltip("%s", tip);
     ImGui::SameLine();
   };
@@ -365,6 +945,7 @@ void ViewportPanel::drawToolbar(const EditorContext& context)
   toolButton("Move", Tool::Move, "Move (W)");
   toolButton("Rotate", Tool::Rotate, "Rotate (E)");
   toolButton("Scale", Tool::Scale, "Scale (R)");
+
   // The grass brush, for grass (only then: a 3D scene's).
   if (hasGrass(context.selection) && !context.render->space2D())
     toolButton("Grass",
@@ -372,16 +953,28 @@ void ViewportPanel::drawToolbar(const EditorContext& context)
                "Paint where the grass grows (B): drag over it, Shift to erase");
   else if (m_tool == Tool::GrassBrush)
     m_tool = Tool::Move;
+
   // The terrain brush, for a terrain material (its splat map).
-  const std::shared_ptr<const sfs::TerrainMaterial> terrain = terrainOf(context, context.selection);
+  const std::shared_ptr<const sfs::TerrainMaterial> terrain =
+      terrainOf(context, context.selection);
+
   if (terrain && !context.render->space2D())
-    toolButton("Terrain", Tool::TerrainBrush, "Paint the terrain's layers (T): drag over it, Shift for the first layer");
+    toolButton("Terrain",
+               Tool::TerrainBrush,
+               "Paint the terrain's layers (T): drag over it, Shift for the "
+               "first layer");
   else if (m_tool == Tool::TerrainBrush)
     m_tool = Tool::Move;
+
   if (m_tool == Tool::TerrainBrush && terrain)
   {
     ImGui::SetNextItemWidth(110.0f);
-    ImGui::SliderFloat("Size", &m_terrainSize, 0.25f, 40.0f, "%.1f", ImGuiSliderFlags_Logarithmic);
+    ImGui::SliderFloat("Size",
+                       &m_terrainSize,
+                       0.25f,
+                       40.0f,
+                       "%.1f",
+                       ImGuiSliderFlags_Logarithmic);
     ImGui::SetItemTooltip("How wide the brush is, in world units");
     ImGui::SameLine();
     ImGui::SetNextItemWidth(90.0f);
@@ -397,29 +990,44 @@ void ViewportPanel::drawToolbar(const EditorContext& context)
     m_terrainLayer = std::clamp(m_terrainLayer, 0, count - 1);
     std::vector<std::string> names;
     names.reserve(static_cast<std::size_t>(count));
+
     for (int i = 0; i < count; ++i)
     {
-      const std::string own = i < static_cast<int>(terrain->layers.size())
-                                  ? terrain->layers[static_cast<std::size_t>(i)].name
-                                  : std::string();
-      names.push_back(std::to_string(i + 1) + ": " + (own.empty() ? "Layer" : own));
+      const std::string own =
+          i < static_cast<int>(terrain->layers.size())
+              ? terrain->layers[static_cast<std::size_t>(i)].name
+              : std::string();
+      names.push_back(std::to_string(i + 1) + ": " +
+                      (own.empty() ? "Layer" : own));
     }
+
     ImGui::SetNextItemWidth(110.0f);
-    if (ImGui::BeginCombo("##terrainLayer", names[static_cast<std::size_t>(m_terrainLayer)].c_str()))
+
+    if (ImGui::BeginCombo(
+            "##terrainLayer",
+            names[static_cast<std::size_t>(m_terrainLayer)].c_str()))
     {
       for (int i = 0; i < count; ++i)
-        if (ImGui::Selectable(names[static_cast<std::size_t>(i)].c_str(), i == m_terrainLayer))
+        if (ImGui::Selectable(names[static_cast<std::size_t>(i)].c_str(),
+                              i == m_terrainLayer))
           m_terrainLayer = i;
+
       ImGui::EndCombo();
     }
-    ImGui::SetItemTooltip("Which layer it paints (Shift: the first, as an eraser)");
+
+    ImGui::SetItemTooltip(
+        "Which layer it paints (Shift: the first, as an eraser)");
+
     if (!terrain->splat)
     {
       ImGui::SameLine();
-      ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "No splat map: make one in the material");
+      ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f),
+                         "No splat map: make one in the material");
     }
+
     return;
   }
+
   if (m_tool == Tool::GrassBrush)
   {
     ImGui::SetNextItemWidth(110.0f);
@@ -437,16 +1045,11 @@ void ViewportPanel::drawToolbar(const EditorContext& context)
     ImGui::SameLine();
     // Which map: where it grows, how long, data for its material, or where
     // it may grow at all (a crisp edge).
-    static constexpr const char* kChannels[] = {"Coverage",
-                                                "Length",
-                                                "Data 0",
-                                                "Data 1",
-                                                "Data 2",
-                                                "Data 3",
-                                                "Bounds"};
+    static constexpr const char* CHANNELS[] = {
+        "Coverage", "Length", "Data 0", "Data 1", "Data 2", "Data 3", "Bounds"};
     ImGui::SetNextItemWidth(90.0f);
     ImGui::Combo(
-        "##channel", &m_brushChannel, kChannels, IM_ARRAYSIZE(kChannels));
+        "##channel", &m_brushChannel, CHANNELS, IM_ARRAYSIZE(CHANNELS));
     ImGui::SetItemTooltip(
         "What it paints: where grass grows (thinning out at the edge), how "
         "long it is, data its material reads, or its bounds (none past them, "
@@ -461,607 +1064,98 @@ void ViewportPanel::drawToolbar(const EditorContext& context)
       const sfs::GrassGround* ground =
           grassModule ? grassModule->ground(context.selection) : nullptr;
       auto* grass = context.selection.getComponent<sfs::GrassComponent>();
+
       if (!ground || !grass)
         return;
+
       nlohmann::json paint = nlohmann::json::object();
+
       if (!full)
       {
         sfs::GrassMaps bare(ground->grid());
         bare.fill(sfs::GrassMaps::Coverage, 0.0f);
         paint = bare.toJson();
       }
+
       context.history->change([&] { grass->paint = paint; });
     };
     ImGui::SameLine();
+
     if (ImGui::Button("Fill"))
       fillAll(true);
+
     ImGui::SetItemTooltip("Unpainted again: full, full-length grass all over");
     ImGui::SameLine();
+
     if (ImGui::Button("Clear"))
       fillAll(false);
+
     ImGui::SetItemTooltip(
         "Clear all of it, to paint grass in where you want it");
     return;
   }
+
   if (ImGui::Button(m_localSpace ? "Local" : "World"))
     m_localSpace = !m_localSpace;
+
   ImGui::SetItemTooltip("Gizmo axes: world or the object's own");
   ImGui::SameLine();
   ImGui::Checkbox("Snap", &m_snap);
   ImGui::SetItemTooltip("Snap moves/rotations/scales (or hold Ctrl)");
 }
 
-void ViewportPanel::handleShortcuts(EditorContext& context)
-{
-  // Not while navigating (right-drag) or typing.
-  if (ImGui::IsMouseDown(ImGuiMouseButton_Right) || ImGui::GetIO().WantTextInput)
-    return;
-
-  if (ImGui::IsKeyPressed(ImGuiKey_W, false))
-    m_tool = Tool::Move;
-  if (ImGui::IsKeyPressed(ImGuiKey_E, false))
-    m_tool = Tool::Rotate;
-  if (ImGui::IsKeyPressed(ImGuiKey_R, false))
-    m_tool = Tool::Scale;
-  if (ImGui::IsKeyPressed(ImGuiKey_B, false) && hasGrass(context.selection) && !context.render->space2D())
-    m_tool = Tool::GrassBrush;
-  if (ImGui::IsKeyPressed(ImGuiKey_T, false) && terrainOf(context, context.selection) && !context.render->space2D())
-    m_tool = Tool::TerrainBrush;
-
-  if (ImGui::IsKeyPressed(ImGuiKey_F, false) && context.hasSelection())
-    context.focusRequest = context.selection;
-}
-
-bool ViewportPanel::drawGizmo(EditorContext& context, const View& view)
-{
-  if (!context.hasSelection() || !context.selection.hasComponent<sfs::TransformComponent>())
-    return false;
-
-  ImGuizmo::SetDrawlist();
-  ImGuizmo::SetRect(view.origin.x, view.origin.y, view.size.x, view.size.y);
-  ImGuizmo::SetOrthographic(context.render->camera().projection ==
-                            sfs::Camera::Projection::Orthographic);
-
-  ImGuizmo::OPERATION operation = ImGuizmo::TRANSLATE;
-  float snapValue = kMoveSnap;
-  if (m_tool == Tool::Rotate)
-  {
-    operation = ImGuizmo::ROTATE;
-    snapValue = kRotateSnap;
-  }
-  else if (m_tool == Tool::Scale)
-  {
-    operation = ImGuizmo::SCALE;
-    snapValue = kScaleSnap;
-  }
-  const bool snapping = m_snap || ImGui::GetIO().KeyCtrl;
-  const std::array<float, 3> snap{snapValue, snapValue, snapValue};
-  if (context.render->space2D())
-    return drawPlanarGizmo(context, view, snapping);
-
-  // Several selected: the handles in the middle of them (see moveGroup()).
-  const std::vector<sfs::Entity> group = movableSelection(context);
-  if (context.selected().size() > 1 && !group.empty())
-    return drawGroupGizmo(context, view, group, operation, snapping ? snap.data() : nullptr);
-
-  // Manipulate a copy, so an edit can be bracketed for undo before it lands:
-  // the snapshot is taken the frame the drag starts, while the scene is still
-  // unchanged. The gizmo works in world space; the result goes back into the
-  // transform relative to the parent.
-  glm::mat4 model = sfs::hierarchy::worldMatrix(context.selection);
-  const bool wasUsing = ImGuizmo::IsUsing();
-  const bool changed = ImGuizmo::Manipulate(glm::value_ptr(view.view),
-                                            glm::value_ptr(view.projection),
-                                            operation,
-                                            m_localSpace ? ImGuizmo::LOCAL : ImGuizmo::WORLD,
-                                            glm::value_ptr(model),
-                                            nullptr,
-                                            snapping ? snap.data() : nullptr);
-  const bool usingNow = ImGuizmo::IsUsing();
-
-  if (!wasUsing && usingNow)
-    context.history->beginChange();
-  if (changed)
-    sfs::hierarchy::setWorldMatrix(context.selection, model);
-  if (wasUsing && !usingNow)
-    context.history->endChange();
-
-  return usingNow || ImGuizmo::IsOver();
-}
-
-bool ViewportPanel::drawPlanarGizmo(EditorContext& context, const View& view, bool snapping)
-{
-  // The selection where its plane puts it (several: their middle, turned as
-  // the one selected last); the handles move them across the plane, each by
-  // as much (an isometric sprite always faces the view, so they don't turn).
-  // It works on world transforms, so a child moves where it's seen.
-  const sfs::Space2D& space = *context.render->space2D();
-  const bool isometric = space.projection == sfs::Space2D::Projection::Isometric;
-  const std::vector<sfs::Entity> group = movableSelection(context);
-  if (group.empty())
-    return false;
-
-  const bool wasUsing = ImGuizmo::IsUsing();
-  if (!wasUsing)
-  {
-    // The handles, and where everything is as a drag starts: each frame's
-    // drag is applied to that, so nothing drifts or sticks while snapping.
-    m_planarStart.clear();
-    glm::vec3 middle(0.0f);
-    for (const sfs::Entity& entity : group)
-    {
-      const sfs::TransformComponent world = sfs::hierarchy::worldTransform(entity);
-      m_planarStart.emplace_back(entity, world);
-      middle += space.place(world.position2D(), world.position.z);
-    }
-    middle /= static_cast<float>(group.size());
-    const sfs::TransformComponent primary = sfs::hierarchy::worldTransform(
-        context.selection.hasComponent<sfs::TransformComponent>() ? context.selection : group.front());
-    const float turn = isometric ? 0.0f : primary.yaw() * space.ySign();
-    // A mirrored (negative) scale stays the entity's: the handles get its size.
-    const glm::vec2 size = group.size() == 1 ? glm::abs(primary.scale2D()) : glm::vec2(1.0f);
-    m_groupHandles = glm::translate(glm::mat4(1.0f), middle) *
-                     glm::rotate(glm::mat4(1.0f), turn, glm::vec3(0.0f, 0.0f, 1.0f)) *
-                     glm::scale(glm::mat4(1.0f), glm::vec3(size, 1.0f));
-    m_planarHandles = m_groupHandles;
-  }
-
-  ImGuizmo::OPERATION operation = ImGuizmo::TRANSLATE_X | ImGuizmo::TRANSLATE_Y;
-  if (m_tool == Tool::Rotate && !isometric)
-    operation = ImGuizmo::ROTATE_Z;
-  else if (m_tool == Tool::Scale)
-    operation = ImGuizmo::SCALE_X | ImGuizmo::SCALE_Y;
-  const std::array<float, 3> turnSnap{kRotateSnap, kRotateSnap, kRotateSnap};
-  const std::array<float, 3> scaleSnap{kScaleSnap, kScaleSnap, kScaleSnap};
-  const float* snap = !snapping                            ? nullptr
-                      : operation == ImGuizmo::ROTATE_Z ? turnSnap.data()
-                      : m_tool == Tool::Scale           ? scaleSnap.data()
-                                                        : nullptr; // moves snap below
-
-  const bool changed = ImGuizmo::Manipulate(glm::value_ptr(view.view),
-                                            glm::value_ptr(view.projection),
-                                            operation,
-                                            ImGuizmo::LOCAL,
-                                            glm::value_ptr(m_planarHandles),
-                                            nullptr,
-                                            snap);
-  const bool usingNow = ImGuizmo::IsUsing();
-  if (!wasUsing && usingNow)
-    context.history->beginChange();
-  if (changed)
-  {
-    // The drag so far: how far the handles moved, turned and scaled.
-    const auto axes = [](const glm::mat4& m)
-    { return glm::vec2(glm::length(glm::vec3(m[0])), glm::length(glm::vec3(m[1]))); };
-    const auto turnOf = [](const glm::mat4& m) { return std::atan2(m[0][1], m[0][0]); };
-    const glm::vec3 moved = glm::vec3(m_planarHandles[3]) - glm::vec3(m_groupHandles[3]);
-    const float turned = (turnOf(m_planarHandles) - turnOf(m_groupHandles)) * space.ySign();
-    const glm::vec2 scaled = axes(m_planarHandles) / glm::max(axes(m_groupHandles), glm::vec2(1.0e-6f));
-    for (const auto& [entity, start] : m_planarStart)
-    {
-      if (!entity.isValid())
-        continue;
-      sfs::TransformComponent world = start;
-      // Back onto the game's plane, at the same height: whole pixels (flat)
-      // or half tiles (isometric) when snapping.
-      const float height = start.position.z;
-      glm::vec2 position =
-          space.unplace(glm::vec2(space.place(start.position2D(), height) + moved), height);
-      if (snapping && m_tool == Tool::Move)
-      {
-        const float step = isometric ? 0.5f : 1.0f;
-        position = glm::round(position / step) * step;
-      }
-      world.setPosition2D(position);
-      if (!isometric)
-        world.rotation = glm::angleAxis(turned, glm::vec3(0.0f, 0.0f, 1.0f)) * start.rotation;
-      world.scale.x = start.scale.x * scaled.x;
-      world.scale.y = start.scale.y * scaled.y;
-      sfs::hierarchy::setWorldTransform(entity, world);
-    }
-  }
-  if (wasUsing && !usingNow)
-    context.history->endChange();
-  return usingNow || ImGuizmo::IsOver();
-}
-
-std::vector<sfs::Entity> ViewportPanel::movableSelection(const EditorContext& context)
-{
-  // Those with a place, but not inside another selected one (they move with
-  // it).
-  const std::vector<sfs::Entity> selected = context.selected();
-  std::vector<sfs::Entity> movable;
-  for (const sfs::Entity& entity : selected)
-    if (entity.hasComponent<sfs::TransformComponent>() &&
-        std::none_of(selected.begin(),
-                     selected.end(),
-                     [&](const sfs::Entity& outer)
-                     { return outer != entity && sfs::hierarchy::isAncestor(outer, entity); }))
-      movable.push_back(entity);
-  return movable;
-}
-
-bool ViewportPanel::drawGroupGizmo(EditorContext& context,
-                                   const View& view,
-                                   const std::vector<sfs::Entity>& group,
-                                   int operation,
-                                   const float* snap)
-{
-  // The handles: at their middle (the average of where they are), lined up
-  // with the world, or with the one selected last in Local. While dragging
-  // they're kept from frame to frame, so each frame's change is the step
-  // since the last.
-  const bool wasUsing = ImGuizmo::IsUsing();
-  if (!wasUsing)
-  {
-    glm::vec3 middle(0.0f);
-    for (const sfs::Entity& entity : group)
-      middle += glm::vec3(sfs::hierarchy::worldMatrix(entity)[3]);
-    middle /= static_cast<float>(group.size());
-    glm::mat4 turn(1.0f);
-    if (m_localSpace)
-    {
-      const glm::mat4 world = sfs::hierarchy::worldMatrix(context.selection);
-      turn = glm::mat4(glm::mat3(glm::normalize(glm::vec3(world[0])),
-                                 glm::normalize(glm::vec3(world[1])),
-                                 glm::normalize(glm::vec3(world[2]))));
-    }
-    m_groupHandles = turn;
-    m_groupHandles[3] = glm::vec4(middle, 1.0f);
-  }
-  glm::mat4 handles = m_groupHandles;
-  const bool changed = ImGuizmo::Manipulate(glm::value_ptr(view.view),
-                                            glm::value_ptr(view.projection),
-                                            static_cast<ImGuizmo::OPERATION>(operation),
-                                            m_localSpace ? ImGuizmo::LOCAL : ImGuizmo::WORLD,
-                                            glm::value_ptr(handles),
-                                            nullptr,
-                                            snap);
-  const bool usingNow = ImGuizmo::IsUsing();
-  if (!wasUsing && usingNow)
-    context.history->beginChange();
-  if (changed)
-  {
-    // The step: how far the handles moved, turned and scaled. Each one moves
-    // as far, and turns and scales as much about its own origin.
-    const auto axes = [](const glm::mat4& m)
-    { return glm::vec3(glm::length(glm::vec3(m[0])), glm::length(glm::vec3(m[1])), glm::length(glm::vec3(m[2]))); };
-    const auto turnOf = [&](const glm::mat4& m)
-    {
-      const glm::vec3 s = axes(m);
-      return glm::quat_cast(glm::mat3(glm::vec3(m[0]) / s.x, glm::vec3(m[1]) / s.y, glm::vec3(m[2]) / s.z));
-    };
-    const glm::vec3 moved = glm::vec3(handles[3]) - glm::vec3(m_groupHandles[3]);
-    const glm::quat turned = turnOf(handles) * glm::inverse(turnOf(m_groupHandles));
-    const glm::vec3 scaled = axes(handles) / axes(m_groupHandles);
-    for (const sfs::Entity& entity : group)
-    {
-      const glm::mat4 world = sfs::hierarchy::worldMatrix(entity);
-      const glm::vec3 scale = axes(world) * scaled;
-      const glm::quat rotation = turned * turnOf(world);
-      glm::mat4 next = glm::mat4_cast(rotation);
-      next[0] *= scale.x;
-      next[1] *= scale.y;
-      next[2] *= scale.z;
-      next[3] = glm::vec4(glm::vec3(world[3]) + moved, 1.0f);
-      sfs::hierarchy::setWorldMatrix(entity, next);
-    }
-    m_groupHandles = handles;
-  }
-  if (wasUsing && !usingNow)
-    context.history->endChange();
-  return usingNow || ImGuizmo::IsOver();
-}
-
-bool ViewportPanel::paintGrass(EditorContext& context,
-                               const View& view,
-                               bool hovered)
-{
-  const sfs::Entity lawn = context.selection;
-  if (!hasGrass(lawn))
-  {
-    endGrassStroke(context);
-    return false;
-  }
-  const bool down = ImGui::IsMouseDown(ImGuiMouseButton_Left);
-  if (m_brushStroke && !down)
-    endGrassStroke(context);
-  if (!hovered && !m_brushStroke)
-    return false;
-
-  // Where the cursor meets the grass's mesh.
-  const sfs::MeshHandle mesh =
-      lawn.getComponent<sfs::MeshRendererComponent>()->mesh;
-  sfs::MeshLibrary& meshes = context.render->meshes();
-  const glm::mat4 world = sfs::hierarchy::worldMatrix(lawn);
-  const ImVec2 mouse = ImGui::GetMousePos();
-  const sfs::Ray ray = context.render->camera().screenRay(
-      {mouse.x - view.origin.x, mouse.y - view.origin.y},
-      {view.size.x, view.size.y});
-  const std::optional<sfs::MeshLibrary::RayHit> hit =
-      meshes.raycast(mesh, world, ray);
-  if (!hit)
-    return hovered;
-  const glm::vec3 point = ray.origin + ray.direction * hit->distance;
-  const bool erase = m_brushErase || ImGui::GetIO().KeyShift;
-
-  // The brush's ring, flat on the ground under the cursor.
-  const float radius = m_brushSize * 0.5f;
-  std::array<ImVec2, 40> ring;
-  int count = 0;
-  for (int i = 0; i < static_cast<int>(ring.size()); ++i)
-  {
-    const float angle =
-        6.2831853f * static_cast<float>(i) / static_cast<float>(ring.size());
-    if (const auto at = toScreen(
-            view,
-            point + glm::vec3(std::cos(angle), std::sin(angle), 0.0f) * radius))
-      ring[count++] = *at;
-  }
-  const ImU32 color =
-      erase ? IM_COL32(235, 110, 90, 230) : IM_COL32(150, 230, 120, 230);
-  ImGui::GetWindowDrawList()->AddPolyline(
-      ring.data(), count, color, ImDrawFlags_Closed, 2.0f);
-
-  // Painting while the button's down: one undo step a stroke.
-  if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
-  {
-    context.history->beginChange();
-    m_brushStroke = true;
-  }
-  // Into the grass's maps as they are (unpainted grass gets them, full: what's
-  // there stays until painted over), straight to the GPU; the component
-  // keeps them once the stroke ends. At full strength a stroke paints fully
-  // in a twelfth of a second.
-  if (m_brushStroke && down)
-    if (auto* grassModule = context.render->module<sfs::GrassModule>())
-      grassModule->stamp(
-          lawn,
-          static_cast<sfs::GrassMaps::Channel>(m_brushChannel),
-          point,
-          radius,
-          erase ? 0.0f : 1.0f,
-          sfs::GrassMaps::Blend::Toward,
-          std::min(m_brushStrength * 12.0f * ImGui::GetIO().DeltaTime, 1.0f));
-  return true;
-}
-
-void ViewportPanel::endGrassStroke(EditorContext& context)
-{
-  if (!m_brushStroke)
-    return;
-  m_brushStroke = false;
-  // What the stroke painted, into the component (and so the undo step).
-  auto* grassModule = context.render->module<sfs::GrassModule>();
-  if (grassModule && hasGrass(context.selection))
-    if (const sfs::GrassMaps* maps = grassModule->maps(context.selection))
-      context.selection.getComponent<sfs::GrassComponent>()->paint =
-          maps->toJson();
-  context.history->endChange();
-}
-
-bool ViewportPanel::paintTerrain(EditorContext& context, const View& view, bool hovered)
-{
-  const sfs::Entity ground = context.selection;
-  const std::shared_ptr<const sfs::TerrainMaterial> terrain = terrainOf(context, ground);
-  if (!terrain || !terrain->splat || terrain->splat->empty())
-  {
-    endTerrainStroke(context);
-    return false;
-  }
-  const bool down = ImGui::IsMouseDown(ImGuiMouseButton_Left);
-  if (m_terrainSplat && (!down || m_terrainSplat != terrain->splat))
-    endTerrainStroke(context);
-  if (!hovered && !m_terrainSplat)
-    return false;
-
-  // Where the cursor meets the mesh, and its texture coordinates there.
-  const sfs::MeshHandle mesh = ground.getComponent<sfs::MeshRendererComponent>()->mesh;
-  const glm::mat4 world = sfs::hierarchy::worldMatrix(ground);
-  const ImVec2 mouse = ImGui::GetMousePos();
-  const sfs::Ray ray = context.render->camera().screenRay({mouse.x - view.origin.x, mouse.y - view.origin.y},
-                                                          {view.size.x, view.size.y});
-  const std::optional<sfs::MeshLibrary::RayHit> hit = context.render->meshes().raycast(mesh, world, ray);
-  if (!hit)
-    return hovered;
-  const glm::vec3 point = ray.origin + ray.direction * hit->distance;
-  const int layer = ImGui::GetIO().KeyShift ? 0 : m_terrainLayer;
-
-  // Its ring, flat on the ground, and its soft edge's start inside it.
-  const float radius = m_terrainSize * 0.5f;
-  const ImU32 color = layer == 0 ? IM_COL32(235, 180, 90, 230) : IM_COL32(120, 200, 255, 230);
-  for (const float scale : {1.0f, 1.0f - m_terrainSoftness})
-  {
-    if (scale <= 0.02f || (scale < 1.0f && m_terrainSoftness <= 0.02f))
-      continue;
-    std::array<ImVec2, 48> ring;
-    int count = 0;
-    for (int i = 0; i < static_cast<int>(ring.size()); ++i)
-    {
-      const float angle = 6.2831853f * static_cast<float>(i) / static_cast<float>(ring.size());
-      if (const auto at = toScreen(view, point + glm::vec3(std::cos(angle), std::sin(angle), 0.0f) * radius * scale))
-        ring[count++] = *at;
-    }
-    ImGui::GetWindowDrawList()->AddPolyline(ring.data(), count, color, ImDrawFlags_Closed, scale < 1.0f ? 1.0f : 2.0f);
-  }
-
-  if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
-  {
-    m_terrainSplat = terrain->splat;
-    m_terrainSinceGrass = 0.0f;
-    m_terrainBefore = terrain->splat->rgba;
-    m_terrainFrom = glm::ivec2(std::numeric_limits<int>::max());
-    m_terrainTo = glm::ivec2(std::numeric_limits<int>::min());
-  }
-  if (!m_terrainSplat || !down || hit->uvPerUnit.x <= 0.0f)
-    return true;
-
-  // Into the splat map as it is, in place (every material using it shows the
-  // change), and up to the GPU; the grass on it grows to match every so
-  // often. At full strength a stroke paints fully in about a tenth of a
-  // second.
-  auto& splat = const_cast<sfs::TextureData&>(*m_terrainSplat); // painted in place, as intended
-  const float dt = ImGui::GetIO().DeltaTime;
-  const auto [from, to] = sfs::paintSplat(splat,
-                                          hit->uv,
-                                          hit->uvPerUnit * radius,
-                                          layer,
-                                          std::min(m_terrainStrength * 10.0f * dt, 1.0f),
-                                          m_terrainSoftness);
-  if (to.x > from.x && to.y > from.y)
-  {
-    context.render->renderer().updateTexture(m_terrainSplat, from, to);
-    m_terrainFrom = glm::min(m_terrainFrom, from);
-    m_terrainTo = glm::max(m_terrainTo, to);
-  }
-  m_terrainSinceGrass += dt;
-  if (m_terrainSinceGrass > 0.2f)
-  {
-    m_terrainSinceGrass = 0.0f;
-    if (auto* grassModule = context.render->module<sfs::GrassModule>())
-      grassModule->terrainPainted(ground);
-  }
-  return true;
-}
-
-void ViewportPanel::endTerrainStroke(EditorContext& context)
-{
-  if (!m_terrainSplat)
-    return;
-  const std::shared_ptr<const sfs::TextureData> splat = std::move(m_terrainSplat);
-  m_terrainSplat.reset();
-  const sfs::Entity ground = context.selection;
-  if (context.render)
-    if (auto* grassModule = context.render->module<sfs::GrassModule>())
-      grassModule->terrainPainted(ground);
-  saveSplat(context, *splat);
-
-  // Undoable: the texels it changed, as they were and as they are.
-  const glm::ivec2 from = m_terrainFrom;
-  const glm::ivec2 to = m_terrainTo;
-  std::vector<uint8_t> before = std::move(m_terrainBefore);
-  m_terrainBefore.clear();
-  if (!context.history || to.x <= from.x || to.y <= from.y || before.size() != splat->rgba.size())
-    return;
-  const auto region = [&](const std::vector<uint8_t>& rgba)
-  {
-    std::vector<uint8_t> out;
-    out.reserve(static_cast<std::size_t>(to.x - from.x) * static_cast<std::size_t>(to.y - from.y) * 4);
-    for (int y = from.y; y < to.y; ++y)
-    {
-      const auto row = rgba.begin() + (static_cast<std::ptrdiff_t>(y) * splat->width + from.x) * 4;
-      out.insert(out.end(), row, row + (to.x - from.x) * 4);
-    }
-    return out;
-  };
-  auto was = std::make_shared<const std::vector<uint8_t>>(region(before));
-  auto now = std::make_shared<const std::vector<uint8_t>>(region(splat->rgba));
-  EditorContext* ctx = &context;
-  const auto put = [ctx, splat, ground, from, to](const std::vector<uint8_t>& texels)
-  {
-    auto& map = const_cast<sfs::TextureData&>(*splat); // painted in place, as the brush does
-    for (int y = from.y; y < to.y; ++y)
-      std::copy_n(texels.begin() + static_cast<std::ptrdiff_t>(y - from.y) * (to.x - from.x) * 4,
-                  (to.x - from.x) * 4,
-                  map.rgba.begin() + (static_cast<std::ptrdiff_t>(y) * map.width + from.x) * 4);
-    if (ctx->render)
-    {
-      ctx->render->renderer().updateTexture(splat, from, to);
-      if (auto* grassModule = ctx->render->module<sfs::GrassModule>(); grassModule && ground.isValid())
-        grassModule->terrainPainted(ground);
-    }
-    saveSplat(*ctx, map);
-  };
-  context.history->pushAssetEdit([put, was] { put(*was); }, [put, now] { put(*now); }, was->size() + now->size());
-}
-
-void ViewportPanel::saveSplat(EditorContext& context, const sfs::TextureData& splat)
-{
-  // Saved to the texture asset it was read from.
-  if (!context.scene || !context.assets)
-    return;
-  const std::optional<sfs::AssetId> id = context.scene->assetStore().textureId(&splat);
-  const sfs::AssetRecord* record = id ? context.assets->find(*id) : nullptr;
-  if (!record)
-  {
-    LOG_ERROR("The terrain's splat map isn't a texture asset: its painting isn't saved");
-    return;
-  }
-  if (!sfs::saveTexturePng(splat, context.assets->absolutePath(*record)))
-    LOG_ERROR("Can't save the splat map " + record->path.generic_string());
-}
-
-void ViewportPanel::pick(EditorContext& context, const View& view)
-{
-  const ImVec2 mouse = ImGui::GetMousePos();
-  const sfs::Ray ray = context.render->camera().screenRay(
-      {mouse.x - view.origin.x, mouse.y - view.origin.y}, {view.size.x, view.size.y});
-
-  std::optional<sfs::PickHit> hit =
-      sfs::pickEntity(*context.scene, context.render->meshes(), ray, context.render);
-  if (hit)
-    hit->entity = clickTarget(hit->entity, context.selection);
-  // Ctrl: add what's clicked to the selection, or take it out.
-  if (ImGui::GetIO().KeyCtrl && hit)
-  {
-    std::vector<sfs::Entity> group = context.selected();
-    if (const auto it = std::find(group.begin(), group.end(), hit->entity); it != group.end())
-    {
-      group.erase(it);
-      context.selection = group.empty() ? sfs::Entity() : group.back();
-    }
-    else
-    {
-      group.push_back(hit->entity);
-      context.selection = hit->entity;
-    }
-    context.selectionGroup = std::move(group);
-    return;
-  }
-  context.selection = hit ? hit->entity : sfs::Entity();
-}
-
 void ViewportPanel::dropAsset(EditorContext& context, const View& view)
 {
   if (!context.assets || !ImGui::BeginDragDropTarget())
     return;
-  const sfs::AssetRecord* dragged = assetDrop::draggedAsset(ImGui::GetDragDropPayload(), *context.assets);
+
+  const sfs::AssetRecord* dragged =
+      assetDrop::draggedAsset(ImGui::GetDragDropPayload(), *context.assets);
+
   if (dragged && assetDrop::placeable(*dragged))
   {
     // A prefab: placed where the pointer meets a surface, or the ground.
     const ImVec2 mouse = ImGui::GetMousePos();
     const sfs::Ray ray = context.render->camera().screenRay(
-        {mouse.x - view.origin.x, mouse.y - view.origin.y}, {view.size.x, view.size.y});
+        {mouse.x - view.origin.x, mouse.y - view.origin.y},
+        {view.size.x, view.size.y});
     // A 2D game's: on its plane, where it's drawn.
     const std::optional<sfs::Space2D>& space = context.render->space2D();
     std::optional<glm::vec3> point;
     float distance = 0.0f;
     std::optional<sfs::SurfaceHit> hit;
+
     if (!space)
       hit = sfs::pickSurface(*context.scene, context.render->meshes(), ray);
+
     if (hit)
       point = ray.at(hit->distance);
     else if (ray.intersectPlaneZ(0.0f, distance))
       point = ray.at(distance);
+
     const ImGuiPayload* payload =
         point ? ImGui::AcceptDragDropPayload(
                     assetDrop::kAssetPayload,
                     ImGuiDragDropFlags_AcceptBeforeDelivery |
                         ImGuiDragDropFlags_AcceptNoDrawDefaultRect)
               : nullptr;
+
     if (payload)
     {
       if (const std::optional<ImVec2> at = toScreen(view, *point))
       {
         ImDrawList* draw = ImGui::GetWindowDrawList();
-        draw->AddCircle(*at, 9.0f, kDropColor, 0, 2.0f);
-        draw->AddCircleFilled(*at, 3.0f, kDropColor);
+        draw->AddCircle(*at, 9.0f, DROP_COLOR, 0, 2.0f);
+        draw->AddCircleFilled(*at, 3.0f, DROP_COLOR);
       }
+
       if (payload->IsDelivery())
         prefabs::place(context,
                        prefabs::nameOf(dragged->id),
                        {},
-                       space ? glm::vec3(space->unplace(glm::vec2(*point)), 0.0f) : *point);
+                       space
+                           ? glm::vec3(space->unplace(glm::vec2(*point)), 0.0f)
+                           : *point);
     }
   }
   else if (dragged && assetDrop::fitsMaterialSlot(*dragged))
@@ -1070,7 +1164,8 @@ void ViewportPanel::dropAsset(EditorContext& context, const View& view)
     // slots that part of the mesh is.
     const ImVec2 mouse = ImGui::GetMousePos();
     const sfs::Ray ray = context.render->camera().screenRay(
-        {mouse.x - view.origin.x, mouse.y - view.origin.y}, {view.size.x, view.size.y});
+        {mouse.x - view.origin.x, mouse.y - view.origin.y},
+        {view.size.x, view.size.y});
     const std::optional<sfs::SurfaceHit> hit =
         sfs::pickSurface(*context.scene, context.render->meshes(), ray);
     // Accepted every frame it hovers (not only on release), so the object it
@@ -1081,6 +1176,7 @@ void ViewportPanel::dropAsset(EditorContext& context, const View& view)
                   ImGuiDragDropFlags_AcceptBeforeDelivery |
                       ImGuiDragDropFlags_AcceptNoDrawDefaultRect)
             : nullptr;
+
     if (payload)
     {
       ImGui::PushClipRect(
@@ -1090,8 +1186,11 @@ void ViewportPanel::dropAsset(EditorContext& context, const View& view)
       drawDropTarget(context, view, *hit);
       ImGui::PopClipRect();
     }
+
     if (payload && payload->IsDelivery())
-      if (const std::string material = assetDrop::materialFor(*context.assets, *dragged); !material.empty())
+      if (const std::string material =
+              assetDrop::materialFor(*context.assets, *dragged);
+          !material.empty())
       {
         assetDrop::setSlot(
             hit->entity, hit->section, material, context.history);
@@ -1099,52 +1198,154 @@ void ViewportPanel::dropAsset(EditorContext& context, const View& view)
         context.selectedAsset = {};
       }
   }
+
   ImGui::EndDragDropTarget();
 }
 
-void ViewportPanel::drawDropTarget(const EditorContext& context, const View& view, const sfs::SurfaceHit& hit) const
+void ViewportPanel::endGrassStroke(EditorContext& context)
 {
-  drawOutline(context, view, hit.entity, kDropColor, 2.5f);
+  if (!m_brushStroke)
+    return;
 
-  // Above the cursor (the drag's own tooltip is below it): the object, and for
-  // a model with several materials, the one (slot) it would replace.
-  std::string text = entityLabel(hit.entity);
-  if (sfs::MeshRendererComponent* meshRenderer = hit.entity.getComponent<sfs::MeshRendererComponent>())
-  {
-    const std::vector<sfs::MeshSection> slots = context.render->meshes().sections(meshRenderer->mesh);
-    if (slots.size() > 1 && hit.section < slots.size())
-      text += " : " + (slots[hit.section].name.empty() ? "Material " + std::to_string(hit.section + 1)
-                                                       : slots[hit.section].name);
-  }
-  const ImVec2 mouse = ImGui::GetMousePos();
-  const ImVec2 size = ImGui::CalcTextSize(text.c_str());
-  const ImVec2 at(mouse.x + 12.0f, mouse.y - size.y - 14.0f);
-  ImDrawList* drawList = ImGui::GetWindowDrawList();
-  drawList->AddRectFilled(ImVec2(at.x - 4.0f, at.y - 2.0f),
-                          ImVec2(at.x + size.x + 4.0f, at.y + size.y + 2.0f),
-                          IM_COL32(20, 20, 20, 200),
-                          3.0f);
-  drawList->AddText(at, kDropColor, text.c_str());
+  m_brushStroke = false;
+  // What the stroke painted, into the component (and so the undo step).
+  auto* grassModule = context.render->module<sfs::GrassModule>();
+
+  if (grassModule && hasGrass(context.selection))
+    if (const sfs::GrassMaps* maps = grassModule->maps(context.selection))
+      context.selection.getComponent<sfs::GrassComponent>()->paint =
+          maps->toJson();
+
+  context.history->endChange();
 }
 
-std::optional<sfs::Aabb> ViewportPanel::branchBounds(const EditorContext& context, const sfs::Entity& entity) const
+void ViewportPanel::endTerrainStroke(EditorContext& context)
 {
-  // Its own bounds, or (with meshes below it, e.g. a prefab's empty root)
-  // those of the meshes in its branch.
-  const sfs::MeshLibrary& meshes = context.render->meshes();
-  sfs::Aabb meshBounds;
-  const auto add = [&](const sfs::Entity& part)
+  if (!m_terrainSplat)
+    return;
+
+  const std::shared_ptr<const sfs::TextureData> splat =
+      std::move(m_terrainSplat);
+  m_terrainSplat.reset();
+  const sfs::Entity ground = context.selection;
+
+  if (context.render)
+    if (auto* grassModule = context.render->module<sfs::GrassModule>())
+      grassModule->terrainPainted(ground);
+
+  saveSplat(context, *splat);
+
+  // Undoable: the texels it changed, as they were and as they are.
+  const glm::ivec2 from = m_terrainFrom;
+  const glm::ivec2 to = m_terrainTo;
+  std::vector<uint8_t> before = std::move(m_terrainBefore);
+  m_terrainBefore.clear();
+
+  if (!context.history || to.x <= from.x || to.y <= from.y ||
+      before.size() != splat->rgba.size())
+    return;
+
+  const auto region = [&](const std::vector<uint8_t>& rgba)
   {
-    if (part.hasComponent<sfs::MeshRendererComponent>())
-      if (const auto bounds = sfs::entityBounds(part, meshes, context.render))
-        meshBounds.expand(*bounds);
+    std::vector<uint8_t> out;
+    out.reserve(static_cast<std::size_t>(to.x - from.x) *
+                static_cast<std::size_t>(to.y - from.y) * 4);
+
+    for (int y = from.y; y < to.y; ++y)
+    {
+      const auto row =
+          rgba.begin() +
+          (static_cast<std::ptrdiff_t>(y) * splat->width + from.x) * 4;
+      out.insert(out.end(), row, row + (to.x - from.x) * 4);
+    }
+
+    return out;
   };
-  add(entity);
-  for (const sfs::Entity& part : sfs::hierarchy::descendants(entity))
-    add(part);
-  if (!meshBounds.empty())
-    return meshBounds;
-  return sfs::entityBounds(entity, meshes, context.render);
+  auto was = std::make_shared<const std::vector<uint8_t>>(region(before));
+  auto now = std::make_shared<const std::vector<uint8_t>>(region(splat->rgba));
+  EditorContext* ctx = &context;
+  const auto put =
+      [ctx, splat, ground, from, to](const std::vector<uint8_t>& texels)
+  {
+    auto& map = const_cast<sfs::TextureData&>(
+        *splat); // painted in place, as the brush does
+
+    for (int y = from.y; y < to.y; ++y)
+      std::copy_n(
+          texels.begin() +
+              static_cast<std::ptrdiff_t>(y - from.y) * (to.x - from.x) * 4,
+          (to.x - from.x) * 4,
+          map.rgba.begin() +
+              (static_cast<std::ptrdiff_t>(y) * map.width + from.x) * 4);
+
+    if (ctx->render)
+    {
+      ctx->render->renderer().updateTexture(splat, from, to);
+
+      if (auto* grassModule = ctx->render->module<sfs::GrassModule>();
+          grassModule && ground.isValid())
+        grassModule->terrainPainted(ground);
+    }
+
+    saveSplat(*ctx, map);
+  };
+  context.history->pushAssetEdit([put, was] { put(*was); },
+                                 [put, now] { put(*now); },
+                                 was->size() + now->size());
+}
+
+bool ViewportPanel::gizmosVisible(const EditorContext& context) const
+{
+  return context.playing ? m_gizmosInPlay : m_gizmosInEdit;
+}
+
+void ViewportPanel::handleShortcuts(EditorContext& context)
+{
+  // Not while navigating (right-drag) or typing.
+  if (ImGui::IsMouseDown(ImGuiMouseButton_Right) ||
+      ImGui::GetIO().WantTextInput)
+    return;
+
+  if (ImGui::IsKeyPressed(ImGuiKey_W, false))
+    m_tool = Tool::Move;
+
+  if (ImGui::IsKeyPressed(ImGuiKey_E, false))
+    m_tool = Tool::Rotate;
+
+  if (ImGui::IsKeyPressed(ImGuiKey_R, false))
+    m_tool = Tool::Scale;
+
+  if (ImGui::IsKeyPressed(ImGuiKey_B, false) && hasGrass(context.selection) &&
+      !context.render->space2D())
+    m_tool = Tool::GrassBrush;
+
+  if (ImGui::IsKeyPressed(ImGuiKey_T, false) &&
+      terrainOf(context, context.selection) && !context.render->space2D())
+    m_tool = Tool::TerrainBrush;
+
+  if (ImGui::IsKeyPressed(ImGuiKey_F, false) && context.hasSelection())
+    context.focusRequest = context.selection;
+}
+
+std::vector<sfs::Entity>
+ViewportPanel::movableSelection(const EditorContext& context)
+{
+  // Those with a place, but not inside another selected one (they move with
+  // it).
+  const std::vector<sfs::Entity> selected = context.selected();
+  std::vector<sfs::Entity> movable;
+
+  for (const sfs::Entity& entity : selected)
+    if (entity.hasComponent<sfs::TransformComponent>() &&
+        std::none_of(selected.begin(),
+                     selected.end(),
+                     [&](const sfs::Entity& outer) {
+                       return outer != entity &&
+                              sfs::hierarchy::isAncestor(outer, entity);
+                     }))
+      movable.push_back(entity);
+
+  return movable;
 }
 
 void ViewportPanel::navigate(EditorContext& context, float viewportHeight)
@@ -1160,157 +1361,284 @@ void ViewportPanel::navigate(EditorContext& context, float viewportHeight)
   m_navigation.apply(context.render->camera(), input, viewportHeight);
 }
 
-void ViewportPanel::drawSelectionOutline(const EditorContext& context, const View& view) const
+bool ViewportPanel::paintGrass(EditorContext& context,
+                               const View& view,
+                               bool hovered)
 {
-  // Everything selected; the one selected last (the gizmo's) bolder.
-  for (const sfs::Entity& entity : context.selected())
-    drawOutline(context, view, entity, kSelectionColor, entity == context.selection ? 1.5f : 1.0f);
-}
+  const sfs::Entity lawn = context.selection;
 
-void ViewportPanel::drawOutline(const EditorContext& context,
-                                const View& view,
-                                const sfs::Entity& entity,
-                                ImU32 color,
-                                float thickness) const
-{
-  const std::optional<sfs::Aabb> bounds = branchBounds(context, entity);
-  if (!bounds)
-    return;
-
-  // The box's 8 corners (bit i of the index picks min/max on axis i) and 12
-  // edges (corners differing in one bit).
-  std::array<std::optional<ImVec2>, 8> corners;
-  for (int i = 0; i < 8; ++i)
-    corners[i] = toScreen(view,
-                          {(i & 1) ? bounds->max.x : bounds->min.x,
-                           (i & 2) ? bounds->max.y : bounds->min.y,
-                           (i & 4) ? bounds->max.z : bounds->min.z});
-
-  ImDrawList* drawList = ImGui::GetWindowDrawList();
-  for (int a = 0; a < 8; ++a)
-    for (const int bit : {1, 2, 4})
-    {
-      const int b = a | bit;
-      if (b != a && corners[a] && corners[b])
-        drawList->AddLine(*corners[a], *corners[b], color, thickness);
-    }
-}
-
-void ViewportPanel::drawLightIcons(const EditorContext& context, const View& view) const
-{
-  ImDrawList* drawList = ImGui::GetWindowDrawList();
-  for (auto [entity, light, transform] :
-       context.scene->query<sfs::PointLightComponent, sfs::TransformComponent>())
+  if (!hasGrass(lawn))
   {
-    // Where the renderer puts it: the offset turns and scales with the entity.
-    const std::optional<ImVec2> at =
-        toScreen(view,
-                 glm::vec3(sfs::hierarchy::worldMatrix(entity) *
-                           glm::vec4(light.offset, 1.0f)));
-    if (!at)
+    endGrassStroke(context);
+    return false;
+  }
+
+  const bool down = ImGui::IsMouseDown(ImGuiMouseButton_Left);
+
+  if (m_brushStroke && !down)
+    endGrassStroke(context);
+
+  if (!hovered && !m_brushStroke)
+    return false;
+
+  // Where the cursor meets the grass's mesh.
+  const sfs::MeshHandle mesh =
+      lawn.getComponent<sfs::MeshRendererComponent>()->mesh;
+  sfs::MeshLibrary& meshes = context.render->meshes();
+  const glm::mat4 world = sfs::hierarchy::worldMatrix(lawn);
+  const ImVec2 mouse = ImGui::GetMousePos();
+  const sfs::Ray ray = context.render->camera().screenRay(
+      {mouse.x - view.origin.x, mouse.y - view.origin.y},
+      {view.size.x, view.size.y});
+  const std::optional<sfs::MeshLibrary::RayHit> hit =
+      meshes.raycast(mesh, world, ray);
+
+  if (!hit)
+    return hovered;
+
+  const glm::vec3 point = ray.origin + ray.direction * hit->distance;
+  const bool erase = m_brushErase || ImGui::GetIO().KeyShift;
+
+  // The brush's ring, flat on the ground under the cursor.
+  const float radius = m_brushSize * 0.5f;
+  std::array<ImVec2, 40> ring;
+  int count = 0;
+
+  for (int i = 0; i < static_cast<int>(ring.size()); ++i)
+  {
+    const float angle =
+        6.2831853f * static_cast<float>(i) / static_cast<float>(ring.size());
+
+    if (const auto at = toScreen(
+            view,
+            point + glm::vec3(std::cos(angle), std::sin(angle), 0.0f) * radius))
+      ring[count++] = *at;
+  }
+
+  const ImU32 color =
+      erase ? IM_COL32(235, 110, 90, 230) : IM_COL32(150, 230, 120, 230);
+  ImGui::GetWindowDrawList()->AddPolyline(
+      ring.data(), count, color, ImDrawFlags_Closed, 2.0f);
+
+  // Painting while the button's down: one undo step a stroke.
+  if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+  {
+    context.history->beginChange();
+    m_brushStroke = true;
+  }
+
+  // Into the grass's maps as they are (unpainted grass gets them, full: what's
+  // there stays until painted over), straight to the GPU; the component
+  // keeps them once the stroke ends. At full strength a stroke paints fully
+  // in a twelfth of a second.
+  if (m_brushStroke && down)
+    if (auto* grassModule = context.render->module<sfs::GrassModule>())
+      grassModule->stamp(
+          lawn,
+          static_cast<sfs::GrassMaps::Channel>(m_brushChannel),
+          point,
+          radius,
+          erase ? 0.0f : 1.0f,
+          sfs::GrassMaps::Blend::Toward,
+          std::min(m_brushStrength * 12.0f * ImGui::GetIO().DeltaTime, 1.0f));
+
+  return true;
+}
+
+bool ViewportPanel::paintTerrain(EditorContext& context,
+                                 const View& view,
+                                 bool hovered)
+{
+  const sfs::Entity ground = context.selection;
+  const std::shared_ptr<const sfs::TerrainMaterial> terrain =
+      terrainOf(context, ground);
+
+  if (!terrain || !terrain->splat || terrain->splat->empty())
+  {
+    endTerrainStroke(context);
+    return false;
+  }
+
+  const bool down = ImGui::IsMouseDown(ImGuiMouseButton_Left);
+
+  if (m_terrainSplat && (!down || m_terrainSplat != terrain->splat))
+    endTerrainStroke(context);
+
+  if (!hovered && !m_terrainSplat)
+    return false;
+
+  // Where the cursor meets the mesh, and its texture coordinates there.
+  const sfs::MeshHandle mesh =
+      ground.getComponent<sfs::MeshRendererComponent>()->mesh;
+  const glm::mat4 world = sfs::hierarchy::worldMatrix(ground);
+  const ImVec2 mouse = ImGui::GetMousePos();
+  const sfs::Ray ray = context.render->camera().screenRay(
+      {mouse.x - view.origin.x, mouse.y - view.origin.y},
+      {view.size.x, view.size.y});
+  const std::optional<sfs::MeshLibrary::RayHit> hit =
+      context.render->meshes().raycast(mesh, world, ray);
+
+  if (!hit)
+    return hovered;
+
+  const glm::vec3 point = ray.origin + ray.direction * hit->distance;
+  const int layer = ImGui::GetIO().KeyShift ? 0 : m_terrainLayer;
+
+  // Its ring, flat on the ground, and its soft edge's start inside it.
+  const float radius = m_terrainSize * 0.5f;
+  const ImU32 color =
+      layer == 0 ? IM_COL32(235, 180, 90, 230) : IM_COL32(120, 200, 255, 230);
+
+  for (const float scale : {1.0f, 1.0f - m_terrainSoftness})
+  {
+    if (scale <= 0.02f || (scale < 1.0f && m_terrainSoftness <= 0.02f))
       continue;
 
-    // A spot: a line a metre along its axis, the way it shines.
-    if (light.spot)
+    std::array<ImVec2, 48> ring;
+    int count = 0;
+
+    for (int i = 0; i < static_cast<int>(ring.size()); ++i)
     {
-      const glm::mat4 world = sfs::hierarchy::worldMatrix(entity);
-      const glm::vec3 from(world * glm::vec4(light.offset, 1.0f));
-      if (const std::optional<ImVec2> ahead = toScreen(view, from + glm::normalize(glm::vec3(world[0]))))
-        drawList->AddLine(*at, *ahead, kLightColor, 2.0f);
+      const float angle =
+          6.2831853f * static_cast<float>(i) / static_cast<float>(ring.size());
+
+      if (const auto at = toScreen(
+              view,
+              point + glm::vec3(std::cos(angle), std::sin(angle), 0.0f) *
+                          radius * scale))
+        ring[count++] = *at;
     }
 
-    // A small sun: a disc with rays.
-    drawList->AddCircleFilled(*at, 5.0f, kLightColor);
-    for (int i = 0; i < 8; ++i)
-    {
-      const float angle = static_cast<float>(i) * 0.785398f;
-      const ImVec2 direction{std::cos(angle), std::sin(angle)};
-      drawList->AddLine(
-          ImVec2(at->x + direction.x * 8.0f, at->y + direction.y * 8.0f),
-          ImVec2(at->x + direction.x * 12.0f, at->y + direction.y * 12.0f),
-          kLightColor,
-          1.5f);
-    }
+    ImGui::GetWindowDrawList()->AddPolyline(ring.data(),
+                                            count,
+                                            color,
+                                            ImDrawFlags_Closed,
+                                            scale < 1.0f ? 1.0f : 2.0f);
   }
-}
 
-void ViewportPanel::drawCameraIcons(const EditorContext& context, const View& view) const
-{
-  ImDrawList* drawList = ImGui::GetWindowDrawList();
-  const float aspect = view.size.x / std::max(view.size.y, 1.0f);
-  const sfs::Entity gameCamera = context.render->sceneCamera();
-  const glm::vec3 viewer = context.render->camera().position();
-
-  for (auto [entity, lens, transform] :
-       context.scene->query<sfs::CameraComponent, sfs::TransformComponent>())
+  if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
   {
-    // The camera's view, as the game would set it up.
-    sfs::Camera camera;
-    sfs::viewThrough(lens, sfs::hierarchy::worldMatrix(entity), camera);
-    const glm::vec3 eye = camera.position();
-    const glm::vec3 forward = camera.viewDirection();
-    const glm::vec3 right = camera.orientation() * glm::vec3(0.0f, -1.0f, 0.0f);
-    const glm::vec3 up = glm::cross(right, forward);
-    const float depth = std::max(glm::distance(eye, viewer) * kCameraIconScale, 0.3f);
-
-    // A pyramid from the eye to a rectangle the shape of the view (a box for
-    // orthographic), plus a notch marking up.
-    const bool orthographic = camera.projection == sfs::Camera::Projection::Orthographic;
-    const float halfHeight =
-        orthographic ? std::min(camera.orthoHeight * 0.5f, depth)
-                     : std::tan(camera.fieldOfView * 0.5f) * depth;
-    const float halfWidth = halfHeight * aspect;
-    const glm::vec3 centre = eye + forward * depth;
-    const std::array<glm::vec3, 4> far{
-        centre + right * halfWidth + up * halfHeight,
-        centre - right * halfWidth + up * halfHeight,
-        centre - right * halfWidth - up * halfHeight,
-        centre + right * halfWidth - up * halfHeight};
-    const std::array<glm::vec3, 4> near =
-        orthographic ? std::array<glm::vec3, 4>{far[0] - forward * depth,
-                                                far[1] - forward * depth,
-                                                far[2] - forward * depth,
-                                                far[3] - forward * depth}
-                     : std::array<glm::vec3, 4>{eye, eye, eye, eye};
-
-    const ImU32 color = entity == gameCamera ? kCameraColor : kInactiveCameraColor;
-    const auto line = [&](const glm::vec3& a, const glm::vec3& b)
-    {
-      const std::optional<ImVec2> from = toScreen(view, a);
-      const std::optional<ImVec2> to = toScreen(view, b);
-      if (from && to)
-        drawList->AddLine(*from, *to, color, 1.5f);
-    };
-    for (int i = 0; i < 4; ++i)
-    {
-      line(near[i], far[i]);
-      line(far[i], far[(i + 1) % 4]);
-      if (orthographic)
-        line(near[i], near[(i + 1) % 4]);
-    }
-    const glm::vec3 notch = centre + up * (halfHeight * 1.4f);
-    line(far[0], notch);
-    line(far[1], notch);
+    m_terrainSplat = terrain->splat;
+    m_terrainSinceGrass = 0.0f;
+    m_terrainBefore = terrain->splat->rgba;
+    m_terrainFrom = glm::ivec2(std::numeric_limits<int>::max());
+    m_terrainTo = glm::ivec2(std::numeric_limits<int>::min());
   }
+
+  if (!m_terrainSplat || !down || hit->uvPerUnit.x <= 0.0f)
+    return true;
+
+  // Into the splat map as it is, in place (every material using it shows the
+  // change), and up to the GPU; the grass on it grows to match every so
+  // often. At full strength a stroke paints fully in about a tenth of a
+  // second.
+  auto& splat = const_cast<sfs::TextureData&>(
+      *m_terrainSplat); // painted in place, as intended
+  const float dt = ImGui::GetIO().DeltaTime;
+  const auto [from, to] =
+      sfs::paintSplat(splat,
+                      hit->uv,
+                      hit->uvPerUnit * radius,
+                      layer,
+                      std::min(m_terrainStrength * 10.0f * dt, 1.0f),
+                      m_terrainSoftness);
+
+  if (to.x > from.x && to.y > from.y)
+  {
+    context.render->renderer().updateTexture(m_terrainSplat, from, to);
+    m_terrainFrom = glm::min(m_terrainFrom, from);
+    m_terrainTo = glm::max(m_terrainTo, to);
+  }
+
+  m_terrainSinceGrass += dt;
+
+  if (m_terrainSinceGrass > 0.2f)
+  {
+    m_terrainSinceGrass = 0.0f;
+
+    if (auto* grassModule = context.render->module<sfs::GrassModule>())
+      grassModule->terrainPainted(ground);
+  }
+
+  return true;
 }
 
-void ViewportPanel::drawColliders(const EditorContext& context, const View& view) const
+void ViewportPanel::pick(EditorContext& context, const View& view)
 {
-  if (!context.hasSelection() || !context.selection.hasComponent<sfs::TransformComponent>())
+  const ImVec2 mouse = ImGui::GetMousePos();
+  const sfs::Ray ray = context.render->camera().screenRay(
+      {mouse.x - view.origin.x, mouse.y - view.origin.y},
+      {view.size.x, view.size.y});
+
+  std::optional<sfs::PickHit> hit = sfs::pickEntity(
+      *context.scene, context.render->meshes(), ray, context.render);
+
+  if (hit)
+    hit->entity = clickTarget(hit->entity, context.selection);
+
+  // Ctrl: add what's clicked to the selection, or take it out.
+  if (ImGui::GetIO().KeyCtrl && hit)
+  {
+    std::vector<sfs::Entity> group = context.selected();
+
+    if (const auto it = std::find(group.begin(), group.end(), hit->entity);
+        it != group.end())
+    {
+      group.erase(it);
+      context.selection = group.empty() ? sfs::Entity() : group.back();
+    }
+    else
+    {
+      group.push_back(hit->entity);
+      context.selection = hit->entity;
+    }
+
+    context.selectionGroup = std::move(group);
+    return;
+  }
+
+  context.selection = hit ? hit->entity : sfs::Entity();
+}
+
+void ViewportPanel::saveSplat(EditorContext& context,
+                              const sfs::TextureData& splat)
+{
+  // Saved to the texture asset it was read from.
+  if (!context.scene || !context.assets)
     return;
 
-  // The engine's lines for them (as the scene's Draw Colliders draws every
-  // collider), over the image: the selection's always, whether or not that's
-  // on. Their colours pack as ImGui's do (red in the low byte).
-  sfs::DebugLines lines;
-  sfs::colliderLines::append(context.selection, context.render->space2D(), lines);
-  ImDrawList* drawList = ImGui::GetWindowDrawList();
-  const std::span<const sfs::DebugLineVertex> ends = lines.vertices();
-  for (std::size_t i = 0; i + 1 < ends.size(); i += 2)
+  const std::optional<sfs::AssetId> id =
+      context.scene->assetStore().textureId(&splat);
+  const sfs::AssetRecord* record = id ? context.assets->find(*id) : nullptr;
+
+  if (!record)
   {
-    const std::optional<ImVec2> from = toScreen(view, ends[i].position);
-    const std::optional<ImVec2> to = toScreen(view, ends[i + 1].position);
-    if (from && to)
-      drawList->AddLine(*from, *to, ends[i].color, 1.5f);
+    LOG_ERROR("The terrain's splat map isn't a texture asset: its painting "
+              "isn't saved");
+    return;
   }
+
+  if (!sfs::saveTexturePng(splat, context.assets->absolutePath(*record)))
+    LOG_ERROR("Can't save the splat map " + record->path.generic_string());
+}
+
+void ViewportPanel::setActive(bool active)
+{
+  m_active = active;
+
+  if (active && m_target)
+    m_backend.setSceneTarget(m_target.get());
+}
+
+std::optional<ImVec2> ViewportPanel::toScreen(const View& view,
+                                              const glm::vec3& world) const
+{
+  const glm::vec4 clip = view.viewProjection * glm::vec4(world, 1.0f);
+
+  if (clip.w <= 1.0e-4f)
+    return std::nullopt; // behind the camera
+
+  const glm::vec2 ndc = glm::vec2(clip) / clip.w;
+  return ImVec2(view.origin.x + (ndc.x * 0.5f + 0.5f) * view.size.x,
+                view.origin.y + (0.5f - ndc.y * 0.5f) * view.size.y);
 }

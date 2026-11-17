@@ -1,6 +1,7 @@
 #pragma once
 
-#include <sfs/sfs.h>
+#include "engine/core/ecs/system.h"
+#include "engine/core/events/eventConsumer.h"
 
 // Declared in SparkSystem.cpp, not here: the module's build scans its
 // sources for event types too.

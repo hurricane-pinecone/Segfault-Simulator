@@ -1,8 +1,8 @@
 #pragma once
 
-#include "glm/glm/ext/quaternion_float.hpp"
-#include "glm/glm/ext/quaternion_trigonometric.hpp"
-#include "glm/glm/trigonometric.hpp"
+#include <glm/glm/ext/quaternion_float.hpp>
+#include <glm/glm/ext/quaternion_trigonometric.hpp>
+#include <glm/glm/trigonometric.hpp>
 
 namespace sfs::views
 {

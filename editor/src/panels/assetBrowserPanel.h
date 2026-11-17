@@ -1,10 +1,12 @@
 #pragma once
 
 #include "assets/thumbnails.h"
+#include "engine/core/assets/assetDatabase.h"
+#include "engine/runtime/rendering/backend/iRenderBackend.h"
 #include "panels/panel.h"
 #include "scripting/scriptTemplates.h"
 
-#include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <future>
@@ -38,58 +40,63 @@ public:
     std::function<void(const std::filesystem::path&)> openScene;
     std::function<void(const std::filesystem::path&)> openText;
     std::function<void(const std::filesystem::path&)> openPrefab;
-    std::function<void(scriptTemplates::Kind, const std::filesystem::path& folder)> newScript;
+    std::function<void(scriptTemplates::Kind,
+                       const std::filesystem::path& folder)>
+        newScript;
     // A file or folder moved or renamed in the project, outside the asset
     // catalogue (e.g. a scene: the open one, or the start scene, follow it).
-    std::function<void(const std::filesystem::path& from, const std::filesystem::path& to)> moved;
+    std::function<void(const std::filesystem::path& from,
+                       const std::filesystem::path& to)>
+        moved;
   };
 
   AssetBrowserPanel(Actions actions, sfs::IRenderBackend& backend);
   ~AssetBrowserPanel() override;
-
-  // Its view settings (tile size, grid or list), kept in imgui.ini.
-  void readSetting(const char* line);
-  std::string writeSettings() const;
-
+  bool canRedo() const { return !m_redo.empty(); }
+  // Undoing the file operations done here (new folder, rename, move, delete,
+  // paste, duplicate).
+  bool canUndo() const { return !m_undo.empty(); }
+  void deleteSelected(EditorContext& context);
+  /** Duplicate or delete (after asking) what's selected here. */
+  void duplicateSelected(EditorContext& context);
   /**
    * Where dropped files are imported: the open folder if it's in assets/ or
    * prefabs/, else assets/ itself (relative to the project).
    */
   std::filesystem::path importFolder() const;
-
+  /**
+   * Whether Undo, Redo, Duplicate and Delete (the Edit menu, Ctrl+Z...) are
+   * this panel's: it had focus last, of the editor's panels.
+   */
+  bool ownsEdit() const { return m_ownsEdit; }
+  /** Previews being made in the background (for a progress bar). */
+  Thumbnails::Progress previewProgress() const
+  {
+    return m_thumbnails.progress();
+  }
+  // Its view settings (tile size, grid or list), kept in imgui.ini.
+  void readSetting(const char* line);
+  void redo(EditorContext& context);
+  std::string redoLabel() const
+  {
+    return m_redo.empty() ? std::string() : m_redo.back().label;
+  }
+  /** Whether the folders are being read again (in the background). */
+  bool refreshing() const { return m_scan.valid(); }
   /**
    * Read the folders again next frame (the editor regained focus: files may
    * have changed outside it). Reading a project on a network share (WSL) takes
    * a while, so it's done on request rather than continually.
    */
   void requestRefresh() { m_refreshRequested = true; }
-
-  /**
-   * Whether Undo, Redo, Duplicate and Delete (the Edit menu, Ctrl+Z...) are
-   * this panel's: it had focus last, of the editor's panels.
-   */
-  bool ownsEdit() const { return m_ownsEdit; }
-
-  // Undoing the file operations done here (new folder, rename, move, delete,
-  // paste, duplicate).
-  bool canUndo() const { return !m_undo.empty(); }
-  bool canRedo() const { return !m_redo.empty(); }
-  /** e.g. "Rename Sword.asset" (empty: nothing). */
-  std::string undoLabel() const { return m_undo.empty() ? std::string() : m_undo.back().label; }
-  std::string redoLabel() const { return m_redo.empty() ? std::string() : m_redo.back().label; }
   void undo(EditorContext& context);
-  void redo(EditorContext& context);
-  /** Duplicate or delete (after asking) what's selected here. */
-  void duplicateSelected(EditorContext& context);
-  void deleteSelected(EditorContext& context);
-
-  /** Previews being made in the background (for a progress bar). */
-  Thumbnails::Progress previewProgress() const { return m_thumbnails.progress(); }
-
-  /** Whether the folders are being read again (in the background). */
-  bool refreshing() const { return m_scan.valid(); }
-
+  /** e.g. "Rename Sword.asset" (empty: nothing). */
+  std::string undoLabel() const
+  {
+    return m_undo.empty() ? std::string() : m_undo.back().label;
+  }
   void update(EditorContext& context) override;
+  std::string writeSettings() const;
 
 protected:
   void drawContents(EditorContext& context) override;
@@ -105,23 +112,49 @@ private:
     std::string id;     // the path, generic: its ImGui id
     std::string name;   // label(path)
   };
+  // Deleted things wait in the project's trash (.sfs/trash), so deleting
+  // can be undone: each moved path, and where it went.
+  struct Trashed
+  {
+    std::vector<std::pair<std::filesystem::path, std::filesystem::path>>
+        moves; // from -> in the trash
+  };
+  // An undoable operation, as how to undo and redo it.
+  struct FileOp
+  {
+    std::string label;
+    std::function<bool(EditorContext&)> undo, redo;
+  };
 
-  // Read the folders again, in the background.
-  void refresh(EditorContext& context);
-  // A newly opened project: start the view afresh.
-  void showProject(EditorContext& context);
-  // The project's top folders and scenes/scripts listings, read again.
-  void readFolders();
-  const std::vector<Entry>& listFolder(const EditorContext& context, const std::filesystem::path& folder);
-  // An entry's catalogue record (assets/ files), else null.
-  const sfs::AssetRecord* recordOf(const EditorContext& context, const Entry& entry) const;
+  // Inside a drop target: an entity from the Hierarchy becomes a prefab here.
+  void acceptEntity(EditorContext& context,
+                    const std::filesystem::path& folder);
 
-  void drawToolbar(EditorContext& context);
-  void drawFolderTree(EditorContext& context, const std::filesystem::path& folder);
+  void activate(EditorContext& context, const std::filesystem::path& file);
+  std::filesystem::path assetRelative(const std::filesystem::path& path) const;
+  void beginRename(const std::filesystem::path& path);
+  // Copies: into a folder (the copy named "<name> Copy" where the name's
+  // taken; scripts as new classes). @return what was made
+  std::vector<std::filesystem::path>
+  copyInto(EditorContext& context,
+           const std::filesystem::path& item,
+           const std::filesystem::path& folder);
+  bool deleteItem(EditorContext& context, const std::filesystem::path& path);
+  // Drag and drop: any file or folder (but the project's own) onto a folder.
+  void dragSource(const EditorContext& context, const Entry& entry);
   void drawContentsPane(EditorContext& context);
+  void drawDeleteConfirmation(EditorContext& context);
   void drawEntry(EditorContext& context, const Entry& entry); // a list row
+  void drawFolderMenu(EditorContext& context,
+                      const std::filesystem::path& folder);
+  void drawFolderTree(EditorContext& context,
+                      const std::filesystem::path& folder);
   void drawGrid(EditorContext& context, const std::vector<Entry>& entries);
+  bool drawRename(EditorContext& context, const Entry& entry);
   void drawTile(EditorContext& context, const Entry& entry);
+  void drawToolbar(EditorContext& context);
+  void dropTarget(EditorContext& context, const std::filesystem::path& folder);
+  void duplicate(EditorContext& context, const std::filesystem::path& item);
   // What clicking, double-clicking, dragging, dropping and right-clicking do
   // to an entry, for the item just drawn for it (a row or a tile).
   void entryBehaviour(EditorContext& context,
@@ -129,70 +162,59 @@ private:
                       const sfs::AssetRecord* record,
                       bool clicked,
                       bool doubleClicked);
-  bool drawRename(EditorContext& context, const Entry& entry);
-  void drawFolderMenu(EditorContext& context, const std::filesystem::path& folder);
-  void drawDeleteConfirmation(EditorContext& context);
-
+  // A folder's name as shown: the project's own folders title-cased.
+  std::string folderLabel(const std::filesystem::path& folder) const;
+  // Whether a path is in a catalogued folder (assets/, prefabs/), and its path
+  // in the catalogue (relative to the project, e.g. "assets/models").
+  bool inCatalogue(const std::filesystem::path& path) const;
+  bool isTopFolder(const std::filesystem::path& path) const;
+  const std::vector<Entry>& listFolder(const EditorContext& context,
+                                       const std::filesystem::path& folder);
+  bool moveItem(EditorContext& context,
+                const std::filesystem::path& path,
+                const std::filesystem::path& folder);
+  // Several moves at once, all in one of the project's folders (assets/ and
+  // prefabs/ count as one).
+  bool movePaths(EditorContext& context,
+                 const std::vector<std::pair<std::filesystem::path,
+                                             std::filesystem::path>>& moves);
   // File operations, the same in every folder: through the asset catalogue
   // in assets/ and prefabs/, keeping the scripts building in scripts/, and
   // telling the editor (Actions::moved) elsewhere. The project's own folders
   // (scripts/, assets/...) can't be renamed, moved or deleted.
   void newFolder(EditorContext& context, const std::filesystem::path& parent);
-  // @return the new path; nothing (logged) if it can't be renamed
-  std::optional<std::filesystem::path> renameItem(EditorContext& context, const std::filesystem::path& path,
-                                                  std::string name);
-  bool moveItem(EditorContext& context, const std::filesystem::path& path, const std::filesystem::path& folder);
-  bool deleteItem(EditorContext& context, const std::filesystem::path& path);
-  // Copies: into a folder (the copy named "<name> Copy" where the name's
-  // taken; scripts as new classes). @return what was made
-  std::vector<std::filesystem::path> copyInto(EditorContext& context, const std::filesystem::path& item,
-                                              const std::filesystem::path& folder);
   void paste(EditorContext& context, const std::filesystem::path& folder);
-  void duplicate(EditorContext& context, const std::filesystem::path& item);
-
-  // Deleted things wait in the project's trash (.sfs/trash), so deleting
-  // can be undone: each moved path, and where it went.
-  struct Trashed
-  {
-    std::vector<std::pair<std::filesystem::path, std::filesystem::path>> moves; // from -> in the trash
-  };
-  std::optional<Trashed> toTrash(EditorContext& context, const std::filesystem::path& path);
-  bool restore(EditorContext& context, const Trashed& trashed, bool back);
-  // A file and what goes with it: its .meta, a .gltf's .bin (and its .meta).
-  std::vector<std::filesystem::path> withCompanions(const std::filesystem::path& path) const;
-
-  // An undoable operation, as how to undo and redo it.
-  struct FileOp
-  {
-    std::string label;
-    std::function<bool(EditorContext&)> undo, redo;
-  };
+  // The project's top folders and scenes/scripts listings, read again.
+  void readFolders();
   void record(FileOp op);
   // Undone, what an operation made goes to the trash; redone, it's back.
-  void recordMade(const std::string& label, const std::vector<std::filesystem::path>& made);
-
-  // Several moves at once, all in one of the project's folders (assets/ and
-  // prefabs/ count as one).
-  bool movePaths(EditorContext& context, const std::vector<std::pair<std::filesystem::path, std::filesystem::path>>& moves);
-  // The project folder a path is in (e.g. <project>/scripts), and whether it's one.
+  void recordMade(const std::string& label,
+                  const std::vector<std::filesystem::path>& made);
+  // An entry's catalogue record (assets/ files), else null.
+  const sfs::AssetRecord* recordOf(const EditorContext& context,
+                                   const Entry& entry) const;
+  // Read the folders again, in the background.
+  void refresh(EditorContext& context);
+  // @return the new path; nothing (logged) if it can't be renamed
+  std::optional<std::filesystem::path>
+  renameItem(EditorContext& context,
+             const std::filesystem::path& path,
+             std::string name);
+  bool restore(EditorContext& context, const Trashed& trashed, bool back);
+  // What's selected here, for F2 and Delete: an asset, or another file or
+  // folder.
+  std::optional<std::filesystem::path>
+  selectedPath(const EditorContext& context) const;
+  // A newly opened project: start the view afresh.
+  void showProject(EditorContext& context);
+  // The project folder a path is in (e.g. <project>/scripts), and whether it's
+  // one.
   std::filesystem::path topFolderOf(const std::filesystem::path& path) const;
-  bool isTopFolder(const std::filesystem::path& path) const;
-  // What's selected here, for F2 and Delete: an asset, or another file or folder.
-  std::optional<std::filesystem::path> selectedPath(const EditorContext& context) const;
-
-  // Drag and drop: any file or folder (but the project's own) onto a folder.
-  void dragSource(const EditorContext& context, const Entry& entry);
-  void dropTarget(EditorContext& context, const std::filesystem::path& folder);
-  // Inside a drop target: an entity from the Hierarchy becomes a prefab here.
-  void acceptEntity(EditorContext& context, const std::filesystem::path& folder);
-
-  void activate(EditorContext& context, const std::filesystem::path& file);
-  void beginRename(const std::filesystem::path& path);
-
-  // Whether a path is in a catalogued folder (assets/, prefabs/), and its path
-  // in the catalogue (relative to the project, e.g. "assets/models").
-  bool inCatalogue(const std::filesystem::path& path) const;
-  std::filesystem::path assetRelative(const std::filesystem::path& path) const;
+  std::optional<Trashed> toTrash(EditorContext& context,
+                                 const std::filesystem::path& path);
+  // A file and what goes with it: its .meta, a .gltf's .bin (and its .meta).
+  std::vector<std::filesystem::path>
+  withCompanions(const std::filesystem::path& path) const;
 
   Actions m_actions;
   std::filesystem::path m_root;   // the project
@@ -201,11 +223,14 @@ private:
   bool m_refreshRequested = false;
   std::future<sfs::AssetDatabase::Scan> m_scan; // a refresh under way
   std::filesystem::path m_scanRoot;             // the catalogue it's for
-  sfs::AssetId m_scrollTo;  // an asset to scroll into view (revealed)
-  std::filesystem::path m_scrollToFile; // the same for a file outside the catalogue
-  std::filesystem::path m_highlighted;  // a file outside the catalogue shown selected (scripts...)
+  sfs::AssetId m_scrollTo; // an asset to scroll into view (revealed)
+  std::filesystem::path
+      m_scrollToFile; // the same for a file outside the catalogue
+  std::filesystem::path
+      m_highlighted; // a file outside the catalogue shown selected (scripts...)
   bool m_revealTree = false; // open the folder tree down to m_open, this frame
-  std::vector<std::filesystem::path> m_topFolders; // of kFolders, those that exist
+  std::vector<std::filesystem::path>
+      m_topFolders; // of kFolders, those that exist
   // scenes/ and scripts/ listings, read once per refresh (assets/ comes from
   // the AssetDatabase, which is kept in memory).
   std::map<std::filesystem::path, std::vector<Entry>> m_listings;
@@ -219,11 +244,9 @@ private:
   bool m_ownsEdit = false;
   int m_trashCount = 0; // names the next trash folder
 
-  bool m_gridView = true;  // tiles with previews, or a list
+  bool m_gridView = true;   // tiles with previews, or a list
   float m_tileSize = 96.0f; // a tile's picture, in pixels
   static constexpr float kMinTile = 64.0f;
   static constexpr float kMaxTile = 160.0f;
-  // A folder's name as shown: the project's own folders title-cased.
-  std::string folderLabel(const std::filesystem::path& folder) const;
   Thumbnails m_thumbnails;
 };

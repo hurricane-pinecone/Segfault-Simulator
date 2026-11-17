@@ -3,6 +3,7 @@
 #include "engine/core/logger/logger.h"
 #include "engine/core/util/cpuTiming.h"
 #include "engine/runtime/rendering/modules/renderModule.h"
+
 #include <memory>
 #include <typeindex>
 #include <utility>
@@ -29,40 +30,6 @@ public:
   using Module = IRenderModule<TContext>;
 
   virtual ~RenderModuleHost() = default;
-
-  /**
-   * Compose a render module into the frame. The host constructs + owns the
-   * module, init()s it with the host's dependencies, and returns it for
-   * configuration. A module type may be registered only once; re-registering
-   * returns the existing instance.
-   *
-   * @return a reference to the registered module.
-   */
-  template <class T, class... A>
-  T& withModule(A&&... args)
-  {
-    if (T* existing = module<T>())
-    {
-      LOG_ERROR("withModule: module type already registered; "
-                "returning the existing instance");
-      return *existing;
-    }
-
-    auto module = std::make_unique<T>(std::forward<A>(args)...);
-    module->init(moduleInit());
-    module->setHost(*this);
-
-    T& ref = *module;
-    m_modules.emplace_back(std::type_index(typeid(T)), std::move(module));
-    return ref;
-  }
-
-  /** Compose several default-constructed modules at once. */
-  template <class... Ts>
-  void withModules()
-  {
-    (withModule<Ts>(), ...);
-  }
 
   /** @return whether a module of type T is registered. */
   template <class T>
@@ -109,6 +76,40 @@ public:
         return;
       }
     }
+  }
+
+  /**
+   * Compose a render module into the frame. The host constructs + owns the
+   * module, init()s it with the host's dependencies, and returns it for
+   * configuration. A module type may be registered only once; re-registering
+   * returns the existing instance.
+   *
+   * @return a reference to the registered module.
+   */
+  template <class T, class... A>
+  T& withModule(A&&... args)
+  {
+    if (T* existing = module<T>())
+    {
+      LOG_ERROR("withModule: module type already registered; "
+                "returning the existing instance");
+      return *existing;
+    }
+
+    auto module = std::make_unique<T>(std::forward<A>(args)...);
+    module->init(moduleInit());
+    module->setHost(*this);
+
+    T& ref = *module;
+    m_modules.emplace_back(std::type_index(typeid(T)), std::move(module));
+    return ref;
+  }
+
+  /** Compose several default-constructed modules at once. */
+  template <class... Ts>
+  void withModules()
+  {
+    (withModule<Ts>(), ...);
   }
 
 protected:

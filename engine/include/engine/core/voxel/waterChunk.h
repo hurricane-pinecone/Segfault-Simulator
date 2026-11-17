@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/core/voxel/voxelChunk.h"
+
 #include <array>
 #include <cstdint>
 
@@ -16,23 +17,24 @@ constexpr WaterAmount kWaterFull = 256;
 
 struct WaterChunk
 {
-  std::array<WaterAmount, kChunkSize * kChunkSize * kChunkSize> water{};
-
   WaterAmount at(int lx, int ly, int lz) const
   {
     return water[VoxelChunk::index(lx, ly, lz)];
-  }
-  void set(int lx, int ly, int lz, WaterAmount amount)
-  {
-    water[VoxelChunk::index(lx, ly, lz)] = amount;
   }
   bool empty() const
   {
     for (WaterAmount w : water)
       if (w != 0)
         return false;
+
     return true;
   }
+  void set(int lx, int ly, int lz, WaterAmount amount)
+  {
+    water[VoxelChunk::index(lx, ly, lz)] = amount;
+  }
+
+  std::array<WaterAmount, kChunkSize * kChunkSize * kChunkSize> water{};
 };
 
 } // namespace sfs

@@ -1,10 +1,13 @@
 #pragma once
 
 #include "document.h"
-
 #include "lints.h"
+#include "sfs/codegen/model.h"
+#include "sfs/codegen/rules.h"
 
-#include <sfs/codegen/rules.h>
+#include <tree_sitter/api.h>
+
+#include <cstddef>
 
 struct TSParser;
 

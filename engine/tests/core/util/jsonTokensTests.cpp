@@ -1,7 +1,7 @@
 #include "../../testHarness.h"
+#include "engine/core/util/jsonTokens.h"
 
-#include <engine/core/util/jsonTokens.h>
-
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -17,6 +17,7 @@ const JsonToken* find(const std::vector<JsonToken>& tokens,
   for (const JsonToken& token : tokens)
     if (token.pointer == pointer && token.kind == kind)
       return &token;
+
   return nullptr;
 }
 } // namespace
@@ -36,26 +37,31 @@ int main()
 })";
     const auto tokens = scanJsonTokens(text);
     CHECK(tokens.has_value());
+
     if (!tokens)
       return testing::report("jsonTokensTests");
 
     const JsonToken* version =
         find(*tokens, "/formatVersion", JsonToken::Kind::Number);
     CHECK(version != nullptr);
+
     if (version)
     {
       CHECK(version->text == "1");
       CHECK(text.substr(version->begin, version->end - version->begin) == "1");
     }
+
     // A key with a slash: escaped in the pointer, decoded in the text.
     const JsonToken* key = find(
         *tokens, "/root/children/0/$overrides/1~115", JsonToken::Kind::Key);
     CHECK(key != nullptr);
+
     if (key)
     {
       CHECK(key->text == "1/15");
       CHECK(text.substr(key->begin, key->end - key->begin) == "\"1/15\"");
     }
+
     const JsonToken* removed =
         find(*tokens, "/root/children/1/$removed/1", JsonToken::Kind::String);
     CHECK(removed != nullptr && removed->text == "7");
@@ -78,17 +84,22 @@ int main()
     const std::string text = R"({"a\"b": "x\\y\/z", "~k": "é😀\n"})";
     const auto tokens = scanJsonTokens(text);
     CHECK(tokens.has_value());
+
     if (!tokens)
       return testing::report("jsonTokensTests");
+
     const JsonToken* quoted = find(*tokens, "/a\"b", JsonToken::Kind::Key);
     CHECK(quoted != nullptr);
+
     if (quoted)
       CHECK(text.substr(quoted->begin, quoted->end - quoted->begin) ==
             "\"a\\\"b\"");
+
     const JsonToken* slashes = find(*tokens, "/a\"b", JsonToken::Kind::String);
     CHECK(slashes != nullptr && slashes->text == "x\\y/z");
     const JsonToken* unicode = find(*tokens, "/~0k", JsonToken::Kind::String);
     CHECK(unicode != nullptr);
+
     if (unicode)
       CHECK(unicode->text == "\xC3\xA9\xF0\x9F\x98\x80\n");
   }
@@ -112,8 +123,10 @@ int main()
                              "\"3\": {}},\n  \"$parent\": \"7\"\n}\n";
     const auto tokens = scanJsonTokens(text);
     CHECK(tokens.has_value());
+
     if (!tokens)
       return testing::report("jsonTokensTests");
+
     const JsonToken* version =
         find(*tokens, "/formatVersion", JsonToken::Kind::Number);
     const JsonToken* key =
@@ -121,8 +134,10 @@ int main()
     const JsonToken* parent =
         find(*tokens, "/$parent", JsonToken::Kind::String);
     CHECK(version && key && parent);
+
     if (!version || !key || !parent)
       return testing::report("jsonTokensTests");
+
     // Given out of order, and one longer than what it replaces.
     const auto edited =
         applyTextEdits(text,
@@ -130,10 +145,12 @@ int main()
                         {version->begin, version->end, "2"},
                         {key->begin, key->end, "\"2318043377\""}});
     CHECK(edited.has_value());
+
     if (edited)
       CHECK(*edited == "{\n  \"formatVersion\": 2,\n"
                        "  \"$overrides\": {\"2318043377\": {\"A\": 2},  "
                        "\"3\": {}},\n  \"$parent\": \"2147483700\"\n}\n");
+
     CHECK(!applyTextEdits(text, {{2, 5, "a"}, {4, 6, "b"}}));
     CHECK(!applyTextEdits(text, {{2, text.size() + 1, "a"}}));
     CHECK(applyTextEdits(text, {}) == std::optional<std::string>(text));

@@ -1,6 +1,5 @@
 #include "../../testHarness.h"
-
-#include <engine/core/particles/decalSplatter.h>
+#include "engine/core/particles/decalSplatter.h"
 
 #include <cstdint>
 

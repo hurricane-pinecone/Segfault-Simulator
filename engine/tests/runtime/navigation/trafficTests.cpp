@@ -1,6 +1,11 @@
 #include "../../testHarness.h"
+#include "engine/runtime/navigation/geometry.h"
+#include "engine/runtime/navigation/traffic.h"
 
-#include <engine/runtime/navigation/traffic.h>
+#include <glm/glm/ext/vector_float2.hpp>
+
+#include <cmath>
+#include <vector>
 
 using namespace sfs::nav;
 
@@ -20,6 +25,7 @@ Traffic::Claim along(float x0,
   Traffic::Claim c;
   c.priority = priority;
   c.body = {{{x0, y}, {2.5f, 1.3f}, dir > 0 ? 0.0f : kPi}};
+
   for (float s = 1.0f; s <= speed * ahead; s += 1.0f)
   {
     Traffic::Sample t;
@@ -29,6 +35,7 @@ Traffic::Claim along(float x0,
     t.boxes = {{{x0 + dir * s, y}, {2.5f, 1.3f}, c.body[0].heading}};
     c.ahead.push_back(t);
   }
+
   return c;
 }
 
@@ -38,11 +45,13 @@ Traffic::Claim crossing(int priority = 0)
   Traffic::Claim c;
   c.priority = priority;
   c.body = {{{10, -14}, {2.5f, 1.3f}, 0.5f * kPi}};
+
   for (float s = 1; s <= 16; s += 1)
     c.ahead.push_back({s,
                        s / 2 - 0.3f,
                        s / 2 + 0.3f,
                        {{{10, -14 + s}, {2.5f, 1.3f}, 0.5f * kPi}}});
+
   return c;
 }
 } // namespace
@@ -67,6 +76,7 @@ int main()
     Traffic t;
     t.update(1, along(0, 0, 1, 2, 0));
     t.update(2, along(30, 0, -1, 2, 5));
+
     for (int frame = 0; frame < 3; ++frame)
     {
       t.schedule();
@@ -121,11 +131,13 @@ int main()
     t.update(1, along(4, 0, 1, 2, 5));
     Traffic::Claim c;
     c.body = {{{12, 0}, {2.5f, 1.3f}, 0.5f * kPi}};
+
     for (float s = 1; s <= 16; s += 1)
       c.ahead.push_back({s,
                          s / 2 - 0.3f,
                          s / 2 + 0.3f,
                          {{{12, s}, {2.5f, 1.3f}, 0.5f * kPi}}});
+
     t.update(2, c);
     t.schedule();
     CHECK(t.scheduleOf(1).why == Why::Body);
@@ -184,15 +196,19 @@ int main()
     Traffic t;
     Traffic::Claim in = along(14, 0, 1, 1, 0, 4);
     Traffic::Zone z = lane(0, 6);
+
     for (float x = 14; x <= 20; x += 1)
       z.area.push_back({{x, 0}, {2.5f, 1.3f}, 0.0f});
+
     in.zones = {z};
     t.update(2, in);
     t.schedule(); // (2 came first: it holds it)
     Traffic::Claim out = along(36, 0, -1, 2, 5);
     Traffic::Zone w = lane(10, 26);
+
     for (float x = 26; x >= 10; x -= 1)
       w.area.push_back({{x, 0}, {2.5f, 1.3f}, kPi});
+
     out.zones = {w};
     t.update(1, out);
     t.schedule();
@@ -218,8 +234,10 @@ int main()
     Traffic t;
     Traffic::Claim c = along(0, 0, 1, 2);
     Traffic::Zone z{12, 30, {}};
+
     for (float x = 12; x <= 30; x += 1)
       z.area.push_back({{x, 0}, {2.5f, 1.3f}, 0.0f});
+
     c.zones = {z};
     t.update(2, c);
     t.schedule();
@@ -246,21 +264,27 @@ int main()
     Traffic t;
     Traffic::Claim in = along(10, 0, 1, 4);
     Traffic::Zone z{0, 20, {}};
+
     for (float x = 10; x <= 30; x += 1)
       z.area.push_back({{x, 0}, {2.5f, 1.3f}, 0.0f});
+
     in.zones = {z};
     t.update(2, in);
     t.schedule();
     CHECK(t.holdsZone(2));
     Traffic::Claim out = along(36, 0, -1, 2, 5);
     Traffic::Zone w{1, 16, {}};
+
     for (float x = 35; x >= 20; x -= 1)
       w.area.push_back({{x, 0}, {2.5f, 1.3f}, kPi});
+
     out.zones = {w};
     t.update(1, out);
     t.update(2, in);
+
     for (int frame = 0; frame < 2; ++frame)
       t.schedule();
+
     CHECK(t.scheduleOf(1).why == Why::Zone);
     CHECK(t.scheduleOf(1).by == 2);
     // (Not held by 1's reservation (it waits for 2), only by its body: 2 is
@@ -276,11 +300,13 @@ int main()
     const auto cycles = Traffic::cycles(
         {{3, 1}, {1, 2}, {2, 3}, {4, 1}, {5, 6}, {7, 8}, {8, 7}, {9, 9}});
     CHECK(cycles.size() == 2u);
+
     if (cycles.size() == 2u)
     {
       CHECK(cycles[0] == std::vector<Traffic::AgentId>({1, 2, 3}));
       CHECK(cycles[1] == std::vector<Traffic::AgentId>({7, 8}));
     }
+
     CHECK(Traffic::cycles({{1, 2}, {2, 3}}).empty());
   }
 
@@ -383,11 +409,13 @@ int main()
     {
       Traffic::Claim c;
       c.body = {{{10, -0.5f}, {2.5f, 1.3f}, 0.5f * kPi}};
+
       for (float s = 0; s <= 10; s += 1)
         c.ahead.push_back({s,
                            s / 2 - 0.3f,
                            s / 2 + 0.3f,
                            {{{10, -0.5f + s}, {2.5f, 1.3f}, 0.5f * kPi}}});
+
       return c;
     };
     Traffic t;
@@ -416,11 +444,13 @@ int main()
     Traffic::Claim in;
     in.still = true;
     in.body = {{{10, 0}, {2.5f, 1.3f}, 0.5f * kPi}};
+
     for (float s = 0; s <= 12; s += 1)
       in.ahead.push_back({s,
                           s / 2 - 0.3f,
                           s / 2 + 0.3f,
                           {{{10, s}, {2.5f, 1.3f}, 0.5f * kPi}}});
+
     t.update(2, in); // (ranked as it is)
     const Traffic::Crossing x = t.crossing(2, in);
     CHECK(x.at >= 0);

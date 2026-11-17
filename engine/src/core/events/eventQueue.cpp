@@ -56,10 +56,13 @@ uint32_t EventQueueBase::addConsumer(EventOwner* owner,
                                      const std::type_info* who)
 {
   uint32_t slot = 0;
+
   while (slot < m_consumers.size() && m_consumers[slot].live)
     ++slot;
+
   if (slot == m_consumers.size())
     m_consumers.emplace_back();
+
   ConsumerSlot& consumer = m_consumers[slot];
   const uint32_t generation = consumer.generation + 1u;
   consumer = ConsumerSlot{};
@@ -68,8 +71,10 @@ uint32_t EventQueueBase::addConsumer(EventOwner* owner,
   consumer.scanned = m_oldestId;
   consumer.spanBegin = consumer.spanEnd = m_oldestId;
   consumer.owner = owner;
+
   if (owner)
     consumer.spanStamp = owner->stamp - 1u;
+
   consumer.name = who ? readableTypeName(*who) : "a consumer";
   consumer.live = true;
   ++m_liveConsumers;
@@ -80,6 +85,7 @@ void EventQueueBase::removeConsumer(uint32_t slot)
 {
   if (slot >= m_consumers.size() || !m_consumers[slot].live)
     return;
+
   m_consumers[slot].live = false;
   --m_liveConsumers;
 }
@@ -95,6 +101,7 @@ void EventQueueBase::newSpan(ConsumerSlot& self)
     missed(m_oldestId - self.next, self, self.owner && self.owner->wasDisabled);
     self.next = m_oldestId;
   }
+
   self.spanBegin = self.next;
   self.spanEnd = m_endId;
   self.next = m_endId;
@@ -107,6 +114,7 @@ void EventQueueBase::consumerStats(std::vector<EventConsumerStats>& out) const
   {
     if (!consumer.live)
       continue;
+
     EventConsumerStats& row = out.emplace_back();
     row.type = m_name;
     row.consumer = consumer.name;
@@ -132,8 +140,10 @@ void EventQueueBase::logSent(uint64_t id,
   std::string line = "Event " + m_name + " [" + m_kind + "] #" +
                      std::to_string(id) + " for entity " +
                      std::to_string(key.getId());
+
   if (generation != 0)
     line += " (its number " + std::to_string(generation) + ")";
+
   LOG_INFO(line + " sent in frame " + std::to_string(m_frame));
 }
 
@@ -171,6 +181,7 @@ void EventQueueBase::overCap(uint64_t dropped, const ConsumerSlot* holder)
 {
   if (m_warnedCap)
     return;
+
   m_warnedCap = true;
   LOG_ERROR("Events: " + m_name + " kept more than " +
             std::to_string(m_maxKept) +
@@ -184,8 +195,10 @@ void EventQueueBase::missed(uint64_t count,
                             bool disabled)
 {
   m_missed += count;
+
   if (consumer.missedLogged)
     return;
+
   consumer.missedLogged = true;
   LOG_WARN(
       "Events: " + consumerName(&consumer) + " missed " +
@@ -216,6 +229,7 @@ void EventQueueBase::keptRange()
              " is held back from every consumer until it goes. Use a range "
              "in the loop or handler that gets it.");
   }
+
   if (m_pendingCount >= kManyEvents && !m_warnedPendingMany)
   {
     m_warnedPendingMany = true;
@@ -228,8 +242,10 @@ void EventQueueBase::pendingOverCap(std::size_t dropped)
 {
   // Missed counts over every consumer, as the buffer's drops do.
   m_missed += dropped * m_liveConsumers;
+
   if (m_warnedCap)
     return;
+
   m_warnedCap = true;
   LOG_ERROR("Events: " + m_name + " kept more than " +
             std::to_string(m_maxKept) +

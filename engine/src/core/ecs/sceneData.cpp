@@ -2,6 +2,8 @@
 
 #include "../util/typeIds.h"
 
+#include <string_view>
+
 namespace sfs::detail
 {
 

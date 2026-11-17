@@ -2,7 +2,13 @@
 
 #include "formatLines.h"
 
+#include <tree_sitter/api.h>
+
 #include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <string>
+#include <string_view>
 #include <vector>
 
 namespace sfs::lsp

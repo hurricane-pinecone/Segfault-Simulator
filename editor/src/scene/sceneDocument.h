@@ -1,9 +1,9 @@
 #pragma once
 
+#include "engine/runtime/serialization/sceneSerializer.h"
 #include "scene/editorScene.h"
 
-#include "engine/runtime/serialization/sceneSerializer.h"
-#include "nlohmann/json.hpp"
+#include <nlohmann/json.hpp>
 
 #include <chrono>
 #include <cstddef>
@@ -11,39 +11,13 @@
 #include <optional>
 #include <utility>
 
-
 // The scene file being edited: tracks its path and moves the EditorScene's
 // contents to and from disk (and memory, for Play/Stop and module reloads)
 // through the reflection-driven SceneSerializer.
 class SceneDocument
 {
 public:
-  static constexpr const char* kExtension = ".scene";
-
   explicit SceneDocument(EditorScene& scene) : m_scene(&scene) {}
-
-  /** Point at a recreated scene (after a module reload), keeping the path. */
-  void rebind(EditorScene& scene) { m_scene = &scene; }
-
-  /** The file this scene saves to; empty for a new, unsaved scene. */
-  const std::filesystem::path& path() const { return m_path; }
-  bool hasPath() const { return !m_path.empty(); }
-
-  /** Change the path it saves to (e.g. back to the scene after editing a prefab). */
-  void setPath(const std::filesystem::path& path) { m_path = path; }
-
-  /**
-   * Whether the scene holds a prefab's content, edited on its own (a prefab's
-   * tab): its snapshots then keep the prefab's entity ids (see
-   * sfs::SceneSerializer::save()).
-   */
-  void setPrefabContent(bool prefabContent) { m_prefabContent = prefabContent; }
-
-  /** Replace the scene with the default layout, not yet saved anywhere. */
-  void newScene(EditorScene::Style style = EditorScene::Style::ThreeD);
-
-  /** Replace the scene with a file's contents. @return false (logged) on failure. */
-  bool open(const std::filesystem::path& path);
 
   /**
    * Start replacing the scene with a file's contents: its settings now, its
@@ -53,33 +27,60 @@ public:
    */
   bool beginOpen(const std::filesystem::path& path);
 
-  /** Add more of the scene's entities, for up to `budget`. @return true once it's all in. */
+  /** Add more of the scene's entities, for up to `budget`. @return true once
+   * it's all in. */
   bool continueOpening(std::chrono::milliseconds budget);
 
   /** Add the rest at once. */
   void finishOpening();
 
+  bool hasPath() const { return !m_path.empty(); }
+
+  /** Replace the scene with the default layout, not yet saved anywhere. */
+  void newScene(EditorScene::Style style = EditorScene::Style::ThreeD);
+
+  /** Replace the scene with a file's contents. @return false (logged) on
+   * failure. */
+  bool open(const std::filesystem::path& path);
+
   bool opening() const { return m_opening.has_value(); }
   /** Entities in so far, of how many (while opening). */
   std::pair<std::size_t, std::size_t> openingProgress() const;
 
-  /** Save to the current path. @return false if there is none or writing fails. */
+  /** The file this scene saves to; empty for a new, unsaved scene. */
+  const std::filesystem::path& path() const { return m_path; }
+
+  /** Point at a recreated scene (after a module reload), keeping the path. */
+  void rebind(EditorScene& scene) { m_scene = &scene; }
+
+  /** Replace the scene's contents with a snapshot. */
+  void restore(const nlohmann::json& snapshot);
+
+  /** Save to the current path. @return false if there is none or writing fails.
+   */
   bool save();
 
   /** Save to `path`, which becomes the current path. */
   bool saveAs(const std::filesystem::path& path);
 
-  /** The scene's current contents, in scene-file form (finishing opening it first). */
+  /** Change the path it saves to (e.g. back to the scene after editing a
+   * prefab). */
+  void setPath(const std::filesystem::path& path) { m_path = path; }
+
+  /**
+   * Whether the scene holds a prefab's content, edited on its own (a prefab's
+   * tab): its snapshots then keep the prefab's entity ids (see
+   * sfs::SceneSerializer::save()).
+   */
+  void setPrefabContent(bool prefabContent) { m_prefabContent = prefabContent; }
+
+  /** The scene's current contents, in scene-file form (finishing opening it
+   * first). */
   nlohmann::json snapshot();
 
-  /** Replace the scene's contents with a snapshot. */
-  void restore(const nlohmann::json& snapshot);
+  static constexpr const char* kExtension = ".scene";
 
 private:
-  EditorScene* m_scene;
-  std::filesystem::path m_path;
-  bool m_prefabContent = false;
-
   // A file being opened: its entities still to add, and the references
   // between entries that resolve once they're all in.
   struct Opening
@@ -88,5 +89,9 @@ private:
     std::size_t next = 0;
     sfs::SceneSerializer::LoadSession session;
   };
+
+  EditorScene* m_scene;
+  std::filesystem::path m_path;
+  bool m_prefabContent = false;
   std::optional<Opening> m_opening;
 };

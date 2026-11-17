@@ -3,9 +3,10 @@
 #include "engine/core/rendering/materialGraph.h"
 #include "engine/core/rendering/mesh.h"
 #include "engine/core/rendering/terrain.h"
-#include "glm/glm/ext/vector_float2.hpp"
-#include "glm/glm/ext/vector_float4.hpp"
-#include "nlohmann/json.hpp"
+
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_float4.hpp>
+#include <nlohmann/json.hpp>
 
 #include <map>
 #include <optional>
@@ -61,6 +62,20 @@ namespace sfs
  */
 struct MaterialAsset
 {
+  /** Missing fields keep their defaults; nothing if `json` isn't an object. */
+  static std::optional<MaterialAsset> fromJson(const nlohmann::json& json);
+
+  bool operator==(const MaterialAsset&) const = default;
+
+  /**
+   * A node graph that draws the same as this standard material (its fields
+   * above as nodes: colour x vertex colour x texture, and so on), so turning a
+   * material into a node-graph one changes nothing until the graph is edited.
+   */
+  materialGraph::Graph toGraph() const;
+
+  nlohmann::json toJson() const;
+
   static constexpr int kFormatVersion = 2;
 
   glm::vec4 baseColor{1.0f}; // linear RGB, and alpha
@@ -96,20 +111,6 @@ struct MaterialAsset
   // (VisualStyle::materialVariant): tag -> material. A variant's own variants
   // aren't followed.
   std::map<std::string, std::string> variants;
-
-  /**
-   * A node graph that draws the same as this standard material (its fields
-   * above as nodes: colour x vertex colour x texture, and so on), so turning a
-   * material into a node-graph one changes nothing until the graph is edited.
-   */
-  materialGraph::Graph toGraph() const;
-
-  nlohmann::json toJson() const;
-
-  /** Missing fields keep their defaults; nothing if `json` isn't an object. */
-  static std::optional<MaterialAsset> fromJson(const nlohmann::json& json);
-
-  bool operator==(const MaterialAsset&) const = default;
 };
 
 /** "opaque", "mask" or "blend". */

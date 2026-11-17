@@ -2,6 +2,7 @@
 
 #include "engine/runtime/navigation/geometry.h"
 
+#include <cstddef>
 #include <vector>
 
 namespace sfs::nav::vehicle
@@ -35,22 +36,24 @@ struct PathPoint
 /** A path to follow: its segments from `start`, and their samples. */
 struct VehiclePath
 {
+  int cusps() const
+  {
+    int n = 0;
+
+    for (std::size_t i = 1; i < segments.size(); ++i)
+      n += segments[i].gear != segments[i - 1].gear;
+
+    return n;
+  }
+  float duration() const { return points.empty() ? 0.0f : points.back().time; }
+  bool empty() const { return points.size() < 2; }
+  Pose2 end() const { return points.empty() ? start : points.back().pose; }
+  float length() const { return points.empty() ? 0.0f : points.back().s; }
+
   Pose2 start;
   float startHitch = 0.0f;
   std::vector<Segment> segments;
   std::vector<PathPoint> points;
-
-  bool empty() const { return points.size() < 2; }
-  float length() const { return points.empty() ? 0.0f : points.back().s; }
-  float duration() const { return points.empty() ? 0.0f : points.back().time; }
-  Pose2 end() const { return points.empty() ? start : points.back().pose; }
-  int cusps() const
-  {
-    int n = 0;
-    for (std::size_t i = 1; i < segments.size(); ++i)
-      n += segments[i].gear != segments[i - 1].gear;
-    return n;
-  }
 };
 
 } // namespace sfs::nav::vehicle

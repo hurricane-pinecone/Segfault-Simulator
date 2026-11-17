@@ -7,11 +7,13 @@
 
 #include "engine/core/rendering/aabb.h"
 #include "engine/core/rendering/mesh.h"
-#include "glm/glm/ext/matrix_float4x4.hpp"
-#include "glm/glm/ext/quaternion_float.hpp"
-#include "glm/glm/ext/vector_float3.hpp"
-#include "glm/glm/ext/vector_float4.hpp"
 
+#include <glm/glm/ext/matrix_float4x4.hpp>
+#include <glm/glm/ext/quaternion_float.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
+#include <glm/glm/ext/vector_float4.hpp>
+
+#include <cstddef>
 #include <cstdint>
 #include <span>
 #include <string>
@@ -66,13 +68,13 @@ struct AnimationClip
 /** A model's clips. */
 struct AnimationSet
 {
-  std::vector<AnimationClip> clips;
+  /** Every node any of the clips moves, each once, in the order first met. */
+  std::vector<std::string> animatedNodes() const;
 
   /** The clip with this name, or null. */
   const AnimationClip* find(std::string_view name) const;
 
-  /** Every node any of the clips moves, each once, in the order first met. */
-  std::vector<std::string> animatedNodes() const;
+  std::vector<AnimationClip> clips;
 };
 
 /**
@@ -84,12 +86,12 @@ glm::vec4 sampleChannel(const AnimationChannel& channel, float time);
 /** A node's local placement, taken apart. */
 struct JointPose
 {
+  /** translate * rotate * scale, as TransformComponent::matrix(). */
+  glm::mat4 matrix() const;
+
   glm::vec3 translation{0.0f};
   glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
   glm::vec3 scale{1.0f};
-
-  /** translate * rotate * scale, as TransformComponent::matrix(). */
-  glm::mat4 matrix() const;
 };
 
 /**
@@ -126,19 +128,6 @@ public:
     float weight = 1.0f; // how much it counts (the layers' sum to 1)
   };
 
-  /** The most layers kept: the oldest goes when another would be one more. */
-  static constexpr std::size_t kMostLayers = 4;
-
-  /**
-   * Start a clip from `time` seconds, fading it in over `fadeSeconds` seconds
-   * (0: at once, dropping the rest). Playing the clip already newest only
-   * changes nothing.
-   */
-  void play(std::string_view clip, float fadeSeconds = 0.0f, float time = 0.0f);
-
-  /** Forget every layer. */
-  void clear();
-
   /**
    * Move on by `seconds` (already scaled by speed): every layer's time, and
    * the fade. A looping clip wraps around its duration; one that doesn't
@@ -150,14 +139,12 @@ public:
   {
     for (Layer& layer : m_layers)
       layer.time = wrapTime(layer.time + seconds, durations(layer.clip), loop);
+
     fade(seconds);
   }
 
-  /** Just the fade (the layers' weights), by `seconds`. */
-  void fade(float seconds);
-
-  const std::vector<Layer>& layers() const { return m_layers; }
-  std::vector<Layer>& layers() { return m_layers; }
+  /** Forget every layer. */
+  void clear();
 
   /** The newest layer (the clip playing), or null. */
   const Layer* current() const
@@ -166,14 +153,30 @@ public:
   }
   Layer* current() { return m_layers.empty() ? nullptr : &m_layers.back(); }
 
+  /** Just the fade (the layers' weights), by `seconds`. */
+  void fade(float seconds);
+
   /** Whether a cross-fade is under way (more than one layer counts). */
   bool fading() const { return m_layers.size() > 1; }
+
+  const std::vector<Layer>& layers() const { return m_layers; }
+  std::vector<Layer>& layers() { return m_layers; }
+
+  /**
+   * Start a clip from `time` seconds, fading it in over `fadeSeconds` seconds
+   * (0: at once, dropping the rest). Playing the clip already newest only
+   * changes nothing.
+   */
+  void play(std::string_view clip, float fadeSeconds = 0.0f, float time = 0.0f);
 
   /**
    * A clip's time, `seconds` on: wrapped into its duration when looping,
    * else held at its ends.
    */
   static float wrapTime(float seconds, float duration, bool loop);
+
+  /** The most layers kept: the oldest goes when another would be one more. */
+  static constexpr std::size_t kMostLayers = 4;
 
 private:
   std::vector<Layer> m_layers; // oldest first

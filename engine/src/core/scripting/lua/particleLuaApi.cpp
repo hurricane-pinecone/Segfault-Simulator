@@ -5,13 +5,15 @@
 #include "engine/core/scripting/luaSchema.h"
 #include "engine/core/scripting/luaScripting.h"
 #include "engine/core/scripting/particleSchema.h"
+#include "luaC.h"
 
-#include "glm/glm/ext/vector_float2.hpp"
-#include "glm/glm/ext/vector_float3.hpp"
-#include <lua.hpp>
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
 
 #include <exception>
+#include <functional>
 #include <new>
+#include <utility>
 
 namespace sfs
 {
@@ -20,7 +22,7 @@ namespace
 {
 
 using Resolver = std::function<ParticleEngine*()>;
-constexpr const char* kResolverMeta = "sfs.ParticleResolver";
+constexpr const char* RESOLVER_META = "sfs.ParticleResolver";
 
 // The resolver rides as every closure's shared upvalue (full userdata), so all
 // five entry points reach the same live engine without a global.
@@ -34,8 +36,10 @@ ParticleEngine* engineOf(lua_State* L)
 int resolverGc(lua_State* L)
 {
   auto* resolver = static_cast<Resolver*>(lua_touserdata(L, 1));
+
   if (resolver)
     resolver->~Resolver(); // Lua frees the userdata memory; just run the dtor
+
   return 0;
 }
 
@@ -68,8 +72,10 @@ int particlesSpawn(lua_State* L)
         const char* name = luaL_checkstring(L, 1);
         const glm::vec2 pos{static_cast<float>(luaL_optnumber(L, 2, 0.0)),
                             static_cast<float>(luaL_optnumber(L, 3, 0.0))};
+
         if (ParticleEngine* engine = engineOf(L))
           engine->spawnBurst(name, pos, engine->groundElevationAt(pos));
+
         return 0;
       });
 }
@@ -86,10 +92,12 @@ int particlesConfigure(lua_State* L)
                    luaL_checktype(L, 2, LUA_TTABLE);
 
                    ParticleEngine* engine = engineOf(L);
+
                    if (!engine)
                      return 0;
 
                    const ParticleEffectDesc* current = engine->effect(name);
+
                    if (!current)
                      return luaL_error(L, "unknown particle effect '%s'", name);
 
@@ -97,11 +105,13 @@ int particlesConfigure(lua_State* L)
                    luaschema::readTable(L, 2, &desc, particleEffectSchema());
 
                    lua_getfield(L, 2, "color");
+
                    if (lua_istable(L, -1))
                    {
                      const glm::vec3 c = luaschema::readColor(L, lua_gettop(L));
                      desc.colorOverLife = Gradient::twoStop(c, c * 0.3f);
                    }
+
                    lua_pop(L, 1);
 
                    engine->registerEffect(name, desc);
@@ -119,6 +129,7 @@ int particlesDescribe(lua_State* L)
                    const char* name = luaL_checkstring(L, 1);
 
                    ParticleEngine* engine = engineOf(L);
+
                    if (!engine)
                    {
                      lua_newtable(L);
@@ -126,6 +137,7 @@ int particlesDescribe(lua_State* L)
                    }
 
                    const ParticleEffectDesc* current = engine->effect(name);
+
                    if (!current)
                      return luaL_error(L, "unknown particle effect '%s'", name);
 
@@ -142,15 +154,18 @@ int particlesEffects(lua_State* L)
                  [&]
                  {
                    lua_newtable(L);
+
                    if (ParticleEngine* engine = engineOf(L))
                    {
                      int i = 1;
+
                      for (const std::string& name : engine->effectNames())
                      {
                        lua_pushstring(L, name.c_str());
                        lua_rawseti(L, -2, i++);
                      }
                    }
+
                    return 1;
                  });
 }
@@ -162,6 +177,7 @@ void registerParticleLua(LuaScripting& lua,
                          std::function<ParticleEngine*()> resolve)
 {
   lua_State* L = lua.state();
+
   if (!L)
     return;
 
@@ -170,11 +186,13 @@ void registerParticleLua(LuaScripting& lua,
   // collected. Stack after this block: [..., resolver].
   void* mem = lua_newuserdatauv(L, sizeof(Resolver), 0);
   new (mem) Resolver(std::move(resolve));
-  if (luaL_newmetatable(L, kResolverMeta))
+
+  if (luaL_newmetatable(L, RESOLVER_META))
   {
     lua_pushcfunction(L, &resolverGc);
     lua_setfield(L, -2, "__gc");
   }
+
   lua_setmetatable(L, -2);
 
   // Build the API table; every closure shares the one resolver userdata upvalue

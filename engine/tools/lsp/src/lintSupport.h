@@ -2,8 +2,8 @@
 
 #include "lints.h"
 #include "projectIndex.h"
-
-#include <sfs/codegen/model.h>
+#include "sfs/codegen/model.h"
+#include "sfs/codegen/rules.h"
 
 #include <tree_sitter/api.h>
 
@@ -162,26 +162,34 @@ void walkTree(TSNode root, Visit&& visit, Leave&& leave)
 {
   if (ts_node_is_null(root))
     return;
+
   TSTreeCursor cursor = ts_tree_cursor_new(root);
   bool more = true;
+
   while (more)
   {
     const TSNode node = ts_tree_cursor_current_node(&cursor);
     const Next next = visit(node);
+
     if (next == Next::Stop)
       break;
+
     if (next == Next::Descend && ts_tree_cursor_goto_first_child(&cursor))
       continue;
+
     leave(node);
+
     // On to the next node: a sibling, or an ancestor's, leaving the ancestors
     // passed on the way.
     while (more && !ts_tree_cursor_goto_next_sibling(&cursor))
     {
       more = ts_tree_cursor_goto_parent(&cursor);
+
       if (more)
         leave(ts_tree_cursor_current_node(&cursor));
     }
   }
+
   ts_tree_cursor_delete(&cursor);
 }
 
@@ -260,10 +268,9 @@ localDeclarator(TSNode at, std::string_view name, std::string_view source);
  * @param source the file's text
  * @return the field declaration, or null when the body has none
  */
-TSNode
-memberDeclaration(TSNode classNode,
-                  std::string_view name,
-                  std::string_view source);
+TSNode memberDeclaration(TSNode classNode,
+                         std::string_view name,
+                         std::string_view source);
 
 /**
  * The type an expression makes: `T{...}`'s or `T(...)`'s, where T names a
@@ -340,6 +347,92 @@ struct LintFile
 {
   using Kind = Linter::Kind;
 
+  /**
+   * The query alias `name` as seen from class `owner`: the file's own, then
+   * the project's.
+   */
+  const QueryAlias* alias(std::string_view owner, std::string_view name) const;
+
+  /**
+   * The name a call calls (`f`, `x.f`, `x->f<T>`), and its template
+   * arguments.
+   */
+  std::string_view calleeName(TSNode call, TSNode& templateArguments) const;
+
+  /**
+   * The name a declarator declares (through init, reference and pointer
+   * declarators), or empty.
+   */
+  std::string_view declaredName(TSNode declarator) const;
+
+  /** A node's child by field name; null for a null node. */
+  static TSNode field(TSNode node, std::string_view name);
+
+  /** The file's class called `name`, or null. */
+  const FileClass* fileClass(std::string_view name) const;
+
+  /** The name of a function's or lambda's first parameter, or empty. */
+  std::string_view firstParameter(TSNode parameters) const;
+
+  /** Whether `name` is a Service class of the file or the project. */
+  bool isServiceClass(std::string_view name) const;
+
+  /**
+   * Whether a spelling names SFS's `name` where the walk is: qualified, or
+   * unqualified where SFS's `visibleAs` (by default `name`) is visible.
+   */
+  bool isSfsName(std::string_view spelled,
+                 std::string_view name,
+                 std::string_view visibleAs = {}) const;
+
+  /**
+   * isSfsName() at a given node once the walk is done: inside namespace sfs,
+   * or after the file's using declarations.
+   */
+  bool
+  isSfsNameAt(TSNode at, std::string_view spelled, std::string_view name) const;
+
+  /** Whether `name` is a System class of the file or the project. */
+  bool isSystemClass(std::string_view name) const;
+
+  /** The kind of `node`. */
+  Kind kind(TSNode node) const { return linter->kindOf(node); }
+
+  /**
+   * The class a node is written in (ownerOf(), unqualified). Empty outside
+   * classes.
+   */
+  std::string_view ownerAt(TSNode node) const;
+
+  /**
+   * The object a call is made on (`x` of `x.f()`), or null for a plain call.
+   */
+  TSNode receiverOf(TSNode call) const;
+
+  /** Adds a diagnostic of `rule` on `node`. */
+  void report(codegen::RuleId rule,
+              TSNode node,
+              std::string message,
+              std::string fixTitle = {},
+              std::vector<codegen::TextEdit> fix = {});
+
+  /** Forgets the last file's state, keeping the containers' capacity. */
+  void resetFile();
+
+  /** The text `node` covers. */
+  std::string_view text(TSNode node) const;
+
+  /** Whether an unqualified SFS name means SFS's where the walk is. */
+  bool visible(std::string_view name) const;
+
+  /**
+   * The SFS wrapper a written term is (`sfs::Any<...>`, `Excluding<...>` where
+   * SFS's is visible at `at`, `sfs::Query<...>`), and its arguments' text.
+   */
+  Wrapper wrapperOfText(TSNode at,
+                        std::string_view spelled,
+                        std::string_view& inner) const;
+
   /** The linter, for its node kinds. */
   const Linter* linter = nullptr;
   /** The file's text. */
@@ -376,92 +469,6 @@ struct LintFile
   std::vector<TSNode> loops;
   /** Constructor definitions (in class or out of line). */
   std::vector<TSNode> constructors;
-
-  /** Forgets the last file's state, keeping the containers' capacity. */
-  void resetFile();
-
-  /** The kind of `node`. */
-  Kind kind(TSNode node) const { return linter->kindOf(node); }
-
-  /** The text `node` covers. */
-  std::string_view text(TSNode node) const;
-
-  /** A node's child by field name; null for a null node. */
-  static TSNode field(TSNode node, std::string_view name);
-
-  /** Adds a diagnostic of `rule` on `node`. */
-  void report(codegen::RuleId rule,
-              TSNode node,
-              std::string message,
-              std::string fixTitle = {},
-              std::vector<codegen::TextEdit> fix = {});
-
-  /** Whether an unqualified SFS name means SFS's where the walk is. */
-  bool visible(std::string_view name) const;
-
-  /**
-   * Whether a spelling names SFS's `name` where the walk is: qualified, or
-   * unqualified where SFS's `visibleAs` (by default `name`) is visible.
-   */
-  bool isSfsName(std::string_view spelled,
-                 std::string_view name,
-                 std::string_view visibleAs = {}) const;
-
-  /**
-   * isSfsName() at a given node once the walk is done: inside namespace sfs,
-   * or after the file's using declarations.
-   */
-  bool
-  isSfsNameAt(TSNode at, std::string_view spelled, std::string_view name) const;
-
-  /**
-   * The name a declarator declares (through init, reference and pointer
-   * declarators), or empty.
-   */
-  std::string_view declaredName(TSNode declarator) const;
-
-  /** The name of a function's or lambda's first parameter, or empty. */
-  std::string_view firstParameter(TSNode parameters) const;
-
-  /**
-   * The name a call calls (`f`, `x.f`, `x->f<T>`), and its template
-   * arguments.
-   */
-  std::string_view calleeName(TSNode call, TSNode& templateArguments) const;
-
-  /**
-   * The object a call is made on (`x` of `x.f()`), or null for a plain call.
-   */
-  TSNode receiverOf(TSNode call) const;
-
-  /** Whether `name` is a System class of the file or the project. */
-  bool isSystemClass(std::string_view name) const;
-
-  /** Whether `name` is a Service class of the file or the project. */
-  bool isServiceClass(std::string_view name) const;
-
-  /** The file's class called `name`, or null. */
-  const FileClass* fileClass(std::string_view name) const;
-
-  /**
-   * The class a node is written in (ownerOf(), unqualified). Empty outside
-   * classes.
-   */
-  std::string_view ownerAt(TSNode node) const;
-
-  /**
-   * The query alias `name` as seen from class `owner`: the file's own, then
-   * the project's.
-   */
-  const QueryAlias* alias(std::string_view owner, std::string_view name) const;
-
-  /**
-   * The SFS wrapper a written term is (`sfs::Any<...>`, `Excluding<...>` where
-   * SFS's is visible at `at`, `sfs::Query<...>`), and its arguments' text.
-   */
-  Wrapper wrapperOfText(TSNode at,
-                        std::string_view spelled,
-                        std::string_view& inner) const;
 };
 
 /**

@@ -1,9 +1,11 @@
 #pragma once
 
 #include "engine/runtime/navigation/agentKind.h"
+#include "engine/runtime/navigation/geometry.h"
 #include "engine/runtime/navigation/vehicle/vehicleModel.h"
 #include "engine/runtime/navigation/vehicle/vehiclePath.h"
 
+#include <cstddef>
 #include <limits>
 
 namespace sfs::nav::vehicle
@@ -30,11 +32,6 @@ public:
   {
     float shuttle = 0.5f, accel = 1.2f, brake = 2.0f;
   };
-  void setDrive(const Drive& drive) { m_drive = drive; }
-  const Drive& drive() const { return m_drive; }
-  void setPath(VehiclePath path, float speed = 0.0f);
-  const VehiclePath& path() const { return m_path; }
-
   struct State
   {
     bool done = false;    // at the end
@@ -43,10 +40,24 @@ public:
     // brakes could take off: a stop named too late, never priced. 0: none.
     float hardStopFrom = 0.0f;
   };
-  /** m/s it creeps at, at least, while there's way left to a stop. */
-  static constexpr float kCreep = 0.15f;
-  /** m/s2: the least braking or pulling away it's reckoned with. */
-  static constexpr float kLeastRate = 0.05f;
+
+  float curvature() const;
+  const Drive& drive() const { return m_drive; }
+  float hitch() const;
+  /** The index of the point at or before s. */
+  std::size_t index() const { return m_index; }
+  const VehiclePath& path() const { return m_path; }
+  Pose2 pose() const;
+  float s() const { return m_s; }
+  void setDrive(const Drive& drive) { m_drive = drive; }
+  void setPath(VehiclePath path, float speed = 0.0f);
+  /** Signed: below 0 backing up. */
+  float speed() const { return m_speed * static_cast<float>(here().gear); }
+  /** The bicycle's steering angle for the curvature (radians, + left). */
+  float steerAngle(float wheelbase) const;
+  State step(float deltaTime,
+             float speedCap = std::numeric_limits<float>::infinity(),
+             float stopAt = std::numeric_limits<float>::infinity());
   /**
    * THE stopping distance (m): from `speed` braking at `brake` (its spec's,
    * derived), the step `dt` it goes on at that speed first counted (v * dt +
@@ -56,24 +67,16 @@ public:
   static float stoppingDistance(float speed, float brake, float dt = 0.0f);
   /** Its inverse: the fastest it may go and still stand within `distance`. */
   static float stopSpeed(float distance, float brake, float dt = 0.0f);
-  State step(float deltaTime,
-             float speedCap = std::numeric_limits<float>::infinity(),
-             float stopAt = std::numeric_limits<float>::infinity());
 
-  float s() const { return m_s; }
-  /** Signed: below 0 backing up. */
-  float speed() const { return m_speed * static_cast<float>(here().gear); }
-  Pose2 pose() const;
-  float curvature() const;
-  float hitch() const;
-  /** The bicycle's steering angle for the curvature (radians, + left). */
-  float steerAngle(float wheelbase) const;
-  /** The index of the point at or before s. */
-  std::size_t index() const { return m_index; }
+  /** m/s it creeps at, at least, while there's way left to a stop. */
+  static constexpr float kCreep = 0.15f;
+  /** m/s2: the least braking or pulling away it's reckoned with. */
+  static constexpr float kLeastRate = 0.05f;
 
 private:
-  const PathPoint& here() const;
   PathPoint at(float s) const;
+  const PathPoint& here() const;
+
   VehiclePath m_path;
   float m_s = 0.0f, m_speed = 0.0f, m_dwell = 0.0f;
   Drive m_drive;
@@ -87,8 +90,8 @@ private:
  */
 struct Bicycle
 {
-  static Pose2 step(Pose2 rear, float distance, float steer, float wheelbase);
   static float radius(float steer, float wheelbase);
+  static Pose2 step(Pose2 rear, float distance, float steer, float wheelbase);
 };
 
 /**
@@ -109,25 +112,25 @@ struct Bicycle
 class HandDrive
 {
 public:
-  void setModel(const VehicleModel& model) { m_model = model; }
+  float curvature() const;
+  /** Its fullest lock (radians), from wheelbase and minRadius. */
+  float fullLock() const;
+  float hitch() const { return m_hitch; }
   const VehicleModel& model() const { return m_model; }
+  Pose2 pose() const { return m_pose; }
+  void setModel(const VehicleModel& model) { m_model = model; }
+  /** Standing to change gear (s left). */
+  float shuttleLeft() const { return m_dwell; }
+  /** Signed: below 0 backing up. */
+  float speed() const { return m_speed; }
   /** From here, at `speed` (signed) with the wheel straight. */
   void start(Pose2 pose, float hitch, float speed);
+  /** The wheel's angle (radians, + left) and the curvature it turns. */
+  float steerAngle() const { return m_steer; }
   /** On by `dt` with `controls`, no faster than `speedCap` (m/s). */
   void step(const Controls& controls,
             float dt,
             float speedCap = std::numeric_limits<float>::infinity());
-  Pose2 pose() const { return m_pose; }
-  float hitch() const { return m_hitch; }
-  /** Signed: below 0 backing up. */
-  float speed() const { return m_speed; }
-  /** The wheel's angle (radians, + left) and the curvature it turns. */
-  float steerAngle() const { return m_steer; }
-  float curvature() const;
-  /** Its fullest lock (radians), from wheelbase and minRadius. */
-  float fullLock() const;
-  /** Standing to change gear (s left). */
-  float shuttleLeft() const { return m_dwell; }
 
 private:
   VehicleModel m_model;

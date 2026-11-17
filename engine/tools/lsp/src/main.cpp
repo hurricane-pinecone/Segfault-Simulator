@@ -39,21 +39,26 @@ void usage()
 int main(int argc, char* argv[])
 {
   bool logTiming = false;
+
   for (int i = 1; i < argc; ++i)
   {
     const std::string arg = argv[i];
+
     if (arg == "--version")
     {
       std::cout << "sfs-lsp " << SFS_ENGINE_VERSION << '\n';
       return 0;
     }
+
     if (arg == "--check" || arg == "--fix" || arg == "--format")
     {
       try
       {
         const std::vector<std::string> rest(argv + i + 1, argv + argc);
+
         if (arg == "--format")
           return sfs::lsp::runFormat(rest);
+
         return arg == "--check" ? sfs::lsp::runCheck(rest)
                                 : sfs::lsp::runFix(rest);
       }
@@ -63,6 +68,7 @@ int main(int argc, char* argv[])
         return 2;
       }
     }
+
     if (arg == "--log-timing")
       logTiming = true;
     else

@@ -5,6 +5,7 @@
 #include <functional>
 #include <source_location>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace sfs::ui
@@ -33,16 +34,14 @@ public:
           std::source_location where = std::source_location::current());
   /** One for `file` (sfs-codegen's, for a .ui.h's view structs). */
   Preview(std::string name, std::function<View()> make, std::string file);
-  ~Preview();
-
   Preview(const Preview&) = delete;
+  ~Preview();
   Preview& operator=(const Preview&) = delete;
-
-  const std::string& name() const { return m_name; }
-  /** Its view, made now. */
-  View make() const { return m_make ? m_make() : View(); }
   /** The source file it's declared in (as it was compiled). */
   const std::string& file() const { return m_file; }
+  /** Its view, made now. */
+  View make() const { return m_make ? m_make() : View(); }
+  const std::string& name() const { return m_name; }
 
 private:
   std::string m_name;
@@ -67,9 +66,8 @@ public:
   explicit PreviewStyle(
       std::function<View(View)> apply,
       std::source_location where = std::source_location::current());
-  ~PreviewStyle();
-
   PreviewStyle(const PreviewStyle&) = delete;
+  ~PreviewStyle();
   PreviewStyle& operator=(const PreviewStyle&) = delete;
 
   /** `view` in this style. */

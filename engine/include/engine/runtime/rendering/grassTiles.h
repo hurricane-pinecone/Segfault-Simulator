@@ -3,6 +3,12 @@
 #include "engine/core/rendering/grass.h"
 #include "engine/runtime/rendering/framePlan.h"
 
+#include <glm/glm/ext/matrix_float4x4.hpp>
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_float4.hpp>
+#include <glm/glm/ext/vector_int2.hpp>
+#include <glm/glm/ext/vector_int4.hpp>
+
 #include <array>
 #include <cstdint>
 #include <cstdlib>
@@ -134,9 +140,6 @@ private:
 class GrassTileCache
 {
 public:
-  /** Levels a tile can be built at (grassTileThreshold()). */
-  static constexpr int kTileLevels = 21;
-
   struct Limits
   {
     uint32_t startChunks = 4096;   // room at first (256k blades)
@@ -148,11 +151,20 @@ public:
     uint64_t freshFrames = 20;     // shown fresh (debug view)
   };
 
+  /** A frame's work. */
+  struct Frame
+  {
+    std::vector<GrassTileEntry> builds; // tiles to build first
+    std::vector<GrassTileEntry> drawn;  // tiles to grow from, nearest first
+    uint32_t chunks = 0;                // all of theirs
+    uint32_t outOfRoom = 0;             // tiles in use there's no room for
+  };
+
   GrassTileCache() = default;
   explicit GrassTileCache(const Limits& limits) : m_limits(limits) {}
 
-  /** A new ground (all its tiles built again). */
-  void setGround(const GrassHeights& heights);
+  /** Whether a tile is built (`lattice`, its cell `origin`). */
+  bool built(int lattice, glm::ivec2 origin) const;
 
   /**
    * What the blades grow from changed over a rectangle of the ground's own
@@ -162,24 +174,6 @@ public:
 
   /** Every tile built again. */
   void clear();
-
-  /**
-   * Where its maps (over `grid`, the ground's own XY) are growing: each of
-   * their tiles (kGrassMapTile texels a side, `tiles` across and down)
-   * non-zero if so. The tiles over them are marked kGrassTileActive.
-   */
-  void setActive(const GrassGrid& grid,
-                 glm::ivec2 tiles,
-                 std::span<const uint8_t> active);
-
-  /** A frame's work. */
-  struct Frame
-  {
-    std::vector<GrassTileEntry> builds; // tiles to build first
-    std::vector<GrassTileEntry> drawn;  // tiles to grow from, nearest first
-    uint32_t chunks = 0;                // all of theirs
-    uint32_t outOfRoom = 0;             // tiles in use there's no room for
-  };
 
   /**
    * Plan frame `frame`'s work, by its grow pass's settings (planGrass(): its
@@ -192,12 +186,27 @@ public:
 
   /** The room the GPU's buffer of kept blades needs (chunks). */
   uint32_t poolChunks() const { return m_pool.size(); }
-  /** Of it, in use. */
-  uint32_t usedChunks() const { return m_pool.used(); }
+
+  /**
+   * Where its maps (over `grid`, the ground's own XY) are growing: each of
+   * their tiles (kGrassMapTile texels a side, `tiles` across and down)
+   * non-zero if so. The tiles over them are marked kGrassTileActive.
+   */
+  void setActive(const GrassGrid& grid,
+                 glm::ivec2 tiles,
+                 std::span<const uint8_t> active);
+
+  /** A new ground (all its tiles built again). */
+  void setGround(const GrassHeights& heights);
+
   /** Tiles built. */
   std::size_t tiles() const { return m_built; }
-  /** Whether a tile is built (`lattice`, its cell `origin`). */
-  bool built(int lattice, glm::ivec2 origin) const;
+
+  /** Of it, in use. */
+  uint32_t usedChunks() const { return m_pool.used(); }
+
+  /** Levels a tile can be built at (grassTileThreshold()). */
+  static constexpr int kTileLevels = 21;
 
 private:
   struct Tile
@@ -214,12 +223,13 @@ private:
   // What the tiles were built for: if it changes, they're all built again.
   struct Built
   {
+    bool operator==(const Built&) const = default;
+
     glm::mat4 model{0.0f};
     glm::vec4 shape{0.0f}; // height, variation, -, cell
     glm::vec4 ground{0.0f};
     glm::ivec4 groundSize{0};
     glm::vec4 maps{0.0f};
-    bool operator==(const Built&) const = default;
   };
   // A lattice's tiles over the ground: `size` a side from tile `from`
   // (`side` world units). For each, the ground's lowest and highest under
@@ -228,13 +238,14 @@ private:
   // edit.
   struct Grid
   {
+    int indexOf(glm::ivec2 tile) const; // -1 off it
+
     glm::ivec2 from{0, 0};
     glm::ivec2 size{0, 0};
     float side = 0.0f;
     std::vector<glm::vec2> under;
     std::vector<int32_t> slot;
     std::vector<uint8_t> edited;
-    int indexOf(glm::ivec2 tile) const; // -1 off it
   };
 
   // For the thinning they were worked out for (by the grow pass's settings):
@@ -252,20 +263,19 @@ private:
     std::array<std::array<uint32_t, kTileLevels>, 4> chunks{};
   };
 
-  // The grids for cells `cell` across (none without a ground).
-  void makeGrids(float cell);
-  void workOutLevels(const GrassGrowUniforms& grow);
+  // Whether any of a rectangle of the ground's own XY is over maps growing.
+  bool activeOver(glm::vec2 low, glm::vec2 high) const;
+  void drop(uint32_t slot);
+  // The lowest and highest ground under a tile (low above high: none).
+  glm::vec2 heightsUnder(int lattice, glm::ivec2 tile, int index);
   // The level enough at `away`, by a lattice's `from` (Levels).
   static int
   levelAt(const std::array<float, kTileLevels>& from, int lattice, float away);
-  // The lowest and highest ground under a tile (low above high: none).
-  glm::vec2 heightsUnder(int lattice, glm::ivec2 tile, int index);
+  // The grids for cells `cell` across (none without a ground).
+  void makeGrids(float cell);
   // Room for a tile (letting go of others, or making more, if need be).
   std::optional<uint32_t> roomFor(uint32_t chunks, uint64_t frame);
-  void drop(uint32_t slot);
-
-  // Whether any of a rectangle of the ground's own XY is over maps growing.
-  bool activeOver(glm::vec2 low, glm::vec2 high) const;
+  void workOutLevels(const GrassGrowUniforms& grow);
 
   Limits m_limits;
   GrassHeights m_heights;

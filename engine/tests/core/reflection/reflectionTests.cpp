@@ -1,18 +1,28 @@
 #include "../../testHarness.h"
+#include "engine/core/components/transformComponent.h"
+#include "engine/core/ecs/ecs.h"
+#include "engine/core/reflection/reflection.h"
+#include "engine/core/reflection/registration.h"
 
-#include <engine/core/components/meshRendererComponent.h>
-#include <engine/core/components/transformComponent.h>
-#include <engine/core/ecs/ecs.h>
-#include <engine/core/reflection/reflection.h>
-#include <engine/core/reflection/registration.h>
+#include <glm/glm/ext/vector_float3.hpp>
 
 #include <algorithm>
 #include <string>
+#include <string_view>
 
 using namespace sfs;
 
 namespace
 {
+struct EmptyMark
+{
+};
+
+struct OnlyHidden
+{
+  [[sfs::hide]] int count = 0;
+};
+
 const reflect::FieldInfo* findField(const reflect::TypeInfo& type,
                                     std::string_view name)
 {
@@ -22,15 +32,6 @@ const reflect::FieldInfo* findField(const reflect::TypeInfo& type,
                    [&](const reflect::FieldInfo& f) { return f.name == name; });
   return it != type.fields.end() ? &*it : nullptr;
 }
-
-struct EmptyMark
-{
-};
-
-struct OnlyHidden
-{
-  [[sfs::hide]] int count = 0;
-};
 } // namespace
 
 int main()

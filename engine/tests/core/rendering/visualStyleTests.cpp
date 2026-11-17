@@ -1,15 +1,17 @@
 #include "../../testHarness.h"
+#include "engine/core/rendering/ambientOcclusion.h"
+#include "engine/core/rendering/colorGrading.h"
+#include "engine/core/rendering/contactShadows.h"
+#include "engine/core/rendering/fog.h"
+#include "engine/core/rendering/lighting.h"
+#include "engine/core/rendering/sky.h"
+#include "engine/core/rendering/visualStyle.h"
 
-#include <engine/core/rendering/ambientOcclusion.h>
-#include <engine/core/rendering/colorGrading.h>
-#include <engine/core/rendering/contactShadows.h>
-#include <engine/core/rendering/fog.h>
-#include <engine/core/rendering/visualStyle.h>
+#include <glm/glm/ext/matrix_float3x3.hpp>
+#include <glm/glm/geometric.hpp>
 
 #include <cmath>
-
-#include "glm/glm/geometric.hpp"
-#include "glm/glm/matrix.hpp"
+#include <optional>
 
 using namespace sfs;
 
@@ -56,6 +58,7 @@ int main()
                                     ToneMapper::AgX,
                                     ToneMapper::Neutral})
       CHECK(toneMapperFromName(toneMapperName(mapper)) == mapper);
+
     CHECK(!toneMapperFromName("filmic").has_value());
   }
 
@@ -233,12 +236,14 @@ int main()
     const glm::vec3 point{60, 0, 0};
     double depth = 0.0;
     const int steps = 20000;
+
     for (int i = 0; i < steps; ++i)
     {
       const glm::vec3 at = camera + (point - camera) * ((i + 0.5f) / steps);
       depth +=
           0.02 * std::exp(-0.2 * at.z) * (glm::length(point - camera) / steps);
     }
+
     CHECK(testing::approx(fogOpacity(fog, camera, point),
                           static_cast<float>(1.0 - std::exp(-depth)),
                           1e-3f));
@@ -265,12 +270,14 @@ int main()
     CHECK(fogPhase(0.5f) > fogPhase(-1.0f));
     double sum = 0.0;
     const int steps = 4000;
+
     for (int i = 0; i < steps; ++i)
     {
       const double theta = 3.14159265358979 * (i + 0.5) / steps;
       sum += fogPhase(static_cast<float>(std::cos(theta))) * std::sin(theta) *
              2.0 * 3.14159265358979 * (3.14159265358979 / steps);
     }
+
     CHECK(testing::approx(static_cast<float>(sum), 1.0f, 1e-2f));
   }
 }

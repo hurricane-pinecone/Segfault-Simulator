@@ -3,17 +3,24 @@
 #include "engine/core/rendering/deformation.h"
 #include "engine/core/rendering/grass.h"
 #include "engine/core/rendering/lightClusters.h"
+#include "engine/core/rendering/lighting.h"
 #include "engine/core/rendering/mesh.h"
 #include "engine/core/rendering/puddles.h"
+#include "engine/core/rendering/rain.h"
+#include "engine/core/rendering/sunShadow.h"
 #include "engine/core/rendering/terrain.h"
+#include "engine/core/sceneData/shaderGlobals.h"
 #include "engine/runtime/rendering/frame.h"
 #include "engine/runtime/rendering/uiDraw.h"
-#include "glm/glm/ext/matrix_float4x4.hpp"
-#include "glm/glm/ext/vector_float4.hpp"
-#include "glm/glm/ext/vector_int2.hpp"
-#include "glm/glm/ext/vector_int4.hpp"
-#include "glm/glm/ext/vector_uint2.hpp"
-#include "glm/glm/ext/vector_uint4.hpp"
+
+#include <glm/glm/ext/matrix_float4x4.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
+#include <glm/glm/ext/vector_float4.hpp>
+#include <glm/glm/ext/vector_int2.hpp>
+#include <glm/glm/ext/vector_int4.hpp>
+#include <glm/glm/ext/vector_uint2.hpp>
+#include <glm/glm/ext/vector_uint3.hpp>
+#include <glm/glm/ext/vector_uint4.hpp>
 
 #include <array>
 #include <cstddef>
@@ -478,10 +485,7 @@ public:
     uint32_t count = 0;
   };
 
-  /** Start a frame: forget the last one's draws. */
-  void begin(const FrameParams& frame);
-  bool open() const { return m_open; }
-
+  void addGrass(const GrassBatch& batch);
   /**
    * Add a mesh's draws. `hasBlend`: whether any section draws see-through
    * with the batch's materials (the backend knows its materials).
@@ -490,9 +494,40 @@ public:
                uint32_t meshSlot,
                const PlannedMesh& mesh,
                bool hasBlend);
-  void addGrass(const GrassBatch& batch);
   void addUi(const UiDrawList& list);
-
+  /** Start a frame: forget the last one's draws. */
+  void begin(const FrameParams& frame);
+  /** Farthest first (after finish()). */
+  const std::vector<Draw>& blendDraws() const { return m_blendOrder; }
+  /** Bloom's uniforms for a pass reading a source of this size. */
+  PostUniforms bloomUniforms(glm::ivec2 sourceSize) const;
+  /**
+   * With cascades (frame().cascades.count > 1): each cascade's casters, those
+   * of shadowDraws() that reach into it. Else empty.
+   */
+  const std::vector<Draw>& cascadeDraws(std::size_t cascade) const
+  {
+    return m_cascadeDraws[cascade];
+  }
+  const ClusterLights& clusters() const { return m_clusters; }
+  /**
+   * The composite's: the glow added in (none when bloom is off), and the
+   * frame's grading, for a target `viewport` big.
+   */
+  PostUniforms compositeUniforms(glm::ivec2 viewport) const;
+  /**
+   * Whether the frame has contact shadows: on, and lit by a physical sky
+   * (they shade only its light).
+   */
+  bool contactShadowsOn() const;
+  const std::vector<uint32_t>& drawMaterials() const { return m_drawMaterials; }
+  /**
+   * Auto exposure's (ColorGrading::autoExposure), metering the scene at
+   * `viewport`, `seconds` after the last frame's.
+   */
+  ExposureUniforms exposureUniforms(glm::ivec2 viewport, float seconds) const;
+  /** Each shadowed light's six faces, in cube order. */
+  const std::vector<FaceUniforms>& faces() const { return m_faces; }
   /**
    * Work out the rest for a viewport: sort the see-through draws, pick the
    * shadowed lights and their casters, cluster the lights, fill the uniforms.
@@ -502,91 +537,22 @@ public:
               uint32_t shadowMapResolution,
               uint32_t pointShadowResolution,
               const std::function<const PlannedMesh*(uint32_t)>& meshes);
-
+  /** Depth of field's, if the frame has it. */
+  std::optional<FocusUniforms> focusUniforms(glm::ivec2 viewport) const;
   const FrameParams& frame() const { return m_frame; }
-  const std::vector<MeshInstance>& instances() const { return m_instances; }
-  const std::vector<uint32_t>& drawMaterials() const { return m_drawMaterials; }
-  const std::vector<Draw>& litDraws() const { return m_litDraws; }
-  /** Farthest first (after finish()). */
-  const std::vector<Draw>& blendDraws() const { return m_blendOrder; }
-  const std::vector<Draw>& shadowDraws() const { return m_shadowDraws; }
-  /**
-   * The opaque draws the camera sees that don't cast the sun's shadow (often
-   * the ground): rain's overhead map draws them as well as shadowDraws(), so
-   * rain lands on them too.
-   */
-  const std::vector<Draw>& unshadowedDraws() const { return m_unshadowedDraws; }
-  /**
-   * With cascades (frame().cascades.count > 1): each cascade's casters, those
-   * of shadowDraws() that reach into it. Else empty.
-   */
-  const std::vector<Draw>& cascadeDraws(std::size_t cascade) const
-  {
-    return m_cascadeDraws[cascade];
-  }
-  /** The sun's shadow maps this frame: 1 (the one map) or its cascades. */
-  uint32_t shadowCascades() const
-  {
-    return m_frame.cascades.count > 1 ? m_frame.cascades.count : 1;
-  }
-  const std::vector<ShadowedLight>& shadowedLights() const
-  {
-    return m_shadowedLights;
-  }
-  const std::vector<GrassBatch>& grassDraws() const { return m_grassDraws; }
-
   const FrameUniforms& frameUniforms() const { return m_uniforms; }
-  /** The lit lights, at most kMaxPointLights. */
-  const std::vector<GpuPointLight>& pointLights() const { return m_gpuLights; }
-  const ClusterLights& clusters() const { return m_clusters; }
-  /** Each shadowed light's six faces, in cube order. */
-  const std::vector<FaceUniforms>& faces() const { return m_faces; }
-
-  const std::vector<UiInstance>& uiInstances() const { return m_uiInstances; }
-  const std::vector<UiBatch>& uiBatches() const { return m_uiBatches; }
-
-  /** Bloom's uniforms for a pass reading a source of this size. */
-  PostUniforms bloomUniforms(glm::ivec2 sourceSize) const;
-  /**
-   * The composite's: the glow added in (none when bloom is off), and the
-   * frame's grading, for a target `viewport` big.
-   */
-  PostUniforms compositeUniforms(glm::ivec2 viewport) const;
-  /** A physical sky's atmosphere, for its reflections' passes. */
-  SkyUniforms skyUniforms() const;
-  /**
-   * Auto exposure's (ColorGrading::autoExposure), metering the scene at
-   * `viewport`, `seconds` after the last frame's.
-   */
-  ExposureUniforms exposureUniforms(glm::ivec2 viewport, float seconds) const;
+  const std::vector<GrassBatch>& grassDraws() const { return m_grassDraws; }
+  const std::vector<MeshInstance>& instances() const { return m_instances; }
+  const std::vector<Draw>& litDraws() const { return m_litDraws; }
   /**
    * Ambient occlusion's passes', at `size` (half the viewport's), a blur
    * stepping `blurStep` texels (zero for the occlusion pass itself).
    */
   OcclusionUniforms occlusionUniforms(glm::ivec2 size,
                                       glm::ivec2 blurStep = {0, 0}) const;
-  /**
-   * Whether the frame has contact shadows: on, and lit by a physical sky
-   * (they shade only its light).
-   */
-  bool contactShadowsOn() const;
-  /**
-   * Whether ambient occlusion's passes run: for ambient occlusion, contact
-   * shadows or both.
-   */
-  bool screenOcclusionOn() const
-  {
-    return m_frame.ambientOcclusion.enabled || contactShadowsOn();
-  }
-  /**
-   * Whether rain's overhead map is drawn this frame (rainMap(), from
-   * shadowDraws()): while it rains or surfaces are wet or the puddles have
-   * water (the `wetness` and `puddles` global shader parameters), with the
-   * sun's shadows on.
-   */
-  bool rainMapOn() const;
-  /** Rain's overhead map this frame (after finish()). */
-  const RainMap& rainMap() const { return m_rainMap; }
+  bool open() const { return m_open; }
+  /** The lit lights, at most kMaxPointLights. */
+  const std::vector<GpuPointLight>& pointLights() const { return m_gpuLights; }
   /**
    * Rain's streaks, splashes and drips drawn this frame (after finish()).
    */
@@ -596,33 +562,68 @@ public:
                                  m_uniforms.rainDepth.w +
                                  m_uniforms.rainDrips.x);
   }
-
-  /** Depth of field's, if the frame has it. */
-  std::optional<FocusUniforms> focusUniforms(glm::ivec2 viewport) const;
+  /** Rain's overhead map this frame (after finish()). */
+  const RainMap& rainMap() const { return m_rainMap; }
+  /**
+   * Whether rain's overhead map is drawn this frame (rainMap(), from
+   * shadowDraws()): while it rains or surfaces are wet or the puddles have
+   * water (the `wetness` and `puddles` global shader parameters), with the
+   * sun's shadows on.
+   */
+  bool rainMapOn() const;
+  /**
+   * Whether ambient occlusion's passes run: for ambient occlusion, contact
+   * shadows or both.
+   */
+  bool screenOcclusionOn() const
+  {
+    return m_frame.ambientOcclusion.enabled || contactShadowsOn();
+  }
+  /** The sun's shadow maps this frame: 1 (the one map) or its cascades. */
+  uint32_t shadowCascades() const
+  {
+    return m_frame.cascades.count > 1 ? m_frame.cascades.count : 1;
+  }
+  const std::vector<Draw>& shadowDraws() const { return m_shadowDraws; }
+  const std::vector<ShadowedLight>& shadowedLights() const
+  {
+    return m_shadowedLights;
+  }
+  /** A physical sky's atmosphere, for its reflections' passes. */
+  SkyUniforms skyUniforms() const;
+  const std::vector<UiBatch>& uiBatches() const { return m_uiBatches; }
+  const std::vector<UiInstance>& uiInstances() const { return m_uiInstances; }
+  /**
+   * The opaque draws the camera sees that don't cast the sun's shadow (often
+   * the ground): rain's overhead map draws them as well as shadowDraws(), so
+   * rain lands on them too.
+   */
+  const std::vector<Draw>& unshadowedDraws() const { return m_unshadowedDraws; }
 
 private:
-  bool m_open = false;
-  FrameParams m_frame;
-  std::vector<PointLight> m_pointLights;
-  std::vector<MeshInstance> m_instances;
-  std::vector<uint32_t> m_drawMaterials;
-  std::vector<Draw> m_litDraws;
   struct BlendDraw
   {
     Draw draw;
     float distance = 0.0f; // from the camera
   };
-  std::vector<BlendDraw> m_blendDraws;
-  std::vector<Draw> m_blendOrder;
-  std::vector<Draw> m_shadowDraws;
-  std::vector<Draw> m_unshadowedDraws;
-  std::array<std::vector<Draw>, kMaxShadowCascades> m_cascadeDraws;
   struct CasterBatch
   {
     Draw base;
     std::size_t first = 0;
     std::size_t count = 0;
   };
+
+  bool m_open = false;
+  FrameParams m_frame;
+  std::vector<PointLight> m_pointLights;
+  std::vector<MeshInstance> m_instances;
+  std::vector<uint32_t> m_drawMaterials;
+  std::vector<Draw> m_litDraws;
+  std::vector<BlendDraw> m_blendDraws;
+  std::vector<Draw> m_blendOrder;
+  std::vector<Draw> m_shadowDraws;
+  std::vector<Draw> m_unshadowedDraws;
+  std::array<std::vector<Draw>, kMaxShadowCascades> m_cascadeDraws;
   std::vector<CasterBatch> m_casterBatches;
   std::vector<MeshInstance> m_casters;
   // Scratch for the cascades' casters: each sun shadow caster's bounding

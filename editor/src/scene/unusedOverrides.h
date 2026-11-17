@@ -1,7 +1,8 @@
 #pragma once
 
 #include "engine/core/ecs/entity.h"
-#include "nlohmann/json.hpp"
+
+#include <nlohmann/json.hpp>
 
 #include <map>
 #include <string>
@@ -29,6 +30,7 @@ struct Unused
     Removed,  // a "$removed" path
     Added,    // an "$added" entity, by its "$parent"
   };
+
   /** Which part of the entry it is. */
   Kind kind = Kind::Override;
   /**

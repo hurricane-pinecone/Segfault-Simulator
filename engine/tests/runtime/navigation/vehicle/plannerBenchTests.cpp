@@ -1,14 +1,24 @@
 #include "../../../testHarness.h"
+#include "engine/runtime/navigation/costLayer.h"
+#include "engine/runtime/navigation/geometry.h"
+#include "engine/runtime/navigation/planState.h"
+#include "engine/runtime/navigation/space.h"
+#include "engine/runtime/navigation/vehicle/motions.h"
+#include "engine/runtime/navigation/vehicle/planner.h"
+#include "engine/runtime/navigation/vehicle/vehicleModel.h"
+#include "engine/runtime/navigation/vehicle/vehiclePath.h"
 
-#include <engine/runtime/navigation/vehicle/motions.h>
-#include <engine/runtime/navigation/vehicle/planner.h>
+#include <glm/glm/geometric.hpp>
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <memory>
 #include <random>
 #include <string>
+#include <utility>
 #include <vector>
 
 // The planner's benchmark: a fixed set of turns at the ends of rows and trips
@@ -70,10 +80,12 @@ public:
               std::vector<float>& out) const override
   {
     out.assign(static_cast<std::size_t>(width) * height, 1.0f);
+
     for (int y = 0; y < height; ++y)
       for (int x = 0; x < width; ++x)
       {
         const glm::vec2 lo = origin + glm::vec2(x, y) * cell;
+
         if (zone.contains(lo) && zone.contains(lo + cell))
           out[static_cast<std::size_t>(y) * width + x] = kInf;
       }
@@ -117,6 +129,7 @@ std::vector<Case> turns()
   // (Each turn its own: row spacing 3..6 m, a margin 8..14 m wide,
   // either end, the rig or the bare truck.)
   float y = 2.5f;
+
   for (int lane = 0; lane < 12; ++lane)
   {
     const float spacing = 3.0f + static_cast<float>(lane % 4);
@@ -133,6 +146,7 @@ std::vector<Case> turns()
     out.push_back({"turn", q});
     y += spacing;
   }
+
   return out;
 }
 
@@ -149,6 +163,7 @@ std::vector<Case> trips()
   // (A fence along y = 0 from x = -40 to 60, a gate 7 m wide at x = 5.)
   s.push_back(wall({-40.0f, 0.0f}, {1.5f, 0.0f}, id++));
   s.push_back(wall({8.5f, 0.0f}, {60.0f, 0.0f}, id++));
+
   for (int t = 0; t < 6; ++t)
     s.push_back({{-30.0f + 9.0f * t, -12.0f + 3.0f * (t % 2)},
                  {0.5f, 0.5f},
@@ -157,11 +172,13 @@ std::vector<Case> trips()
                  8.0f,
                  true,
                  id++});
+
   const auto space = std::make_shared<BoxSpace>(s);
   std::mt19937 rng(7);
   std::uniform_real_distribution<float> x(-35.0f, 55.0f), y(-35.0f, 40.0f),
       h(-kPi, kPi);
   int made = 0;
+
   while (made < 16)
   {
     PlanRequest q;
@@ -169,41 +186,51 @@ std::vector<Case> trips()
     q.space = space;
     q.from = {{x(rng), y(rng)}, h(rng)};
     const Pose2 to{{x(rng), y(rng)}, h(rng)};
+
     if (glm::length(to.position - q.from.position) < 15.0f ||
         touches(q, q.from, 0.0f) || touches(q, to, 0.0f))
       continue;
+
     q.goals = {{to}};
     out.push_back({"trip", q});
     ++made;
   }
+
   return out;
 }
 
 int cuspsOf(const VehiclePath& p)
 {
   int n = 0, gear = 0;
+
   for (const Segment& s : p.segments)
   {
     if (s.length <= 0.0f)
       continue;
+
     if (gear != 0 && s.gear != gear)
       ++n;
+
     gear = s.gear;
   }
+
   return n;
 }
 float backingOf(const VehiclePath& p)
 {
   float m = 0.0f;
+
   for (const Segment& s : p.segments)
     if (s.gear < 0)
       m += s.length;
+
   return m;
 }
 double pct(std::vector<double> v, double p)
 {
   if (v.empty())
     return 0.0;
+
   std::sort(v.begin(), v.end());
   const double k = (static_cast<double>(v.size()) - 1.0) * p / 100.0;
   const std::size_t f = static_cast<std::size_t>(k);
@@ -230,17 +257,21 @@ int main()
   TEST("the benchmark's ways should be no worse than before, and timed")
   {
     std::vector<Case> all = turns();
+
     for (Case& c : trips())
       all.push_back(std::move(c));
+
     std::vector<double> ms[2];
     uint64_t nodes[2] = {0, 0};
     const std::size_t known = sizeof(kBefore) / sizeof(kBefore[0]);
     int better = 0, same = 0, worse = 0;
+
     for (std::size_t i = 0; i < all.size(); ++i)
     {
       if (const char* o = std::getenv("A1ONLY");
           o && std::atoi(o) != static_cast<int>(i))
         continue;
+
       const PlanResult r = planNow(all[i].q);
       const int k = all[i].kind == "turn" ? 0 : 1;
       ms[k].push_back(r.stats.ms);
@@ -272,17 +303,24 @@ int main()
           r.stats.checkMs,
           static_cast<unsigned long long>(r.stats.costCalls),
           r.stats.costMs);
+
       if (i >= known)
         continue;
+
       const Before& b = kBefore[i];
+
       if (b.seconds < 0.0f)
         continue; // (none before: anything found is better)
+
       CHECK(found);
+
       if (!found)
         continue;
+
       CHECK(secs <= b.seconds * 1.001f + 1e-3f);
       CHECK(cusps <= b.cusps);
       CHECK(back <= b.backing + 0.05f);
+
       if (secs < b.seconds - 0.01f)
         ++better;
       else if (secs > b.seconds + 0.01f)
@@ -290,9 +328,11 @@ int main()
       else
         ++same;
     }
+
     std::printf(
         "  vs before: %d better, %d same, %d worse\n", better, same, worse);
     const char* names[2] = {"turns", "trips"};
+
     for (int k = 0; k < 2; ++k)
       std::printf("  %s: n=%zu p50 %.1f ms, p95 %.1f ms, nodes %llu\n",
                   names[k],

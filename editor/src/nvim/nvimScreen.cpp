@@ -1,6 +1,13 @@
 #include "nvim/nvimScreen.h"
 
+#include "nvim/msgpack.h"
+
 #include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <optional>
+#include <string>
+#include <utility>
 
 using msgpack::Array;
 using msgpack::Value;
@@ -12,23 +19,10 @@ std::optional<uint32_t> color(const Value& value)
   // -1 (or absent) means "use the default".
   if (!value.isInteger() || value.asInt() < 0)
     return std::nullopt;
+
   return static_cast<uint32_t>(value.asInt());
 }
 } // namespace
-
-void NvimScreen::applyRedraw(const Array& events)
-{
-  // Each event is [name, args...] where every args is one call's arguments.
-  for (const Value& event : events)
-  {
-    const Array& parts = event.asArray();
-    if (parts.empty())
-      continue;
-    const std::string& name = parts.front().asString();
-    for (std::size_t i = 1; i < parts.size(); ++i)
-      apply(name, parts[i].asArray());
-  }
-}
 
 void NvimScreen::apply(const std::string& name, const Array& args)
 {
@@ -57,12 +51,15 @@ void NvimScreen::apply(const std::string& name, const Array& args)
     resized.columns = columns;
     resized.rows = rows;
     resized.cells.assign(static_cast<std::size_t>(columns * rows), Cell{});
+
     // Keep what fits; Neovim redraws the rest.
     for (int r = 0; r < std::min(rows, m_back.rows); ++r)
       for (int c = 0; c < std::min(columns, m_back.columns); ++c)
         resized.at(r, c) = m_back.at(r, c);
+
     resized.cursorRow = std::min(m_back.cursorRow, std::max(rows - 1, 0));
-    resized.cursorColumn = std::min(m_back.cursorColumn, std::max(columns - 1, 0));
+    resized.cursorColumn =
+        std::min(m_back.cursorColumn, std::max(columns - 1, 0));
     m_back = std::move(resized);
   }
   else if (name == "flush")
@@ -71,8 +68,10 @@ void NvimScreen::apply(const std::string& name, const Array& args)
   {
     if (const auto fg = color(arg(0)))
       m_defaultForeground = *fg;
+
     if (const auto bg = color(arg(1)))
       m_defaultBackground = *bg;
+
     if (const auto sp = color(arg(2)))
       m_defaultSpecial = *sp;
   }
@@ -94,14 +93,17 @@ void NvimScreen::apply(const std::string& name, const Array& args)
   else if (name == "mode_info_set")
   {
     m_modes.clear();
+
     for (const Value& info : arg(1).asArray())
     {
       ModeInfo mode;
       const std::string& shape = info["cursor_shape"].asString();
+
       if (shape == "vertical")
         mode.shape = CursorShape::Vertical;
       else if (shape == "horizontal")
         mode.shape = CursorShape::Horizontal;
+
       mode.percentage = static_cast<int>(info["cell_percentage"].asInt(100));
       m_modes.push_back(mode);
     }
@@ -109,6 +111,7 @@ void NvimScreen::apply(const std::string& name, const Array& args)
   else if (name == "mode_change")
   {
     const auto index = static_cast<std::size_t>(arg(1).asInt());
+
     if (index < m_modes.size())
     {
       m_cursorShape = m_modes[index].shape;
@@ -117,27 +120,76 @@ void NvimScreen::apply(const std::string& name, const Array& args)
   }
   else if (name == "set_title")
     m_title = arg(0).asString();
-  // Everything else (options, busy, mouse on/off, ...) doesn't change what's drawn.
+
+  // Everything else (options, busy, mouse on/off, ...) doesn't change what's
+  // drawn.
+}
+
+void NvimScreen::applyRedraw(const Array& events)
+{
+  // Each event is [name, args...] where every args is one call's arguments.
+  for (const Value& event : events)
+  {
+    const Array& parts = event.asArray();
+
+    if (parts.empty())
+      continue;
+
+    const std::string& name = parts.front().asString();
+
+    for (std::size_t i = 1; i < parts.size(); ++i)
+      apply(name, parts[i].asArray());
+  }
+}
+
+const NvimScreen::Cell& NvimScreen::cell(int row, int column) const
+{
+  static const Cell blank;
+
+  if (row < 0 || row >= m_front.rows || column < 0 || column >= m_front.columns)
+    return blank;
+
+  return m_front
+      .cells[static_cast<std::size_t>(row * m_front.columns + column)];
+}
+
+NvimScreen::Colors NvimScreen::colorsOf(const Cell& cell) const
+{
+  const Highlight& hl = highlight(cell.highlight);
+  Colors colors{hl.foreground.value_or(m_defaultForeground),
+                hl.background.value_or(m_defaultBackground),
+                hl.special.value_or(m_defaultSpecial)};
+
+  if (hl.reverse)
+    std::swap(colors.foreground, colors.background);
+
+  return colors;
 }
 
 void NvimScreen::gridLine(const Array& args)
 {
   if (args.size() < 4)
     return;
+
   const int row = static_cast<int>(args[1].asInt());
   int column = static_cast<int>(args[2].asInt());
+
   if (row < 0 || row >= m_back.rows)
     return;
 
   // Cells are [text, hl_id?, repeat?]; an omitted hl_id repeats the previous.
   int highlight = 0;
+
   for (const Value& entry : args[3].asArray())
   {
     const Array& cell = entry.asArray();
+
     if (cell.empty())
       continue;
+
     if (cell.size() >= 2)
       highlight = static_cast<int>(cell[1].asInt());
+
     const int repeat = cell.size() >= 3 ? static_cast<int>(cell[2].asInt()) : 1;
 
     for (int i = 0; i < repeat && column < m_back.columns; ++i, ++column)
@@ -149,11 +201,12 @@ void NvimScreen::gridScroll(const Array& args)
 {
   if (args.size() < 6)
     return;
+
   const int top = static_cast<int>(args[1].asInt());
   const int bottom = static_cast<int>(args[2].asInt()); // exclusive
   const int left = static_cast<int>(args[3].asInt());
   const int right = static_cast<int>(args[4].asInt()); // exclusive
-  const int rows = static_cast<int>(args[5].asInt());   // >0: content moves up
+  const int rows = static_cast<int>(args[5].asInt());  // >0: content moves up
 
   const auto copyRow = [&](int to, int from)
   {
@@ -170,28 +223,9 @@ void NvimScreen::gridScroll(const Array& args)
       copyRow(r, r + rows);
 }
 
-const NvimScreen::Cell& NvimScreen::cell(int row, int column) const
-{
-  static const Cell blank;
-  if (row < 0 || row >= m_front.rows || column < 0 || column >= m_front.columns)
-    return blank;
-  return m_front.cells[static_cast<std::size_t>(row * m_front.columns + column)];
-}
-
 const NvimScreen::Highlight& NvimScreen::highlight(int id) const
 {
   static const Highlight none;
   const auto it = m_highlights.find(id);
   return it != m_highlights.end() ? it->second : none;
-}
-
-NvimScreen::Colors NvimScreen::colorsOf(const Cell& cell) const
-{
-  const Highlight& hl = highlight(cell.highlight);
-  Colors colors{hl.foreground.value_or(m_defaultForeground),
-                hl.background.value_or(m_defaultBackground),
-                hl.special.value_or(m_defaultSpecial)};
-  if (hl.reverse)
-    std::swap(colors.foreground, colors.background);
-  return colors;
 }

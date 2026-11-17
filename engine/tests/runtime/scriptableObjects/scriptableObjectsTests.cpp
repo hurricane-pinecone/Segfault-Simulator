@@ -1,9 +1,12 @@
 #include "../../testHarness.h"
+#include "engine/core/assets/assetDatabase.h"
+#include "engine/core/assets/scriptableObject.h"
+#include "engine/core/reflection/reflection.h"
+#include "engine/core/reflection/registration.h"
+#include "engine/runtime/scriptableObjects/scriptableObjects.h"
+#include "engine/runtime/serialization/sceneSerializer.h"
 
-#include <engine/core/assets/assetDatabase.h>
-#include <engine/core/reflection/registration.h>
-#include <engine/runtime/scriptableObjects/scriptableObjects.h>
-#include <engine/runtime/serialization/sceneSerializer.h>
+#include <nlohmann/json.hpp>
 
 #include <filesystem>
 #include <fstream>
@@ -44,6 +47,25 @@ struct MagicItemDef : ItemDef
 struct Orphan : ScriptableObject
 {
   int own = 3;
+};
+
+struct Project
+{
+  fs::path root = fs::temp_directory_path() / "sfs_data_assets";
+  Project()
+  {
+    fs::remove_all(root);
+    fs::create_directories(root / "assets/items");
+  }
+  ~Project() { fs::remove_all(root); }
+
+  void write(const std::string& name,
+             const std::string& type,
+             const nlohmann::json& fields)
+  {
+    std::ofstream(root / "assets/items" / (name + ".asset"))
+        << ScriptableObjects::fileContents(type, fields).dump(2);
+  }
 };
 
 reflect::FieldInfo
@@ -98,25 +120,6 @@ void registerTypes()
   types().add(item);
   types().add(scriptableObjectType<OtherDef>("OtherDef", "Other Def", "test"));
 }
-
-struct Project
-{
-  fs::path root = fs::temp_directory_path() / "sfs_data_assets";
-  Project()
-  {
-    fs::remove_all(root);
-    fs::create_directories(root / "assets/items");
-  }
-  ~Project() { fs::remove_all(root); }
-
-  void write(const std::string& name,
-             const std::string& type,
-             const nlohmann::json& fields)
-  {
-    std::ofstream(root / "assets/items" / (name + ".asset"))
-        << ScriptableObjects::fileContents(type, fields).dump(2);
-  }
-};
 
 std::string refOf(const AssetDatabase& catalogue, const std::string& name)
 {

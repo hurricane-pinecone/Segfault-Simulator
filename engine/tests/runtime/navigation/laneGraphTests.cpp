@@ -1,10 +1,26 @@
 #include "../../testHarness.h"
+#include "engine/runtime/navigation/geometry.h"
+#include "engine/runtime/navigation/laneGraph.h"
+#include "engine/runtime/navigation/planState.h"
+#include "engine/runtime/navigation/space.h"
+#include "engine/runtime/navigation/vehicle/laneTrip.h"
+#include "engine/runtime/navigation/vehicle/planner.h"
+#include "engine/runtime/navigation/vehicle/vehicleModel.h"
+#include "engine/runtime/navigation/vehicle/vehiclePath.h"
 
-#include <engine/runtime/navigation/laneGraph.h>
-#include <engine/runtime/navigation/vehicle/laneTrip.h>
+#include <glm/glm/common.hpp>
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/geometric.hpp>
 
+#include <algorithm>
 #include <chrono>
+#include <cmath>
+#include <cstdint>
 #include <cstdio>
+#include <cstdlib>
+#include <memory>
+#include <ratio>
+#include <vector>
 
 using namespace sfs::nav;
 using namespace sfs::nav::vehicle;
@@ -17,9 +33,11 @@ std::vector<glm::vec2> line(glm::vec2 a, glm::vec2 b, float step = 1.0f)
   const int n =
       std::max(1, static_cast<int>(std::ceil(glm::distance(a, b) / step)));
   std::vector<glm::vec2> out;
+
   for (int k = 0; k <= n; ++k)
     out.push_back(
         glm::mix(a, b, static_cast<float>(k) / static_cast<float>(n)));
+
   return out;
 }
 // Lanes both ways between two nodes, each `side` m to the left of the middle.
@@ -63,6 +81,7 @@ int main()
     LaneGraph::Options o;
     const auto east = g.route({20, -10}, {380, -10}, o);
     CHECK(east.has_value());
+
     if (east)
     {
       CHECK(east->size() == 1u);
@@ -75,8 +94,10 @@ int main()
       CHECK(std::abs(east->front().poses.back().position.x -
                      (380.0f - o.lead)) < 0.6f);
     }
+
     const auto west = g.route({380, 10}, {20, 10}, o);
     CHECK(west.has_value());
+
     if (west)
       CHECK(std::abs(west->front().poses[10].position.y + 1.5f) < 0.01f);
   }
@@ -94,25 +115,32 @@ int main()
     LaneGraph::Options o;
     const auto r = g.route({100, -5}, {205, 100}, o);
     CHECK(r.has_value());
+
     if (r)
     {
       std::vector<uint32_t> tags;
+
       for (const auto& s : *r)
         tags.insert(tags.end(), s.tags.begin(), s.tags.end());
+
       CHECK(tags.size() == 2u);
+
       if (tags.size() == 2)
       {
         CHECK(tags[0] == 1u);
         CHECK(tags[1] == 2u);
       }
+
       // (The corner at the south-east: two stretches, each cut back for it.)
       CHECK(r->size() == 2u);
+
       if (r->size() == 2)
       {
         CHECK(r->front().poses.back().position.x < 200.0f - o.radius);
         CHECK(r->back().poses.front().position.y > o.radius);
       }
     }
+
     // A dearer lane is avoided: the south road at 3x cost sends it round the
     // north (to a point on the east road nearer the north-east corner).
     LaneGraph h;
@@ -124,6 +152,7 @@ int main()
     road(h, nw2, ne2, 0.0f, 10.0f, 4);
     const auto round = h.route({-5, 20}, {205, 120}, o);
     CHECK(round.has_value());
+
     if (round)
       CHECK(round->front().tags.front() == 3u);
   }
@@ -153,17 +182,21 @@ int main()
     // A 40 x 40 grid of roads 50 m apart (3120 lanes each way).
     LaneGraph g;
     const int n = 40;
+
     for (int y = 0; y < n; ++y)
       for (int x = 0; x < n; ++x)
         g.addNode({50.0f * x, 50.0f * y});
+
     for (int y = 0; y < n; ++y)
       for (int x = 0; x < n; ++x)
       {
         if (x + 1 < n)
           road(g, y * n + x, y * n + x + 1, 1.5f);
+
         if (y + 1 < n)
           road(g, y * n + x, (y + 1) * n + x, 1.5f);
       }
+
     const auto t0 = std::chrono::steady_clock::now();
     const auto r = g.route({10, -5}, {1940, 1955}, LaneGraph::Options());
     const double ms = std::chrono::duration<double, std::milli>(
@@ -171,7 +204,8 @@ int main()
                           .count();
     std::printf("  40x40 grid: %.2f ms\n", ms);
     CHECK(r.has_value());
-    if (!testing::kSanitized)
+
+    if (!testing::SANITIZED)
     {
       CHECK(ms < 100.0);
     }
@@ -199,6 +233,7 @@ int main()
     };
     const auto trip = planLaneTrip(g, q);
     CHECK(trip.has_value());
+
     if (trip)
     {
       CHECK(trip->state == PlanState::Found);
@@ -206,6 +241,7 @@ int main()
       // (On, the corner, off.)
       CHECK(windows == 3);
       CHECK(trip->parts.size() == 5u);
+
       if (trip->parts.size() == 5)
       {
         CHECK(trip->parts[0].window == LaneTripRequest::Window::On);
@@ -220,11 +256,13 @@ int main()
         // (A corner is driven forward.)
         CHECK(trip->parts[2].found.path.cusps() == 0);
       }
+
       CHECK(trip->laneMetres > 300.0f);
       std::printf("  trip: graph %.2f ms, windows %.0f ms\n",
                   trip->graphMs,
                   trip->windowMs);
     }
+
     // A window with no way ends the trip there (the parts before it good).
     LaneTripRequest blocked = q;
     blocked.search = {};
@@ -233,11 +271,13 @@ int main()
             {{206, 180}, {3.0f, 3.0f}, 0.0f, 0.0f, 2.0f, false, 7}});
     const auto stopped = planLaneTrip(g, blocked);
     CHECK(stopped.has_value());
+
     if (stopped)
     {
       CHECK(stopped->state == PlanState::Blocked);
       CHECK(stopped->parts.back().window == LaneTripRequest::Window::Off);
     }
+
     // No lanes worth taking: none (planned as any other way).
     LaneTripRequest near = q;
     near.plan.goals = {{{{20, -6}, 0.0f}}};
@@ -271,31 +311,39 @@ int main()
     }
     const auto trip = planLaneTrip(g, q);
     CHECK(trip.has_value());
+
     if (trip)
     {
       CHECK(trip->state == PlanState::Found);
       CHECK(trip->rounds >= 1);
       int rounds = 0;
+
       for (const LaneTrip::Part& part : trip->parts)
       {
         if (part.window)
         {
           rounds += *part.window == LaneTripRequest::Window::Round;
+
           if (*part.window == LaneTripRequest::Window::Round)
             CHECK(part.found.path.cusps() == 0); // (forward round it)
+
           continue;
         }
+
         // Each stretch checked as it's driven: clear.
         std::vector<Segment> steps;
         const auto& p = part.stretch.poses;
+
         for (std::size_t k = 1; k < p.size(); ++k)
         {
           const float ds = glm::distance(p[k].position, p[k - 1].position);
           const float k0 = wrapAngle(p[k].heading - p[k - 1].heading) / ds;
           steps.push_back({1, ds, k0, k0});
         }
+
         CHECK(!touchesAlong(q.plan, p.front(), 0.0f, steps).has_value());
       }
+
       CHECK(rounds == trip->rounds);
       // The same again: the same trip, never the blocked way.
       const auto again = planLaneTrip(g, q);

@@ -1,6 +1,5 @@
-#include "playerApp.h"
-
 #include "engine/core/logger/logger.h"
+#include "playerApp.h"
 
 #include <exception>
 #include <string>

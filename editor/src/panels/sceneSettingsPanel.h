@@ -1,8 +1,7 @@
 #pragma once
 
+#include "engine/core/events/eventQueue.h"
 #include "panels/panel.h"
-
-#include "engine/core/events/events.h"
 
 #include <vector>
 

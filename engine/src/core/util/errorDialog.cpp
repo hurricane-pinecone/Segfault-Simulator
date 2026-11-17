@@ -2,6 +2,7 @@
 
 #include <cstdlib>
 #include <mutex>
+#include <string>
 #include <utility>
 
 namespace sfs
@@ -37,13 +38,16 @@ bool showErrorDialog(const std::string& message)
 {
   if (!errorDialogsAllowed())
     return false;
+
   ErrorDialog dialog;
   {
     const std::lock_guard lock(dialogMutex());
     dialog = installed();
   }
+
   if (!dialog)
     return false;
+
   dialog(message);
   return true;
 }

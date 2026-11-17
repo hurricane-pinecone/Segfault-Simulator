@@ -1,9 +1,10 @@
 #pragma once
 
-#include "glm/glm/ext/vector_float3.hpp"
-#include "glm/glm/gtc/quaternion.hpp"
+#include <glm/glm/ext/quaternion_float.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
 
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -26,6 +27,7 @@ struct CollisionShape3D
     Sphere,
     Capsule,
   };
+
   Kind kind = Kind::Box;
   glm::vec3 size{1.0f};
   glm::vec3 offset{0.0f};
@@ -65,6 +67,7 @@ public:
 
   private:
     friend class CollisionWorld3D;
+
     std::shared_ptr<const void> m_shape; // (a Jolt shape)
   };
 
@@ -77,22 +80,11 @@ public:
   };
 
   explicit CollisionWorld3D(std::span<const Body> bodies);
-  ~CollisionWorld3D();
   CollisionWorld3D(const CollisionWorld3D&) = delete;
+  ~CollisionWorld3D();
   CollisionWorld3D& operator=(const CollisionWorld3D&) = delete;
-
-  /** Whether the probe at the pose overlaps any body in `layers`. */
-  bool overlaps(const Probe& probe,
-                const glm::vec3& position,
-                const glm::quat& rotation,
-                uint32_t layers = ~0u,
-                std::span<const uint64_t> ignore = {}) const;
-  /** The deepest overlap, if any. */
-  std::optional<Hit> overlap(const Probe& probe,
-                             const glm::vec3& position,
-                             const glm::quat& rotation,
-                             uint32_t layers = ~0u,
-                             std::span<const uint64_t> ignore = {}) const;
+  /** The bodies it was built from (their shapes, poses, ids and layers). */
+  const std::vector<Body>& bodies() const;
   /**
    * Swept in a straight line from `from` to `to` (turned `fromRotation` all
    * the way): how far along (0..1) it first touches a body, if it does.
@@ -103,13 +95,23 @@ public:
                             const glm::vec3& to,
                             uint32_t layers = ~0u,
                             std::span<const uint64_t> ignore = {}) const;
-
+  /** The deepest overlap, if any. */
+  std::optional<Hit> overlap(const Probe& probe,
+                             const glm::vec3& position,
+                             const glm::quat& rotation,
+                             uint32_t layers = ~0u,
+                             std::span<const uint64_t> ignore = {}) const;
+  /** Whether the probe at the pose overlaps any body in `layers`. */
+  bool overlaps(const Probe& probe,
+                const glm::vec3& position,
+                const glm::quat& rotation,
+                uint32_t layers = ~0u,
+                std::span<const uint64_t> ignore = {}) const;
   std::size_t size() const;
-  /** The bodies it was built from (their shapes, poses, ids and layers). */
-  const std::vector<Body>& bodies() const;
 
 private:
   struct Impl;
+
   std::unique_ptr<Impl> m;
 };
 

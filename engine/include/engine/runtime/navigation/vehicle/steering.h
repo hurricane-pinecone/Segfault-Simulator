@@ -1,7 +1,10 @@
 #pragma once
 
+#include "engine/runtime/navigation/geometry.h"
 #include "engine/runtime/navigation/vehicle/vehicleModel.h"
 #include "engine/runtime/navigation/vehicle/vehiclePath.h"
+
+#include <glm/glm/ext/vector_float2.hpp>
 
 #include <functional>
 #include <span>
@@ -34,18 +37,6 @@ namespace sfs::nav::vehicle
 class Steering
 {
 public:
-  /** `kappa` the largest curvature, `sigma` the clothoids' sharpness. */
-  Steering(float kappa, float sigma);
-
-  float kappa() const { return m_kappa; }
-  float sigma() const { return m_sigma; }
-  /** A clothoid's length and the heading it turns through. */
-  float clothoidLength() const { return m_kappa / m_sigma; }
-  float clothoidTurn() const { return m_thetaC; }
-  /** The CC circle: its radius and the angle mu a pose on it makes. */
-  float ccRadius() const { return m_r; }
-  float ccAngle() const { return m_mu; }
-
   /** Which words to try. */
   struct Words
   {
@@ -55,16 +46,26 @@ public:
     int cuspSamples = 10; // C|CSC: first turns tried (0: none)
     bool verify = false;  // integrate each and drop any that misses (tests)
   };
-  /** Every word it knows from `from` to `to` (each ends there exactly). */
-  std::vector<std::vector<Segment>>
-  paths(Pose2 from, Pose2 to, const Words& words) const;
   /**
    * The same words, in the same order, each handed to `each` as it's made
    * (nothing allocated: a search pricing thousands of them a second).
    */
   using Each = std::function<void(std::span<const Segment>)>;
-  void paths(Pose2 from, Pose2 to, const Words& words, const Each& each) const;
 
+  /** `kappa` the largest curvature, `sigma` the clothoids' sharpness. */
+  Steering(float kappa, float sigma);
+  float ccAngle() const { return m_mu; }
+  /** The CC circle: its radius and the angle mu a pose on it makes. */
+  float ccRadius() const { return m_r; }
+  /** A clothoid's length and the heading it turns through. */
+  float clothoidLength() const { return m_kappa / m_sigma; }
+  float clothoidTurn() const { return m_thetaC; }
+  float kappa() const { return m_kappa; }
+  /** Every word it knows from `from` to `to` (each ends there exactly). */
+  std::vector<std::vector<Segment>>
+  paths(Pose2 from, Pose2 to, const Words& words) const;
+  void paths(Pose2 from, Pose2 to, const Words& words, const Each& each) const;
+  float sigma() const { return m_sigma; }
   /**
    * One CC turn of `deflection` radians (>= 0) in `sense` (+1 the motion
    * turning anticlockwise), in `gear`; `ccStart`/`ccEnd` false: that end at
@@ -89,7 +90,14 @@ private:
     End,   // a CC turn's end (its CC circle)
     Lock,  // a full-lock end, at a cusp (the arc's own circle)
   };
+
+  void ccc(Motion a, Motion b, int gear, const Each& out) const;
   glm::vec2 centre(Motion m, int sense, End end) const;
+  void
+  csc(Motion a, Motion b, int gear, const Each& out, bool ccStart = true) const;
+  void
+  cuspFirst(Motion a, Motion b, int gear, int samples, const Each& out) const;
+  void threePoint(Motion a, Motion b, int gear, const Each& out) const;
   template <class Out>
   bool turnInto(float deflection,
                 int sense,
@@ -97,12 +105,6 @@ private:
                 bool ccStart,
                 bool ccEnd,
                 Out& out) const;
-  void
-  csc(Motion a, Motion b, int gear, const Each& out, bool ccStart = true) const;
-  void ccc(Motion a, Motion b, int gear, const Each& out) const;
-  void threePoint(Motion a, Motion b, int gear, const Each& out) const;
-  void
-  cuspFirst(Motion a, Motion b, int gear, int samples, const Each& out) const;
 
   float m_kappa, m_sigma, m_thetaC, m_r, m_mu, m_R;
   std::vector<float> m_elementary; // (clothoid lengths by deflection)

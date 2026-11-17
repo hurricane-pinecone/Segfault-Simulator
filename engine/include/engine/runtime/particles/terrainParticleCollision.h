@@ -1,7 +1,8 @@
 #pragma once
 
 #include "engine/core/particles/iParticleCollisionSource.h"
-#include "glm/glm/ext/vector_float2.hpp"
+
+#include <glm/glm/ext/vector_float2.hpp>
 
 namespace sfs
 {
@@ -19,8 +20,9 @@ public:
   {
   }
 
-  ParticleHit sweep(const ParticleSweep& motion) const override;
   float groundElevation(glm::vec2 worldPos) const override;
+
+  ParticleHit sweep(const ParticleSweep& motion) const override;
 
 private:
   const ITerrainSurfaceSource* m_terrain = nullptr;

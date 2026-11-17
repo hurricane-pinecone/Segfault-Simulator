@@ -1,6 +1,5 @@
 #include "../../testHarness.h"
-
-#include <engine/core/particles/particleCurves.h>
+#include "engine/core/particles/particleCurves.h"
 
 using namespace sfs;
 
@@ -43,8 +42,10 @@ int main()
   TEST("add should stop at the MaxStops capacity")
   {
     Curve c;
+
     for (int i = 0; i < Curve::MaxStops + 4; ++i)
       c.add(static_cast<float>(i), static_cast<float>(i));
+
     CHECK(c.count == Curve::MaxStops);
   }
 

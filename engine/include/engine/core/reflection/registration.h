@@ -1,12 +1,13 @@
 #pragma once
 
 #include "engine/core/assets/scriptableObject.h"
-#include "engine/core/ecs/ecs.h" // IWYU pragma: keep (Entity templates)
+#include "engine/core/ecs/ecs.h"
 #include "engine/core/reflection/reflection.h"
 
 #include <string>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 // Helpers used by sfs-codegen's generated registration code. Not intended for
 // hand-written use: the generator emits these calls from your declarations.

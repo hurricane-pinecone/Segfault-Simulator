@@ -2,10 +2,14 @@
 
 #include "widgets/theme.h"
 
-#include <algorithm>
+#include <imgui.h>
+#include <imgui_internal.h> // dock nodes' tab bars
 
-#include "imgui.h"
-#include "imgui_internal.h" // dock nodes' tab bars
+#include <algorithm>
+#include <cfloat>
+#include <cstddef>
+#include <string>
+#include <utility>
 
 namespace widgets
 {
@@ -17,6 +21,7 @@ bool clamped(bool changed, float* values, int count)
   if (changed)
     for (int i = 0; i < count; ++i)
       values[i] = std::clamp(values[i], 0.0f, 1.0f);
+
   return changed;
 }
 } // namespace
@@ -30,8 +35,10 @@ void propertyLabel(const char* label, float width)
 
   // The label, as ImGui shows one (up to any "##"), clipped to its column.
   const char* end = label;
+
   while (*end && !(end[0] == '#' && end[1] == '#'))
     ++end;
+
   ImGui::AlignTextToFramePadding();
   const ImVec2 start = ImGui::GetCursorScreenPos();
   const float room = column - style.ItemInnerSpacing.x;
@@ -40,11 +47,13 @@ void propertyLabel(const char* label, float width)
       start, ImVec2(start.x + room, start.y + ImGui::GetFrameHeight()), true);
   ImGui::TextUnformatted(label, end);
   ImGui::PopClipRect();
+
   if (textWidth > room && ImGui::IsItemHovered())
     ImGui::SetTooltip("%.*s", static_cast<int>(end - label), label);
 
   // Then the widget: filling the rest, or flush right.
   ImGui::SameLine(0.0f, 0.0f);
+
   if (width > 0.0f)
   {
     ImGui::SetCursorPosX(std::max(rowX + row - width, rowX + column));
@@ -84,6 +93,7 @@ int resizeCallback(ImGuiInputTextCallbackData* data)
     value->resize(static_cast<std::size_t>(data->BufTextLen));
     data->Buf = value->data();
   }
+
   return 0;
 }
 } // namespace
@@ -108,16 +118,20 @@ bool inputTextOnCommit(const char* label, std::string& value, int flags)
   std::string shown = typing ? typed : value;
   inputText(label, shown, flags);
   const ImGuiID id = ImGui::GetItemID();
+
   if (ImGui::IsItemActive())
   {
     typingIn = id;
     typed = shown;
     return false;
   }
+
   if (typingIn == id)
     typingIn = 0;
+
   if (!ImGui::IsItemDeactivatedAfterEdit() || shown == value)
     return false;
+
   value = std::move(shown);
   return true;
 }
@@ -135,8 +149,10 @@ bool iconButton(const char* id, Draw&& drawIcon)
   const ImVec2 min = ImGui::GetItemRectMin();
   const ImVec2 centre(min.x + side * 0.5f, min.y + side * 0.5f);
   ImDrawList* draw = ImGui::GetWindowDrawList();
+
   if (hovered)
     draw->AddCircleFilled(centre, side * 0.4f, theme::kAccentSoft);
+
   drawIcon(
       draw,
       centre,
@@ -149,6 +165,7 @@ bool iconButton(const char* id, Draw&& drawIcon)
 void drawTarget(ImDrawList* draw, ImVec2 centre, float size, ImU32 color)
 {
   draw->AddCircle(centre, size * 0.28f, color, 0, 1.5f);
+
   for (const ImVec2 direction :
        {ImVec2(1, 0), ImVec2(-1, 0), ImVec2(0, 1), ImVec2(0, -1)})
     draw->AddLine(ImVec2(centre.x + direction.x * size * 0.18f,
@@ -202,24 +219,29 @@ bool searchInput(const char* id,
         ImVec2(min.x + style.FramePadding.x, min.y + style.FramePadding.y),
         ImGui::GetColorU32(ImGuiCol_TextDisabled),
         hint);
+
   if (!value.empty())
   {
     const float size = max.y - min.y;
     const ImVec2 cursor = ImGui::GetCursorScreenPos();
     ImGui::SetCursorScreenPos(ImVec2(max.x - size, min.y));
+
     if (ImGui::InvisibleButton("clear", ImVec2(size, size)))
     {
       value.clear();
       changed = true;
     }
+
     const bool hovered = ImGui::IsItemHovered();
     ImGui::SetItemTooltip("Clear");
     ImGui::SetCursorScreenPos(cursor);
 
     const ImVec2 centre(max.x - size * 0.5f, min.y + size * 0.5f);
+
     if (hovered)
       draw->AddCircleFilled(
           centre, size * 0.32f, ImGui::GetColorU32(ImGuiCol_ButtonHovered));
+
     const float arm = size * 0.14f;
     const ImU32 color =
         ImGui::GetColorU32(hovered ? ImGuiCol_Text : ImGuiCol_TextDisabled);
@@ -232,6 +254,7 @@ bool searchInput(const char* id,
                   color,
                   1.5f);
   }
+
   ImGui::PopID();
   return changed;
 }
@@ -239,10 +262,12 @@ bool searchInput(const char* id,
 void trackFocus(bool& owns)
 {
   const ImGuiWindow* focused = ImGui::GetCurrentContext()->NavWindow;
-  if (!focused || (focused->Flags &
-                   (ImGuiWindowFlags_Popup | ImGuiWindowFlags_ChildMenu |
-                    ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_Tooltip)))
+
+  if (!focused ||
+      (focused->Flags & (ImGuiWindowFlags_Popup | ImGuiWindowFlags_ChildMenu |
+                         ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_Tooltip)))
     return;
+
   // RootWindow stops at a docked window (RootWindowDockTree would be the dock
   // host every docked panel shares).
   owns = focused->RootWindow == ImGui::GetCurrentWindow()->RootWindow;
@@ -250,31 +275,38 @@ void trackFocus(bool& owns)
 
 bool itemReleasedWithoutDrag(ImGuiMouseButton button)
 {
-  if (!ImGui::IsMouseReleased(button) || ImGui::IsMouseDragPastThreshold(button) ||
+  if (!ImGui::IsMouseReleased(button) ||
+      ImGui::IsMouseDragPastThreshold(button) ||
       !ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem))
     return false;
+
   // Pressed on it too.
   const ImVec2 pressed = ImGui::GetIO().MouseClickedPos[button];
   const ImVec2 min = ImGui::GetItemRectMin();
   const ImVec2 max = ImGui::GetItemRectMax();
-  return pressed.x >= min.x && pressed.y >= min.y && pressed.x < max.x && pressed.y < max.y;
+  return pressed.x >= min.x && pressed.y >= min.y && pressed.x < max.x &&
+         pressed.y < max.y;
 }
 
 std::string shownTab(const char* window)
 {
   const ImGuiWindow* found = ImGui::FindWindowByName(window);
   const ImGuiDockNode* node = found ? found->DockNode : nullptr;
+
   if (!node || !node->TabBar)
     return {};
+
   for (const ImGuiWindow* tab : node->Windows)
     if (tab->TabId == node->TabBar->SelectedTabId)
       return tab->Name;
+
   return {};
 }
 
 void showTab(const std::string& window)
 {
   ImGuiWindow* found = ImGui::FindWindowByName(window.c_str());
+
   if (found && found->DockNode && found->DockNode->TabBar)
     found->DockNode->TabBar->NextSelectedTabId = found->TabId;
 }

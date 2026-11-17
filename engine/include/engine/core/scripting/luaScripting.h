@@ -39,17 +39,23 @@ class LuaScripting
 {
 public:
   LuaScripting();
-  ~LuaScripting();
 
   LuaScripting(const LuaScripting&) = delete;
+
+  ~LuaScripting();
+
   LuaScripting& operator=(const LuaScripting&) = delete;
 
   /**
-   * Open the VM, the safe standard libraries, and the built-in `sfs` table
-   * (sfs.colors from sfs::Colors, sfs.log). Returns false if the VM could not
-   * be created.
+   * Bind a global Lua callable to a C++ function. Two arities cover the common
+   * live-edit cases: a no-arg trigger and a single-number setter. The game
+   * passes a std::function, so it stays Lua-free.
    */
-  bool init();
+  void bind(const std::string& name, std::function<void()> fn);
+  void bind(const std::string& name, std::function<void(double)> fn);
+  void bind(const std::string& name, std::function<void(double, double)> fn);
+
+  bool consoleEnabled() const { return m_consoleEnabled; }
 
   /**
    * Run a chunk against the persistent state. Returns an empty string on
@@ -67,19 +73,26 @@ public:
    */
   std::string evalRepl(const std::string& source);
 
+  /**
+   * Open the VM, the safe standard libraries, and the built-in `sfs` table
+   * (sfs.colors from sfs::Colors, sfs.log). Returns false if the VM could not
+   * be created.
+   */
+  bool init();
+
+  /**
+   * Sorted field names of the table at a dotted path (e.g. "sfs.colors"), or
+   * empty if the path isn't a table. This is the primitive an editor calls to
+   * build autocomplete for the bound API.
+   */
+  std::vector<std::string> keysOf(const std::string& path) const;
+
   // Append a line to the current eval's captured output (what `print` / sfs.log
   // write). evalRepl returns this prepended to the expression's value, so a
   // multi-statement chunk that prints shows every line. Also logged.
   void logLine(const std::string& line);
 
-  /**
-   * Bind a global Lua callable to a C++ function. Two arities cover the common
-   * live-edit cases: a no-arg trigger and a single-number setter. The game
-   * passes a std::function, so it stays Lua-free.
-   */
-  void bind(const std::string& name, std::function<void()> fn);
-  void bind(const std::string& name, std::function<void(double)> fn);
-  void bind(const std::string& name, std::function<void(double, double)> fn);
+  std::size_t memoryUsed() const { return m_memory.used; }
 
   /**
    * Install a game's modding API: just calls api.registerBindings(*this). The
@@ -101,13 +114,6 @@ public:
   void registerConfig(ILuaConfigurable& config);
 
   /**
-   * Invalidate a registered config: nils its global table and makes any
-   * lingering get/set no-ops. Call before the config is destroyed (e.g. from
-   * its owner's destructor) so a torn-down object can't be reached from Lua.
-   */
-  void unregisterConfig(ILuaConfigurable& config);
-
-  /**
    * Opt a game into the in-app developer console. The console (toggled with the
    * backtick key) routes the lines it runs through this VM via activeLua(), so
    * a Lua-enabled game turns it on with a single call after init(). Off by
@@ -116,7 +122,6 @@ public:
    * this flag each frame, so it can be flipped live.
    */
   void setConsoleEnabled(bool enabled) { m_consoleEnabled = enabled; }
-  bool consoleEnabled() const { return m_consoleEnabled; }
 
   /**
    * Per-eval instruction budget (a Lua count hook). A chunk exceeding it is
@@ -137,7 +142,6 @@ public:
    * after init(); the cap is read live. `memoryUsed()` reports current bytes.
    */
   void setMemoryLimit(std::size_t bytes) { m_memory.cap = bytes; }
-  std::size_t memoryUsed() const { return m_memory.used; }
 
   /**
    * Cap the size (bytes) of the string evalRepl returns -- captured print/log
@@ -148,18 +152,18 @@ public:
   void setOutputLimit(std::size_t bytes) { m_outputLimit = bytes; }
 
   /**
-   * Sorted field names of the table at a dotted path (e.g. "sfs.colors"), or
-   * empty if the path isn't a table. This is the primitive an editor calls to
-   * build autocomplete for the bound API.
-   */
-  std::vector<std::string> keysOf(const std::string& path) const;
-
-  /**
    * Raw VM handle, for callers that need to push richer bindings than the
    * std::function arities above (e.g. functions reading Lua tables). Null until
    * init(). The caller must include the Lua headers itself.
    */
   lua_State* state() { return m_state; }
+
+  /**
+   * Invalidate a registered config: nils its global table and makes any
+   * lingering get/set no-ops. Call before the config is destroyed (e.g. from
+   * its owner's destructor) so a torn-down object can't be reached from Lua.
+   */
+  void unregisterConfig(ILuaConfigurable& config);
 
 private:
   // (Re)install the instruction-count hook before a chunk runs.

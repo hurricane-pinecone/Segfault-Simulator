@@ -1,11 +1,24 @@
 #include "widgets/lookWidgets.h"
 
+#include "engine/core/rendering/ambientOcclusion.h"
+#include "engine/core/rendering/colorGrading.h"
+#include "engine/core/rendering/contactShadows.h"
+#include "engine/core/rendering/fog.h"
+#include "engine/core/rendering/lighting.h"
+#include "engine/core/rendering/rain.h"
+#include "engine/core/rendering/sky.h"
+#include "engine/core/rendering/visualStyle.h"
 #include "widgets/widgets.h"
 
-#include "imgui.h"
+#include <glm/glm/ext/vector_float3.hpp>
+#include <imgui.h>
 
 #include <algorithm>
+#include <cfloat>
+#include <cstdint>
 #include <iterator>
+#include <optional>
+#include <string>
 
 namespace lookWidgets
 {
@@ -88,8 +101,10 @@ bool grading(EditorHistory* history, sfs::ColorGrading& grading)
                                      &index,
                                      mappers,
                                      static_cast<int>(std::size(mappers)));
+
                                  if (picked)
                                    mapper = static_cast<sfs::ToneMapper>(index);
+
                                  return picked;
                                });
   ImGui::SetItemTooltip(
@@ -159,6 +174,7 @@ bool grading(EditorHistory* history, sfs::ColorGrading& grading)
                     0.0f,
                     1.0f,
                     "How much the corners darken");
+
   if (grading.vignette > 0.0f)
     changed |= slider(history,
                       "Vignette Softness",
@@ -166,6 +182,7 @@ bool grading(EditorHistory* history, sfs::ColorGrading& grading)
                       0.0f,
                       1.0f,
                       "How far in from the corners it starts");
+
   changed |= widgets::undoable(
       history,
       grading.autoExposure,
@@ -176,14 +193,17 @@ bool grading(EditorHistory* history, sfs::ColorGrading& grading)
       "darkens toward the target, a dim one brightens, within the limits,\n"
       "easing there over a second or so. On top of a physical sky's own\n"
       "adaptation to dusk and night: keep Brighten small for dark nights.");
+
   if (!grading.autoExposure)
     return changed;
-  changed |= slider(history,
-                    "Exposure Target",
-                    grading.exposureTarget,
-                    -3.0f,
-                    3.0f,
-                    "The average brightness it aims for, in stops from mid-grey");
+
+  changed |=
+      slider(history,
+             "Exposure Target",
+             grading.exposureTarget,
+             -3.0f,
+             3.0f,
+             "The average brightness it aims for, in stops from mid-grey");
   changed |= slider(history,
                     "Darken",
                     grading.exposureDarken,
@@ -214,10 +234,11 @@ bool sky(EditorHistory* history, sfs::SkySettings& sky)
       {
         const char* models[] = {"Flat (the sky colour)", "Physical"};
         int index = static_cast<int>(model);
-        const bool picked =
-            ImGui::Combo(row("Sky").c_str(), &index, models, 2);
+        const bool picked = ImGui::Combo(row("Sky").c_str(), &index, models, 2);
+
         if (picked)
           model = static_cast<sfs::SkyModel>(index);
+
         return picked;
       });
   ImGui::SetItemTooltip(
@@ -227,8 +248,10 @@ bool sky(EditorHistory* history, sfs::SkySettings& sky)
       "colour through the air, the sky's light all around, and its\n"
       "reflections. Only the sun's direction comes from the scene. Best with\n"
       "a tone mapper (Grading).");
+
   if (!sky.physical())
     return changed;
+
   changed |= slider(history,
                     "Turbidity",
                     sky.turbidity,
@@ -283,16 +306,20 @@ bool shadowCascades(EditorHistory* history, sfs::ShadowSettings& shadows)
         int count = static_cast<int>(cascades);
         const bool moved =
             ImGui::SliderInt(row("Shadow Cascades").c_str(), &count, 1, 4);
+
         if (moved)
           cascades = static_cast<uint32_t>(std::clamp(count, 1, 4));
+
         return moved;
       });
   ImGui::SetItemTooltip(
       "1: one shadow map around what the camera looks at (Shadow distance).\n"
       "2-4: cascaded shadow maps along the view, finer near the camera,\n"
       "reaching Cascade Distance away (3D scenes).");
+
   if (shadows.cascades <= 1)
     return changed;
+
   changed |= slider(history,
                     "Cascade Distance",
                     shadows.cascadeDistance,
@@ -323,8 +350,10 @@ bool ambientOcclusion(EditorHistory* history,
       "creases, corners and the ground at the foot of walls. Worked out on\n"
       "screen at half resolution; never darkens the sun's or lamps' light.\n"
       "Grass blades don't occlude.");
+
   if (!occlusion.enabled)
     return changed;
+
   changed |= slider(history,
                     "Radius",
                     occlusion.radius,
@@ -338,21 +367,23 @@ bool ambientOcclusion(EditorHistory* history,
                     0.0f,
                     4.0f,
                     "How dark it gets (1 normal)");
-  changed |= widgets::undoable(
-      history,
-      occlusion.samples,
-      [&](uint32_t& samples)
-      {
-        int count = static_cast<int>(samples);
-        const bool moved = ImGui::SliderInt(
-            row("Samples").c_str(),
-            &count,
-            static_cast<int>(sfs::kMinOcclusionSamples),
-            static_cast<int>(sfs::kMaxOcclusionSamples));
-        if (moved)
-          samples = static_cast<uint32_t>(count);
-        return moved;
-      });
+  changed |=
+      widgets::undoable(history,
+                        occlusion.samples,
+                        [&](uint32_t& samples)
+                        {
+                          int count = static_cast<int>(samples);
+                          const bool moved = ImGui::SliderInt(
+                              row("Samples").c_str(),
+                              &count,
+                              static_cast<int>(sfs::kMinOcclusionSamples),
+                              static_cast<int>(sfs::kMaxOcclusionSamples));
+
+                          if (moved)
+                            samples = static_cast<uint32_t>(count);
+
+                          return moved;
+                        });
   ImGui::SetItemTooltip(
       "Points looked at around each pixel: more is smoother, and costs more");
   return changed;
@@ -370,8 +401,10 @@ bool contactShadows(EditorHistory* history, sfs::ContactShadowSettings& contact)
       "crevices, finer than the sun's shadow maps hold. Worked out on screen\n"
       "with ambient occlusion; take only the sun's (or moon's) light, under a\n"
       "physical sky. Grass blades don't cast them.");
+
   if (!contact.enabled)
     return changed;
+
   changed |= slider(history,
                     "Length",
                     contact.length,
@@ -406,8 +439,10 @@ bool rain(EditorHistory* history, sfs::RainSettings& rain)
       "camera, drops splashing and ringing water, and a grey veil over the\n"
       "distance. Nothing falls under a roof (with the sun's shadows on). Wet\n"
       "surfaces are drawn either way.");
+
   if (!rain.enabled)
     return changed;
+
   changed |= slider(history,
                     "Density",
                     rain.density,
@@ -469,13 +504,16 @@ bool fog(EditorHistory* history, sfs::FogSettings& fog)
   bool changed = widgets::undoable(
       history,
       fog.enabled,
-      [&](bool& on) { return ImGui::Checkbox(row("Height Fog").c_str(), &on); });
+      [&](bool& on)
+      { return ImGui::Checkbox(row("Height Fog").c_str(), &on); });
   ImGui::SetItemTooltip(
       "Air thicker low down, as morning mist: far things fade into the sky's\n"
       "colour toward where you look (glowing toward the sun, under a\n"
       "physical sky). Takes haze's place while on.");
+
   if (!fog.enabled)
     return changed;
+
   changed |= slider(history,
                     "Density",
                     fog.density,
@@ -565,6 +603,7 @@ bool visualStyle(sfs::VisualStyle& style)
     ImGui::SetItemTooltip("%s", tooltip);
     return toggled;
   };
+
   if (optional("Bloom",
                style.bloom.has_value(),
                "On: this bloom instead of the scene camera's"))
@@ -574,6 +613,7 @@ bool visualStyle(sfs::VisualStyle& style)
                       : std::optional<sfs::BloomSettings>(sfs::BloomSettings{});
     changed = true;
   }
+
   if (style.bloom)
   {
     ImGui::Indent();
@@ -599,6 +639,7 @@ bool visualStyle(sfs::VisualStyle& style)
     ImGui::PopID();
     ImGui::Unindent();
   }
+
   if (optional("Haze",
                style.haze.has_value(),
                "On: this haze instead of the scene's"))
@@ -609,6 +650,7 @@ bool visualStyle(sfs::VisualStyle& style)
             : std::optional<sfs::HazeSettings>(sfs::HazeSettings{0.2f, 120.0f});
     changed = true;
   }
+
   if (style.haze)
   {
     ImGui::Indent();
@@ -627,6 +669,7 @@ bool visualStyle(sfs::VisualStyle& style)
                       "%.0f");
     ImGui::Unindent();
   }
+
   if (optional("Ambient Occlusion",
                style.ambientOcclusion.has_value(),
                "On: this ambient occlusion instead of the scene's"))
@@ -638,6 +681,7 @@ bool visualStyle(sfs::VisualStyle& style)
                   sfs::AmbientOcclusionSettings{.enabled = true});
     changed = true;
   }
+
   if (style.ambientOcclusion)
   {
     ImGui::Indent();
@@ -646,6 +690,7 @@ bool visualStyle(sfs::VisualStyle& style)
     ImGui::PopID();
     ImGui::Unindent();
   }
+
   if (optional("Contact Shadows",
                style.contactShadows.has_value(),
                "On: these contact shadows instead of the scene's"))
@@ -656,6 +701,7 @@ bool visualStyle(sfs::VisualStyle& style)
                                    sfs::ContactShadowSettings{.enabled = true});
     changed = true;
   }
+
   if (style.contactShadows)
   {
     ImGui::Indent();
@@ -664,6 +710,7 @@ bool visualStyle(sfs::VisualStyle& style)
     ImGui::PopID();
     ImGui::Unindent();
   }
+
   if (optional("Temporal Anti-Aliasing",
                style.temporalAntiAliasing.has_value(),
                "On: this instead of the scene's setting"))
@@ -672,17 +719,21 @@ bool visualStyle(sfs::VisualStyle& style)
         style.temporalAntiAliasing ? std::nullopt : std::optional<bool>(true);
     changed = true;
   }
+
   if (style.temporalAntiAliasing)
   {
     ImGui::Indent();
     bool on = *style.temporalAntiAliasing;
+
     if (ImGui::Checkbox(row("Smooth Edges Over Frames").c_str(), &on))
     {
       style.temporalAntiAliasing = on;
       changed = true;
     }
+
     ImGui::Unindent();
   }
+
   if (optional("Fog",
                style.fog.has_value(),
                "On: this height fog instead of the scene's (it takes haze's "
@@ -693,6 +744,7 @@ bool visualStyle(sfs::VisualStyle& style)
                                 sfs::FogSettings{.enabled = true});
     changed = true;
   }
+
   if (style.fog)
   {
     ImGui::Indent();
@@ -701,15 +753,17 @@ bool visualStyle(sfs::VisualStyle& style)
     ImGui::PopID();
     ImGui::Unindent();
   }
+
   if (optional("Rain",
                style.rain.has_value(),
                "On: rain looking like this instead of the scene's"))
   {
-    style.rain = style.rain ? std::nullopt
-                            : std::optional<sfs::RainSettings>(
-                                  sfs::RainSettings{});
+    style.rain = style.rain
+                     ? std::nullopt
+                     : std::optional<sfs::RainSettings>(sfs::RainSettings{});
     changed = true;
   }
+
   if (style.rain)
   {
     ImGui::Indent();
@@ -718,6 +772,7 @@ bool visualStyle(sfs::VisualStyle& style)
     ImGui::PopID();
     ImGui::Unindent();
   }
+
   if (optional("Shadow Softness",
                style.shadowSoftness.has_value(),
                "On: the sun's shadows this soft instead of the scene's"))
@@ -726,6 +781,7 @@ bool visualStyle(sfs::VisualStyle& style)
         style.shadowSoftness ? std::nullopt : std::optional<float>(1.5f);
     changed = true;
   }
+
   if (style.shadowSoftness)
   {
     ImGui::Indent();
@@ -748,6 +804,7 @@ bool visualStyle(sfs::VisualStyle& style)
         style.shadowCascades ? std::nullopt : std::optional<uint32_t>(4u);
     changed = true;
   }
+
   if (style.shadowCascades)
   {
     ImGui::Indent();
@@ -761,13 +818,16 @@ bool visualStyle(sfs::VisualStyle& style)
     shadows.cascadeSplit =
         style.shadowCascadeSplit.value_or(shadows.cascadeSplit);
     int count = static_cast<int>(shadows.cascades);
+
     if (ImGui::SliderInt(row("Cascades").c_str(), &count, 1, 4))
     {
       style.shadowCascades = static_cast<uint32_t>(std::clamp(count, 1, 4));
       changed = true;
     }
+
     ImGui::SetItemTooltip("1: one map around what the camera looks at; 2-4: "
                           "cascades along the view");
+
     if (*style.shadowCascades > 1)
     {
       if (optional("Cascade Distance",
@@ -780,6 +840,7 @@ bool visualStyle(sfs::VisualStyle& style)
                 : std::optional<float>(shadows.cascadeDistance);
         changed = true;
       }
+
       if (style.shadowCascadeDistance)
         changed |= slider(nullptr,
                           "Distance",
@@ -788,6 +849,7 @@ bool visualStyle(sfs::VisualStyle& style)
                           1000.0f,
                           "How far from the camera the sun's shadows reach",
                           "%.0f");
+
       if (optional("Cascade Split",
                    style.shadowCascadeSplit.has_value(),
                    "On: this split instead of the scene's"))
@@ -798,6 +860,7 @@ bool visualStyle(sfs::VisualStyle& style)
                 : std::optional<float>(shadows.cascadeSplit);
         changed = true;
       }
+
       if (style.shadowCascadeSplit)
         changed |= slider(nullptr,
                           "Split",
@@ -807,9 +870,11 @@ bool visualStyle(sfs::VisualStyle& style)
                           "1: small near the camera (detail close by); 0: "
                           "even");
     }
+
     ImGui::PopID();
     ImGui::Unindent();
   }
+
   if (optional("Sky",
                style.sky.has_value(),
                "On: this sky instead of the scene's (e.g. a physical one)"))
@@ -819,6 +884,7 @@ bool visualStyle(sfs::VisualStyle& style)
                                 .model = sfs::SkyModel::Physical});
     changed = true;
   }
+
   if (style.sky)
   {
     ImGui::Indent();

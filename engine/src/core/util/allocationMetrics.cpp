@@ -1,9 +1,10 @@
 #include "engine/core/util/allocationMetrics.h"
 
+#include "engine/core/util/profiling.h" // IWYU pragma: keep
+
+#include <cstddef>
 #include <cstdlib>
 #include <new>
-
-#include "engine/core/util/profiling.h" // IWYU pragma: keep
 
 namespace
 {
@@ -51,6 +52,7 @@ static void recordAllocation(std::size_t size)
   const auto current = metrics.current.fetch_add(size) + size;
 
   auto peak = metrics.peak.load();
+
   while (current > peak && !metrics.peak.compare_exchange_weak(peak, current))
   {
   }

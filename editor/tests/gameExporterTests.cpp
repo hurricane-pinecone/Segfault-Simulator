@@ -1,9 +1,7 @@
 #include "../../engine/tests/testHarness.h"
-
 #include "build/gameExporter.h"
-#include "project/project.h"
-
 #include "engine/runtime/game/gameManifest.h"
+#include "project/project.h"
 
 #include <filesystem>
 #include <fstream>
@@ -19,13 +17,13 @@ void touch(const fs::path& path, const char* contents = "x")
 }
 
 #if defined(_WIN32)
-constexpr const char* kPlayer = "SfsPlayer.exe";
-constexpr const char* kLibrary = "libengine.dll";
-constexpr const char* kModule = "MyGame.dll";
+constexpr const char* PLAYER = "SfsPlayer.exe";
+constexpr const char* LIBRARY = "libengine.dll";
+constexpr const char* MODULE = "MyGame.dll";
 #else
-constexpr const char* kPlayer = "SfsPlayer";
-constexpr const char* kLibrary = "libengine.so";
-constexpr const char* kModule = "MyGame.so";
+constexpr const char* PLAYER = "SfsPlayer";
+constexpr const char* LIBRARY = "libengine.so";
+constexpr const char* MODULE = "MyGame.so";
 #endif
 } // namespace
 
@@ -36,32 +34,35 @@ int main()
 
   // A stand-in editor folder: the player, a library, an engine asset.
   const fs::path editor = root / "editor";
-  touch(editor / kPlayer);
-  touch(editor / kLibrary);
+  touch(editor / PLAYER);
+  touch(editor / LIBRARY);
   touch(editor / "assets" / "fonts" / "engine.ttf");
   touch(editor / "SfsEditor.log"); // not a library: stays behind
 
-  std::optional<Project> project = Project::create(root / "project", "My Game!");
+  std::optional<Project> project =
+      Project::create(root / "project", "My Game!");
   touch(root / "project" / "scenes" / "main.scene", "{}");
   touch(root / "project" / "assets" / "tree.png");
-  touch(root / "built" / kModule);
+  touch(root / "built" / MODULE);
 
   GameExporter::Options options;
   options.output = root / "out";
   options.startScene = "scenes/main.scene";
-  options.module = root / "built" / kModule;
+  options.module = root / "built" / MODULE;
   options.windowWidth = 1280;
   options.windowHeight = 720;
   const GameExporter exporter(editor);
 
-  TEST("an export should hold the renamed player, libraries, module and content")
+  TEST(
+      "an export should hold the renamed player, libraries, module and content")
   {
     CHECK(project.has_value());
     const fs::path executable = exporter.run(*project, options);
-    CHECK(executable == options.output / GameExporter::executableName("My Game!"));
+    CHECK(executable ==
+          options.output / GameExporter::executableName("My Game!"));
     CHECK(fs::exists(executable));
-    CHECK(fs::exists(options.output / kLibrary));
-    CHECK(fs::exists(options.output / kModule));
+    CHECK(fs::exists(options.output / LIBRARY));
+    CHECK(fs::exists(options.output / MODULE));
     CHECK(fs::exists(options.output / "scenes" / "main.scene"));
     CHECK(fs::exists(options.output / "assets" / "tree.png"));
     CHECK(fs::exists(options.output / "assets" / "fonts" / "engine.ttf"));
@@ -70,11 +71,12 @@ int main()
 
   TEST("game.json should describe the game")
   {
-    const std::optional<sfs::GameManifest> manifest = sfs::GameManifest::read(options.output);
+    const std::optional<sfs::GameManifest> manifest =
+        sfs::GameManifest::read(options.output);
     CHECK(manifest.has_value());
     CHECK(manifest->name == std::string("My Game!"));
     CHECK(manifest->moduleName == project->moduleName());
-    CHECK(manifest->module == fs::path(kModule));
+    CHECK(manifest->module == fs::path(MODULE));
     CHECK(manifest->startScene == fs::path("scenes/main.scene"));
     CHECK(manifest->windowWidth == 1280);
     CHECK(manifest->windowHeight == 720);

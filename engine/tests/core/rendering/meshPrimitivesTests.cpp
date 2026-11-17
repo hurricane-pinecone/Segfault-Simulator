@@ -1,9 +1,15 @@
 #include "../../testHarness.h"
+#include "engine/core/rendering/mesh.h"
+#include "engine/core/rendering/meshPrimitives.h"
 
-#include <engine/core/rendering/meshPrimitives.h>
-
+#include <glm/glm/common.hpp>
+#include <glm/glm/ext/matrix_float4x4.hpp>
 #include <glm/glm/ext/matrix_transform.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
 #include <glm/glm/geometric.hpp>
+
+#include <cstddef>
+#include <cstdint>
 
 using namespace sfs;
 
@@ -20,9 +26,11 @@ bool wellFormed(const MeshData& mesh)
 {
   if (mesh.indices.size() % 3 != 0)
     return false;
+
   for (const uint32_t index : mesh.indices)
     if (index >= mesh.vertices.size())
       return false;
+
   return true;
 }
 
@@ -40,9 +48,11 @@ bool facesOutward(const MeshData& mesh, const glm::vec3& inside)
 
     if (glm::dot(faceNormal, centroid - inside) <= 0.0f)
       return false;
+
     if (glm::dot(faceNormal, mesh.vertices[mesh.indices[i]].normal) <= 0.0f)
       return false;
   }
+
   return true;
 }
 
@@ -51,6 +61,7 @@ bool unitNormals(const MeshData& mesh)
   for (const MeshVertex& vertex : mesh.vertices)
     if (!testing::approx(glm::length(vertex.normal), 1.0f, 1e-3f))
       return false;
+
   return true;
 }
 } // namespace
@@ -78,8 +89,10 @@ int main()
     const glm::vec3 red{1.0f, 0.0f, 0.0f};
     const MeshData mesh = meshes::box({1.0f, 1.0f, 1.0f}, red);
     bool allRed = true;
+
     for (const MeshVertex& vertex : mesh.vertices)
       allRed = allRed && nearVec(vertex.color, red);
+
     CHECK(allRed);
   }
 
@@ -127,11 +140,13 @@ int main()
                                  meshes::prism({1.0f, 1.0f, 1.0f})})
     {
       glm::vec2 low(1.0f), high(0.0f);
+
       for (const MeshVertex& vertex : mesh.vertices)
       {
         low = glm::min(low, vertex.uv);
         high = glm::max(high, vertex.uv);
       }
+
       CHECK(low.x <= 0.0f);
       CHECK(low.y <= 0.0f);
       CHECK(high.x >= 1.0f);
@@ -145,8 +160,10 @@ int main()
     const MeshData sphere = meshes::sphere(1.0f, 8, 4);
     meshes::append(combined, sphere, glm::mat4(1.0f));
     bool same = combined.vertices.size() == sphere.vertices.size();
+
     for (std::size_t i = 0; same && i < sphere.vertices.size(); ++i)
       same = combined.vertices[i].uv == sphere.vertices[i].uv;
+
     CHECK(same);
   }
 

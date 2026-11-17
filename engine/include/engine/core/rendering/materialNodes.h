@@ -1,9 +1,10 @@
 #pragma once
 
-#include "glm/glm/ext/vector_float2.hpp"
-#include "glm/glm/ext/vector_float3.hpp"
-#include "glm/glm/ext/vector_float4.hpp"
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
+#include <glm/glm/ext/vector_float4.hpp>
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -170,6 +171,19 @@ struct EvaluateArgs
  */
 struct NodeType
 {
+  /** The index of the input or output with this name, if there is one. */
+  std::optional<uint32_t> findInput(std::string_view name) const;
+  std::optional<uint32_t> findOutput(std::string_view name) const;
+  /** An input's or output's type, with the node's dynamic type filled in. */
+  ValueType inputType(std::size_t input, ValueType dynamic) const
+  {
+    return inputs[input].type.value_or(dynamic);
+  }
+  ValueType outputType(std::size_t output, ValueType dynamic) const
+  {
+    return outputs[output].type.value_or(dynamic);
+  }
+
   std::string id;    // as saved in files; never changes once released
   std::string label; // for people
   std::string category;
@@ -194,20 +208,6 @@ struct NodeType
   std::vector<std::string> (*emit)(const EmitArgs&) = nullptr;
   // Each output's value, of the output's type.
   void (*evaluate)(const EvaluateArgs&, std::span<glm::vec4> outputs) = nullptr;
-
-  /** An input's or output's type, with the node's dynamic type filled in. */
-  ValueType inputType(std::size_t input, ValueType dynamic) const
-  {
-    return inputs[input].type.value_or(dynamic);
-  }
-  ValueType outputType(std::size_t output, ValueType dynamic) const
-  {
-    return outputs[output].type.value_or(dynamic);
-  }
-
-  /** The index of the input or output with this name, if there is one. */
-  std::optional<uint32_t> findInput(std::string_view name) const;
-  std::optional<uint32_t> findOutput(std::string_view name) const;
 };
 
 /** A normal map's texel for a flat surface: (0, 0, 1) packed into 0..1. */

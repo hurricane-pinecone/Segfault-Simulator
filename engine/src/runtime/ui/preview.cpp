@@ -1,6 +1,12 @@
 #include "engine/runtime/ui/preview.h"
 
-#include <algorithm>
+#include "engine/runtime/ui/ui.h"
+
+#include <functional>
+#include <source_location>
+#include <string>
+#include <utility>
+#include <vector>
 
 namespace sfs::ui
 {
@@ -39,8 +45,6 @@ Preview::Preview(std::string name, std::function<View()> make, std::string file)
 
 Preview::~Preview() { std::erase(registry(), this); }
 
-const std::vector<const Preview*>& previews() { return registry(); }
-
 PreviewStyle::PreviewStyle(std::function<View(View)> apply,
                            std::source_location where)
     : m_apply(std::move(apply)), m_file(where.file_name())
@@ -49,6 +53,8 @@ PreviewStyle::PreviewStyle(std::function<View(View)> apply,
 }
 
 PreviewStyle::~PreviewStyle() { std::erase(styleRegistry(), this); }
+
+const std::vector<const Preview*>& previews() { return registry(); }
 
 const std::vector<const PreviewStyle*>& previewStyles()
 {

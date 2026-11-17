@@ -1,14 +1,19 @@
 #include "../../testHarness.h"
+#include "engine/core/components/particleEmitterComponent.h"
+#include "engine/core/components/transformComponent.h"
+#include "engine/core/components/windZoneComponent.h"
+#include "engine/core/ecs/entity.h"
+#include "engine/core/ecs/registry.h"
+#include "engine/core/particles/particleEffect.h"
+#include "engine/core/particles/particleEngine.h"
+#include "engine/core/sceneData/wind.h"
+#include "engine/core/types/blendMode.h"
 
-#include <engine/core/components/particleEmitterComponent.h>
-#include <engine/core/components/transformComponent.h>
-#include <engine/core/components/windZoneComponent.h>
-#include <engine/core/ecs/registry.h>
-#include <engine/core/particles/particleEngine.h>
-#include <engine/core/sceneData/wind.h>
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/geometric.hpp>
 
+#include <algorithm>
 #include <cmath>
-
 #include <string>
 #include <vector>
 
@@ -48,12 +53,14 @@ glm::vec2 onlyParticle(const ParticleEngine& engine)
 // The one particle's speed after `seconds` of 10 ms steps, from its last step.
 glm::vec2 settledVelocity(ParticleEngine& engine, float seconds)
 {
-  constexpr double kStep = 0.01;
-  for (double t = 0.0; t < seconds; t += kStep)
-    engine.simulate(kStep);
+  constexpr double STEP = 0.01;
+
+  for (double t = 0.0; t < seconds; t += STEP)
+    engine.simulate(STEP);
+
   const glm::vec2 before = onlyParticle(engine);
-  engine.simulate(kStep);
-  return (onlyParticle(engine) - before) / static_cast<float>(kStep);
+  engine.simulate(STEP);
+  return (onlyParticle(engine) - before) / static_cast<float>(STEP);
 }
 
 // A wind zone at `at` reaching `radius` round it.
@@ -200,12 +207,14 @@ int main()
     CHECK(batches.size() == 1 && batches[0].sprites.size() == 200);
     bool within = true;
     float widest = 0.0f;
+
     for (const ParticleSprite& sprite : batches[0].sprites)
     {
       within = within && std::abs(sprite.position.x) <= 3.0f + 1e-4f &&
                std::abs(sprite.position.y) <= 1.0f + 1e-4f;
       widest = std::max(widest, std::abs(sprite.position.x));
     }
+
     CHECK(within);
     CHECK(widest > 2.0f); // past the effect's own extent
 

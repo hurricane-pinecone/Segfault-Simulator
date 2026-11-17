@@ -1,7 +1,6 @@
 #include "../../testHarness.h"
-
-#include <engine/runtime/scripting/gameModule.h>
-#include <engine/runtime/scripting/moduleHost.h>
+#include "engine/runtime/scripting/gameModule.h"
+#include "engine/runtime/scripting/moduleHost.h"
 
 #include <cstring>
 #include <string>

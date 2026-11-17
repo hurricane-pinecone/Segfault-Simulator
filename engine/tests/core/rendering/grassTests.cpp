@@ -1,12 +1,18 @@
 #include "../../testHarness.h"
+#include "engine/core/rendering/grass.h"
+#include "engine/core/rendering/mesh.h"
+#include "engine/core/rendering/meshPrimitives.h"
 
-#include <engine/core/rendering/grass.h>
-#include <engine/core/rendering/meshPrimitives.h>
-
-#include "glm/glm/ext/matrix_transform.hpp"
+#include <glm/glm/ext/matrix_float4x4.hpp>
+#include <glm/glm/ext/matrix_transform.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
+#include <glm/glm/trigonometric.hpp>
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <tuple>
 #include <vector>
 
 using namespace sfs;
@@ -18,8 +24,10 @@ GrassGround groundOf(const MeshData& mesh,
                      const glm::mat4& model = glm::mat4(1.0f))
 {
   std::vector<glm::vec3> positions;
+
   for (const MeshVertex& vertex : mesh.vertices)
     positions.push_back(vertex.position);
+
   return GrassGround::build(positions, mesh.indices, model);
 }
 
@@ -119,8 +127,10 @@ int main()
   {
     const MeshData mesh = meshes::plane({40.0f, 40.0f});
     std::vector<glm::vec3> positions;
+
     for (const MeshVertex& vertex : mesh.vertices)
       positions.push_back(vertex.position);
+
     const GrassGrid window = grassWindow(
         {-20.0f, -20.0f}, {20.0f, 20.0f}, {4.0f, 4.0f}, 2.0f, 0.25f);
     const GrassGround ground = GrassGround::build(
@@ -367,6 +377,7 @@ int main()
     // Still there: pressed back just as it was, nothing to send.
     for (int frame = 0; frame < 10; ++frame)
       CHECK(!trample.update(0.016f, {&standing, 1}, 3.0f));
+
     const auto [stillFrom, stillTo] = trample.takeChanged();
     CHECK(stillTo.x <= stillFrom.x);
 

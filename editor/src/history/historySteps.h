@@ -1,11 +1,10 @@
 #pragma once
 
-#include "nlohmann/json.hpp"
+#include <nlohmann/json.hpp>
 
 #include <cstddef>
 #include <cstdint>
 #include <deque>
-#include <memory>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -28,14 +27,18 @@ public:
   static constexpr std::size_t kDefaultMaxSteps = 200;
   static constexpr std::size_t kDefaultMaxBytes = std::size_t(256) << 20;
 
-  explicit HistorySteps(std::size_t maxSteps = kDefaultMaxSteps, std::size_t maxBytes = kDefaultMaxBytes)
+  explicit HistorySteps(std::size_t maxSteps = kDefaultMaxSteps,
+                        std::size_t maxBytes = kDefaultMaxBytes)
       : m_maxSteps(maxSteps), m_maxBytes(maxBytes)
   {
   }
 
-  /** Record an edit (dropping what could be redone, and the oldest steps past the limits). */
-  void
-  push(const nlohmann::json& before, const nlohmann::json& after, Selection selectionBefore, Selection selectionAfter);
+  /** Record an edit (dropping what could be redone, and the oldest steps past
+   * the limits). */
+  void push(const nlohmann::json& before,
+            const nlohmann::json& after,
+            Selection selectionBefore,
+            Selection selectionAfter);
 
   /**
    * An edit to something outside the scene (painting a texture asset, say),
@@ -48,7 +51,8 @@ public:
     std::function<void()> redo;
     std::size_t bytes = 0;
   };
-  void pushAssetEdit(std::shared_ptr<const AssetEdit> edit, Selection selection);
+  void pushAssetEdit(std::shared_ptr<const AssetEdit> edit,
+                     Selection selection);
 
   /** Replace the last step's "after" (an edit folded into it). */
   void amendLast(const nlohmann::json& after, Selection selectionAfter);
@@ -64,7 +68,8 @@ public:
 
   bool canUndo() const { return !m_undo.empty(); }
   bool canRedo() const { return !m_redo.empty(); }
-  /** Step back: the scene as it was before the last edit. Nothing if there's none. */
+  /** Step back: the scene as it was before the last edit. Nothing if there's
+   * none. */
   std::optional<Restore> undo();
   /** Step forward again: the scene as it was after the edit last undone. */
   std::optional<Restore> redo();
@@ -80,11 +85,15 @@ public:
    * earlier value exactly when the scene is back to how it was then (what a
    * "saved" mark compares with). clear() starts a new one.
    */
-  uint64_t state() const { return m_undo.empty() ? m_baseState : m_undo.back().state; }
+  uint64_t state() const
+  {
+    return m_undo.empty() ? m_baseState : m_undo.back().state;
+  }
 
   std::size_t undoSteps() const { return m_undo.size(); }
   std::size_t redoSteps() const { return m_redo.size(); }
-  /** The snapshots' text, counted per step (shared text counted each time: an upper bound). */
+  /** The snapshots' text, counted per step (shared text counted each time: an
+   * upper bound). */
   std::size_t bytes() const { return m_bytes; }
 
 private:
@@ -92,17 +101,17 @@ private:
 
   struct Step
   {
+    std::size_t bytes() const
+    {
+      return before->size() + after->size() + (asset ? asset->bytes : 0);
+    }
+
     Text before;
     Text after;
     Selection selectionBefore;
     Selection selectionAfter;
     std::shared_ptr<const AssetEdit> asset; // or the scene's, before and after
     uint64_t state = 0;                     // the history's state after it
-
-    std::size_t bytes() const
-    {
-      return before->size() + after->size() + (asset ? asset->bytes : 0);
-    }
   };
 
   static Text text(const nlohmann::json& snapshot);

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "engine/core/ecs/service.h"
+#include "engine/core/logger/logger.h"
 #include "registry.h"
 
 #include <utility>
@@ -22,6 +24,7 @@ T* Service::addSceneData(TArgs&&... args)
               "nothing added");
     return nullptr;
   }
+
   return &m_registry->template addSceneData<T>(std::forward<TArgs>(args)...);
 }
 

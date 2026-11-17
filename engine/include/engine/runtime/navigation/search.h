@@ -48,15 +48,16 @@ public:
     Exhausted, // proven: none (within its area)
     Unknown,   // gave up without proof (a search that can't prove)
   };
+
   virtual ~SearchBase() = default;
-  /** Grow up to `budget` nodes in all (counting earlier runs). */
-  virtual Status run(uint32_t budget) = 0;
-  virtual uint32_t grown() const = 0;
-  virtual uint32_t shots() const { return 0; }
-  /** Hemmed in by its area (or corridor), not the world: widen, no proof. */
-  virtual bool leftArea() const = 0;
   /** Exhausted: what hems it in (for the debug marker). */
   virtual std::vector<Space::Hit> blockers() const { return {}; }
+  virtual uint32_t grown() const = 0;
+  /** Hemmed in by its area (or corridor), not the world: widen, no proof. */
+  virtual bool leftArea() const = 0;
+  /** Grow up to `budget` nodes in all (counting earlier runs). */
+  virtual Status run(uint32_t budget) = 0;
+  virtual uint32_t shots() const { return 0; }
 };
 
 /**
@@ -68,16 +69,19 @@ class SearchRegistry
 {
 public:
   using Factory = std::function<std::unique_ptr<Search>(const Context&)>;
+
   /** Offer a search (replacing any of the same name). */
   void add(std::string name, Factory make)
   {
     std::lock_guard lock(m_mutex);
+
     for (auto& [n, f] : m_list)
       if (n == name)
       {
         f = std::move(make);
         return;
       }
+
     m_list.emplace_back(std::move(name), std::move(make));
   }
   /** A new search of that name; null if there's none. */
@@ -87,6 +91,7 @@ public:
     Factory f;
     {
       std::lock_guard lock(m_mutex);
+
       for (const auto& [n, make] : m_list)
         if (n == name)
           f = make;
@@ -97,8 +102,10 @@ public:
   {
     std::lock_guard lock(m_mutex);
     std::vector<std::string> out;
+
     for (const auto& [n, f] : m_list)
       out.push_back(n);
+
     return out;
   }
 

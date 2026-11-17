@@ -1,8 +1,9 @@
 #pragma once
 
-#include "glm/glm/ext/vector_float2.hpp"
-#include "glm/glm/ext/vector_float3.hpp"
-#include "glm/glm/ext/vector_float4.hpp"
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
+#include <glm/glm/ext/vector_float4.hpp>
+
 #include <string>
 #include <utility>
 
@@ -43,6 +44,15 @@ namespace sfs
  */
 struct ParticleEmitterComponent
 {
+  ParticleEmitterComponent() = default;
+
+  ParticleEmitterComponent(std::string effect,
+                           glm::vec3 offset = glm::vec3(0.0f),
+                           bool enabled = true)
+      : effect(std::move(effect)), offset(offset), enabled(enabled)
+  {
+  }
+
   std::string effect;
   glm::vec3 offset{0.0f};
   bool enabled = true;
@@ -52,15 +62,6 @@ struct ParticleEmitterComponent
   [[sfs::color]] glm::vec4 tint{1.0f};
   glm::vec2 shapeScale{1.0f};
   int maxParticles = 0;
-
-  ParticleEmitterComponent() = default;
-
-  ParticleEmitterComponent(std::string effect,
-                           glm::vec3 offset = glm::vec3(0.0f),
-                           bool enabled = true)
-      : effect(std::move(effect)), offset(offset), enabled(enabled)
-  {
-  }
 };
 
 } // namespace sfs

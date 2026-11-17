@@ -1,7 +1,12 @@
 #include "../../engine/tests/testHarness.h"
-
 #include "history/historySteps.h"
 
+#include <nlohmann/json.hpp>
+
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <optional>
 #include <string>
 
 using nlohmann::json;
@@ -9,7 +14,10 @@ using nlohmann::json;
 namespace
 {
 // A scene whose snapshot is about `size` bytes of text.
-json scene(int value, std::size_t size = 0) { return {{"value", value}, {"padding", std::string(size, 'x')}}; }
+json scene(int value, std::size_t size = 0)
+{
+  return {{"value", value}, {"padding", std::string(size, 'x')}};
+}
 } // namespace
 
 int main()
@@ -55,8 +63,10 @@ int main()
   TEST("the oldest steps should go past the step limit")
   {
     HistorySteps steps(3, std::size_t(1) << 30);
+
     for (int i = 0; i < 10; ++i)
       steps.push(scene(i), scene(i + 1), std::nullopt, std::nullopt);
+
     CHECK(steps.undoSteps() == 3u);
     CHECK(steps.undo()->snapshot == scene(9));
     CHECK(steps.undo()->snapshot == scene(8));
@@ -68,8 +78,11 @@ int main()
   {
     // Each step holds about 2 x 1000 bytes; a budget of 5000 keeps two.
     HistorySteps steps(200, 5000);
+
     for (int i = 0; i < 10; ++i)
-      steps.push(scene(i, 1000), scene(i + 1, 1000), std::nullopt, std::nullopt);
+      steps.push(
+          scene(i, 1000), scene(i + 1, 1000), std::nullopt, std::nullopt);
+
     CHECK(steps.undoSteps() == 2u);
     CHECK(steps.bytes() <= 5000u);
     CHECK(steps.undo()->snapshot == scene(9, 1000));
@@ -104,7 +117,8 @@ int main()
     steps.push(scene(0), scene(1), std::nullopt, std::nullopt);
     steps.push(scene(1), scene(2), std::nullopt, std::nullopt);
     steps.undo();
-    steps.rewrite([](json& snapshot) { snapshot["renamed"] = snapshot["value"]; });
+    steps.rewrite([](json& snapshot)
+                  { snapshot["renamed"] = snapshot["value"]; });
     json expected = scene(0);
     expected["renamed"] = 0;
     CHECK(steps.undo()->snapshot == expected);
@@ -119,9 +133,10 @@ int main()
     HistorySteps steps;
     int painted = 0;
     steps.push(scene(0), scene(1), std::nullopt, std::nullopt);
-    steps.pushAssetEdit(std::make_shared<const HistorySteps::AssetEdit>(
-                            HistorySteps::AssetEdit{[&] { painted = 0; }, [&] { painted = 1; }, 64}),
-                        2u);
+    steps.pushAssetEdit(
+        std::make_shared<const HistorySteps::AssetEdit>(HistorySteps::AssetEdit{
+            [&] { painted = 0; }, [&] { painted = 1; }, 64}),
+        2u);
     painted = 1;
     steps.push(scene(1), scene(2), std::nullopt, std::nullopt);
 

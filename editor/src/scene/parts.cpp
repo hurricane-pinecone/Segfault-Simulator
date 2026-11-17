@@ -1,17 +1,18 @@
 #include "scene/parts.h"
 
-#include "scene/entityLabel.h"
-#include "scene/references.h"
-
-#include "engine/core/components/nameComponent.h"
-#include "engine/core/ecs/ecs.h" // IWYU pragma: keep (Entity templates)
+#include "engine/core/ecs/ecs.h"
 #include "engine/core/hierarchy/hierarchy.h"
 #include "engine/core/logger/logger.h"
 #include "engine/core/reflection/reflection.h"
 #include "engine/core/util/string.h"
+#include "scene/entityLabel.h"
+#include "scene/references.h"
 
 #include <algorithm>
+#include <cstddef>
+#include <cstdint>
 #include <functional>
+#include <string>
 #include <vector>
 
 namespace parts
@@ -38,9 +39,11 @@ std::vector<sfs::Entity> matches(const sfs::Entity& entity,
                                  const std::string& pattern)
 {
   std::vector<sfs::Entity> found;
+
   for (const sfs::Entity& below : sfs::hierarchy::descendants(entity))
     if (named(below, pattern))
       found.push_back(below);
+
   return found;
 }
 
@@ -60,6 +63,7 @@ bool lookUp(const sfs::Entity& entity,
 {
   const std::string& pattern = field.attributes.part;
   found = matches(entity, pattern);
+
   if (found.empty())
   {
     LOG_WARN(describe(entity, type, field) + ": nothing below " +
@@ -67,14 +71,17 @@ bool lookUp(const sfs::Entity& entity,
              "\"; left as it was");
     return false;
   }
+
   if (field.kind == FieldKind::Entity && found.size() > 1)
     LOG_WARN(describe(entity, type, field) + ": " +
              std::to_string(found.size()) + " entities below " +
              entityLabel(entity) + " are named as its part \"" + pattern +
              "\"; it takes the first, " +
              references::namePath(found.front(), entity));
+
   if (field.kind == FieldKind::Entity)
     found.resize(1);
+
   return true;
 }
 
@@ -86,6 +93,7 @@ bool set(const sfs::Entity& entity,
          const std::vector<sfs::Entity>& found)
 {
   bool changed = false;
+
   if (field.kind == FieldKind::Entity)
   {
     sfs::Entity& value = field.in<sfs::Entity>(object);
@@ -98,11 +106,15 @@ bool set(const sfs::Entity& entity,
     changed = list != found;
     list = found;
   }
+
   if (!changed)
     return false;
+
   std::string names;
+
   for (const sfs::Entity& target : found)
     names += (names.empty() ? "" : ", ") + references::namePath(target, entity);
+
   LOG_INFO(describe(entity, type, field) + " -> " + names);
   return true;
 }
@@ -111,6 +123,7 @@ bool empty(const FieldInfo& field, void* object)
 {
   if (field.kind == FieldKind::Entity)
     return field.in<sfs::Entity>(object) == sfs::Entity{};
+
   const auto& list = field.in<std::vector<sfs::Entity>>(object);
   return std::none_of(list.begin(),
                       list.end(),
@@ -133,12 +146,16 @@ bool stale(const sfs::Entity& entity,
                ? !named(target, pattern)
                : references::keptValue(entity, type, field, item) != nullptr;
   };
+
   if (field.kind == FieldKind::Entity)
     return wrong(field.in<sfs::Entity>(object), references::kNoItem);
+
   const auto& list = field.in<std::vector<sfs::Entity>>(object);
+
   for (std::size_t i = 0; i < list.size(); ++i)
     if (wrong(list[i], static_cast<uint32_t>(i)))
       return true;
+
   return false;
 }
 
@@ -150,11 +167,14 @@ void eachWithParts(const sfs::Entity& root,
                    const std::function<bool(const sfs::Entity&)>& skip = {})
 {
   std::vector<const TypeInfo*> types;
+
   for (const TypeInfo* type : sfs::reflect::types().referencingTypes())
     if (hasParts(*type))
       types.push_back(type);
+
   if (types.empty() || !root.isValid())
     return;
+
   const auto at = [&](const sfs::Entity& entity)
   {
     for (const TypeInfo* type : types)
@@ -164,6 +184,7 @@ void eachWithParts(const sfs::Entity& root,
   at(root);
   const sfs::hierarchy::DescendantRange below =
       sfs::hierarchy::descendants(root);
+
   for (auto it = below.begin(); it != below.end(); ++it)
     if (skip && skip(*it))
       it.skipChildren();
@@ -181,15 +202,19 @@ std::size_t
 fill(const sfs::Entity& entity, const TypeInfo& type, bool onlyEmpty)
 {
   void* object = type.component.get(entity);
+
   if (!object)
     return 0;
+
   std::size_t changed = 0;
   std::vector<sfs::Entity> found;
+
   for (const FieldInfo& field : type.fields)
     if (isPart(field) && (!onlyEmpty || empty(field, object)) &&
         lookUp(entity, type, field, found) &&
         set(entity, type, field, object, found))
       ++changed;
+
   return changed;
 }
 
@@ -214,12 +239,14 @@ std::size_t heal(const sfs::Entity& root, const std::string& source)
       [&](const sfs::Entity& entity, const TypeInfo& type)
       {
         void* object = type.component.get(entity);
+
         for (const FieldInfo& field : type.fields)
           if (isPart(field) && stale(entity, type, field, object))
           {
             LOG_INFO(source + ": " + describe(entity, type, field) +
                      " no longer names its part \"" + field.attributes.part +
                      "\" (a node renamed in the model?); filling it again");
+
             if (lookUp(entity, type, field, found) &&
                 set(entity, type, field, object, found))
               ++changed;

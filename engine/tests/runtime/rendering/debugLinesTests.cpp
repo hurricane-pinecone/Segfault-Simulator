@@ -1,21 +1,29 @@
 #include "../../testHarness.h"
+#include "engine/core/components/boxCollider3DComponent.h"
+#include "engine/core/components/capsuleCollider3DComponent.h"
+#include "engine/core/components/sphereCollider3DComponent.h"
+#include "engine/core/components/transformComponent.h"
+#include "engine/core/rendering/debugLines.h"
+#include "engine/core/util/debugFeatures.h"
+#include "engine/runtime/assetStore/assetStore.h"
+#include "engine/runtime/rendering/debug/colliderLines.h"
+#include "engine/runtime/rendering/renderSystem.h"
+#include "engine/runtime/sceneManager/scene.h"
 #include "mockRenderer.h"
 
-#include <engine/core/components/boxCollider3DComponent.h>
-#include <engine/core/components/capsuleCollider3DComponent.h>
-#include <engine/core/components/sphereCollider3DComponent.h>
-#include <engine/core/components/transformComponent.h>
-#include <engine/core/rendering/debugLines.h>
-#include <engine/core/util/debugFeatures.h>
-#include <engine/runtime/assetStore/assetStore.h>
-#include <engine/runtime/rendering/debug/colliderLines.h>
-#include <engine/runtime/rendering/renderSystem.h>
-#include <engine/runtime/sceneManager/scene.h>
+#include <glm/glm/common.hpp>
+#include <glm/glm/ext/matrix_float4x4.hpp>
+#include <glm/glm/ext/vector_float4.hpp>
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
+#include <optional>
+#include <ratio>
+#include <span>
 #include <tuple>
+#include <utility>
 
 using namespace sfs;
 using sfs::testing3d::MockRenderer;
@@ -56,11 +64,13 @@ struct Harness
 std::pair<glm::vec3, glm::vec3> extent(std::span<const DebugLineVertex> lines)
 {
   glm::vec3 low(1e9f), high(-1e9f);
+
   for (const DebugLineVertex& v : lines)
   {
     low = glm::min(low, v.position);
     high = glm::max(high, v.position);
   }
+
   return {low, high};
 }
 } // namespace
@@ -173,9 +183,11 @@ int main()
   {
     Harness h;
     debugFeatures::allow(true);
+
     for (int i = 0; i < 500; ++i)
     {
       Entity e = h.spawn({float(i % 25) * 3.0f, float(i / 25) * 3.0f, 0.0f});
+
       if (i % 3 == 0)
         e.addComponent<BoxCollider3DComponent>(BoxCollider3DComponent{});
       else if (i % 3 == 1)
@@ -184,23 +196,28 @@ int main()
         e.addComponent<CapsuleCollider3DComponent>(
             CapsuleCollider3DComponent{});
     }
+
     h.frame();
     // The render frame's time, the best of a few runs (the mock renderer
     // only copies the lines).
     const auto timed = [&]
     {
       double best = 1e9;
+
       for (int run = 0; run < 5; ++run)
       {
         const auto start = std::chrono::steady_clock::now();
+
         for (int i = 0; i < 20; ++i)
           h.scene.render();
+
         best = std::min(best,
                         std::chrono::duration<double, std::milli>(
                             std::chrono::steady_clock::now() - start)
                                 .count() /
                             20.0);
       }
+
       return best;
     };
     h.system.setDrawColliders(false);
@@ -213,7 +230,8 @@ int main()
                 h.system.stats().debugLines,
                 on,
                 off);
-    if (!testing::kSanitized)
+
+    if (!testing::SANITIZED)
     {
       CHECK(on - off < 5.0); // generous: a debug build's, on any machine
     }

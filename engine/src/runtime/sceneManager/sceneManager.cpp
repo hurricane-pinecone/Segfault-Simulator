@@ -1,10 +1,29 @@
-#include <engine/runtime/sceneManager/scene.h>
-#include <engine/runtime/sceneManager/sceneManager.h>
+#include "engine/runtime/sceneManager/sceneManager.h"
+
+#include "engine/runtime/sceneManager/scene.h"
+
 #include <memory>
 #include <string>
 
 namespace sfs
 {
+
+Scene* SceneManager::current() { return m_currentScene; }
+
+void SceneManager::destroyAll()
+{
+  if (m_currentScene)
+    m_currentScene->onExit();
+
+  m_currentScene = nullptr;
+
+  // Their objects' onDestroy, while each scene is whole.
+  for (auto& [id, scene] : m_scenes)
+    scene->destroyObjects();
+
+  m_scenes.clear();
+  m_nameToId.clear();
+}
 
 void SceneManager::destroyScene(SceneId id)
 {
@@ -33,19 +52,6 @@ void SceneManager::destroyScene(const std::string& name)
   m_nameToId.erase(name);
 }
 
-void SceneManager::destroyAll()
-{
-  if (m_currentScene)
-    m_currentScene->onExit();
-
-  m_currentScene = nullptr;
-  // Their objects' onDestroy, while each scene is whole.
-  for (auto& [id, scene] : m_scenes)
-    scene->destroyObjects();
-  m_scenes.clear();
-  m_nameToId.clear();
-}
-
 void SceneManager::load(SceneId id)
 {
   auto it = m_scenes.find(id);
@@ -69,8 +75,6 @@ void SceneManager::load(const std::string& name)
 
   load(it->second);
 }
-
-Scene* SceneManager::current() { return m_currentScene; }
 
 void SceneManager::setSceneBackends(SceneBackends* backends)
 {

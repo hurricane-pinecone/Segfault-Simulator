@@ -1,12 +1,13 @@
 #pragma once
 
+#include "engine/runtime/navigation/geometry.h"
 #include "engine/runtime/navigation/laneGraph.h"
+#include "engine/runtime/navigation/planState.h"
 #include "engine/runtime/navigation/vehicle/planner.h"
 
+#include <cstdint>
 #include <functional>
-#include <memory>
 #include <optional>
-#include <string>
 #include <vector>
 
 namespace sfs::nav::vehicle
@@ -35,6 +36,14 @@ namespace sfs::nav::vehicle
  */
 struct LaneTripRequest
 {
+  enum class Window
+  {
+    On,
+    Corner,
+    Off,
+    Round, // off the lane round what's too near it, back on past it
+  };
+
   /** The vehicle, its Space and CostLayer, where it is and its goal. */
   PlanRequest plan;
   LaneGraph::Options lanes;
@@ -44,13 +53,6 @@ struct LaneTripRequest
   // quicker one at most (Tunables::improveNodes; the windows are short joins,
   // their ground cheap along the lanes, so the heuristic prunes little).
   uint32_t windowImprove = 400;
-  enum class Window
-  {
-    On,
-    Corner,
-    Off,
-    Round, // off the lane round what's too near it, back on past it
-  };
   /**
    * Each window's search (default planNow()): a game may wrap it (its own
    * logging, a retry). Given the window's request and which window it is.
@@ -69,6 +71,7 @@ struct LaneTrip
     LaneGraph::Stretch stretch;                    // a lane stretch's
     float hitch = 0.0f; // its trailer's angle where the part ends
   };
+
   std::vector<Part> parts;
   /**
    * Found: every part's in. Otherwise the state of the window that wasn't

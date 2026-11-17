@@ -7,17 +7,23 @@
 #include "document.h"
 #include "lints.h"
 #include "projectIndex.h"
-
-#include <sfs/codegen/rules.h>
+#include "sfs/codegen/model.h"
+#include "sfs/codegen/rules.h"
 
 #include <tree_sitter/api.h>
 #include <tree_sitter/tree-sitter-cpp.h>
 
 #include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <filesystem>
 #include <fstream>
+#include <ios>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 namespace lspTest
@@ -83,6 +89,7 @@ inline const sfs::codegen::Diagnostic* first(const sfs::lsp::Document& document,
   for (const sfs::codegen::Diagnostic& d : document.diagnostics)
     if (d.rule == rule)
       return &d;
+
   return nullptr;
 }
 
@@ -103,12 +110,14 @@ inline std::string applyEdits(std::string text,
               return std::tie(a.range.startRow, a.range.startColumn) >
                      std::tie(b.range.startRow, b.range.startColumn);
             });
+
   for (const sfs::codegen::TextEdit& edit : edits)
   {
     const uint32_t from = offset(edit.range.startRow, edit.range.startColumn);
     const uint32_t to = offset(edit.range.endRow, edit.range.endColumn);
     text.replace(from, to - from, edit.text);
   }
+
   return text;
 }
 

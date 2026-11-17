@@ -1,10 +1,21 @@
 #include "../testHarness.h"
+#include "document.h"
 #include "lspTestSupport.h"
+#include "sfs/lsp/protocol.h"
 
-#include <sfs/lsp/protocol.h>
+#include <tree_sitter/api.h>
 
+#include <algorithm>
+#include <cstdint>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <ios>
+#include <iterator>
 #include <random>
 #include <sstream>
+#include <string>
+#include <vector>
 
 using namespace sfs::lsp;
 
@@ -69,8 +80,10 @@ int main()
     std::vector<std::string> messages;
     std::vector<std::string> problems;
     const std::string stream = frame("{\"a\":1}") + frame("{\"b\":2}");
+
     for (const char c : stream)
       reader.feed(std::string_view(&c, 1), messages, problems);
+
     CHECK(messages.size() == 2u);
     CHECK(messages.size() == 2u && messages[1] == "{\"b\":2}");
     messages.clear();
@@ -119,30 +132,37 @@ int main()
     const std::string pieces[] = {
         "x", "\n", "{", "}", "int y;", "  ", "/*", "*/", "\"", "<", ">", "::"};
     bool linesRight = true;
+
     for (int i = 0; i < 1000; ++i)
     {
       const uint32_t lines = static_cast<uint32_t>(doc->lineStarts.size());
       const Position start{static_cast<uint32_t>(random() % lines),
                            static_cast<uint32_t>(random() % 40)};
       Position end = start;
+
       if (random() % 2)
         end = {std::min(
                    lines - 1, start.line + static_cast<uint32_t>(random() % 3)),
                static_cast<uint32_t>(random() % 40)};
+
       const uint32_t from = byteOffset(*doc, start, PositionEncoding::Utf8);
       const uint32_t to = byteOffset(*doc, end, PositionEncoding::Utf8);
+
       if (to < from)
         end = start;
+
       applyEdit(*doc,
                 start,
                 end,
                 random() % 3 ? pieces[random() % std::size(pieces)] : "",
                 PositionEncoding::Utf8);
       linesRight = linesRight && doc->lineStarts == countLines(doc->text);
+
       // Reparse now and then, as a request or a settle would.
       if (i % 50 == 49)
         reparse(*doc, lspTest::parser());
     }
+
     CHECK(linesRight);
     reparse(*doc, lspTest::parser());
     const auto fresh = lspTest::document(doc->text);

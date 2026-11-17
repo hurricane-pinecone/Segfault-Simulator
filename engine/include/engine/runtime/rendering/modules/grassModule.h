@@ -2,11 +2,21 @@
 
 #include "engine/core/ecs/entity.h"
 #include "engine/core/rendering/grass.h"
+#include "engine/core/rendering/mesh.h"
 #include "engine/runtime/rendering/commands.h"
+#include "engine/runtime/rendering/frame.h"
 #include "engine/runtime/rendering/modules/renderModule.h"
 #include "engine/runtime/rendering/renderContext.h"
-#include "nlohmann/json.hpp"
 
+#include <glm/glm/ext/matrix_float3x3.hpp>
+#include <glm/glm/ext/matrix_float4x4.hpp>
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
+#include <glm/glm/ext/vector_int2.hpp>
+#include <glm/glm/ext/vector_int4.hpp>
+#include <nlohmann/json.hpp>
+
+#include <cstddef>
 #include <cstdint>
 #include <future>
 #include <memory>

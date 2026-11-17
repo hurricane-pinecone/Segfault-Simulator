@@ -1,6 +1,7 @@
 #include "engine/core/assets/scriptableObject.h"
 
 #include <atomic>
+#include <string_view>
 
 namespace sfs
 {

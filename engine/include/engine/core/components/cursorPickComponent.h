@@ -2,7 +2,8 @@
 
 #include "engine/core/ecs/entity.h"
 #include "engine/core/rendering/camera.h"
-#include "glm/glm/ext/vector_float3.hpp"
+
+#include <glm/glm/ext/vector_float3.hpp>
 
 namespace sfs
 {

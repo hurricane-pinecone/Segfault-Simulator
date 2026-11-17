@@ -1,6 +1,6 @@
 #pragma once
 
-#include "engine/core/ecs/entity.h"
+#include "engine/core/ecs/entityDeclaration.h"
 #include "engine/core/ecs/moduleSettings.h"
 #include "engine/core/events/eventConsumer.h"
 #include "engine/core/events/eventVerbs.h"
@@ -36,12 +36,13 @@ public:
 
 protected:
   /**
-   * Sets the service up, once, as it's added, with its events set: makes its
-   * consumers (each with its handler) and requesters, kept as members, and
-   * builds what it builds once (a scheduler it owns). A service makes no
-   * handles anywhere else.
+   * Gives the scene its one T, a type marked [[sfs::scene_data]]
+   * (Registry::addSceneData()): a service may make its own state so. When the
+   * scene has one already, it logs an error and keeps that one.
+   * @return the scene's T; null if the service isn't in a registry
    */
-  virtual void create() = 0;
+  template <typename T, typename... TArgs>
+  T* addSceneData(TArgs&&... args);
 
   /**
    * A consumer of TEvent, made in create(): a builder that becomes an
@@ -57,28 +58,12 @@ protected:
   }
 
   /**
-   * The scene's one T, a type marked [[sfs::scene_data]] (a clock, the weather,
-   * the service's own state): Registry::sceneData().
-   * @return it, or null when the scene has none
+   * Sets the service up, once, as it's added, with its events set: makes its
+   * consumers (each with its handler) and requesters, kept as members, and
+   * builds what it builds once (a scheduler it owns). A service makes no
+   * handles anywhere else.
    */
-  template <typename T>
-  T* sceneData();
-
-  /**
-   * Gives the scene its one T, a type marked [[sfs::scene_data]]
-   * (Registry::addSceneData()): a service may make its own state so. When the
-   * scene has one already, it logs an error and keeps that one.
-   * @return the scene's T; null if the service isn't in a registry
-   */
-  template <typename T, typename... TArgs>
-  T* addSceneData(TArgs&&... args);
-
-  /**
-   * Destroys the scene's T, a type marked [[sfs::scene_data]]
-   * (Registry::removeSceneData()); nothing if it has none.
-   */
-  template <typename T>
-  void removeSceneData();
+  virtual void create() = 0;
 
   /**
    * Creates an entity (Registry::createEntity()): it can be given components
@@ -94,6 +79,21 @@ protected:
    * @param entity the entity
    */
   void destroyEntity(const Entity& entity);
+
+  /**
+   * Destroys the scene's T, a type marked [[sfs::scene_data]]
+   * (Registry::removeSceneData()); nothing if it has none.
+   */
+  template <typename T>
+  void removeSceneData();
+
+  /**
+   * The scene's one T, a type marked [[sfs::scene_data]] (a clock, the weather,
+   * the service's own state): Registry::sceneData().
+   * @return it, or null when the scene has none
+   */
+  template <typename T>
+  T* sceneData();
 
 private:
   friend class Registry;

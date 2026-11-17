@@ -1,7 +1,7 @@
 #pragma once
 
-#include "glm/glm/common.hpp"
-#include "glm/glm/ext/vector_float2.hpp"
+#include <glm/glm/common.hpp>
+#include <glm/glm/ext/vector_float2.hpp>
 
 namespace sfs
 {
@@ -33,12 +33,14 @@ inline bool sweepAabb(glm::vec2 from,
     {
       if (p < l || p > h)
         return false; // parallel to this slab and outside it
+
       continue;
     }
 
     float t1 = (l - p) / d; // low face
     float t2 = (h - p) / d; // high face
     float sign = -1.0f;     // entering the low face -> normal points -axis
+
     if (t1 > t2)
     {
       const float tmp = t1;
@@ -52,7 +54,9 @@ inline bool sweepAabb(glm::vec2 from,
       tmin = t1;
       nrm = axis == 0 ? glm::vec2{sign, 0.0f} : glm::vec2{0.0f, sign};
     }
+
     tmax = glm::min(tmax, t2);
+
     if (tmin > tmax)
       return false;
   }

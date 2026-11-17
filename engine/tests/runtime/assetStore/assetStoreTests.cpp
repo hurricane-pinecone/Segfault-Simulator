@@ -1,16 +1,19 @@
 #include "../../testHarness.h"
 #include "../rendering/mockRenderer.h"
+#include "engine/core/assets/assetDatabase.h"
+#include "engine/core/rendering/colorGrading.h"
+#include "engine/core/rendering/visualStyle.h"
+#include "engine/runtime/assetStore/assetStore.h"
+#include "engine/runtime/assetStore/modelImporter.h"
+#include "engine/runtime/rendering/renderSystem.h"
+#include "engine/runtime/rendering/visualStyles.h"
+#include "engine/runtime/sceneManager/scene.h"
 
-#include <engine/core/assets/assetDatabase.h>
-#include <engine/core/rendering/visualStyle.h>
-#include <engine/runtime/assetStore/assetStore.h>
-#include <engine/runtime/assetStore/modelImporter.h>
-#include <engine/runtime/rendering/renderSystem.h>
-#include <engine/runtime/rendering/visualStyles.h>
-#include <engine/runtime/sceneManager/scene.h>
+#include <nlohmann/json.hpp>
 
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <string>
 
 using namespace sfs;
@@ -27,6 +30,7 @@ struct Project
   {
     fs::remove_all(folder);
     fs::create_directories(folder / "prefabs");
+
     for (const char* name : {"a", "b"})
       std::ofstream(folder / "prefabs" / (std::string(name) + ".prefab"))
           << R"({"formatVersion": 1, "root": {"NameComponent": {"name": ")"
@@ -49,6 +53,7 @@ int main()
       const AssetRecord* a = database.findByPath("prefabs/a.prefab");
       const AssetRecord* b = database.findByPath("prefabs/b.prefab");
       CHECK(a != nullptr && b != nullptr);
+
       if (a && b)
       {
         AssetStore store;
@@ -94,12 +99,14 @@ int main()
                                  AssetDatabase::projectFolders());
     const AssetRecord* rig = database.findByPath("assets/rig.gltf");
     CHECK(rig != nullptr);
+
     if (rig)
     {
       AssetStore store;
       store.setDatabase(&database);
       const std::optional<nlohmann::json> prefab = store.prefab(rig->id);
       CHECK(prefab.has_value());
+
       if (prefab)
       {
         CHECK(prefab->value("model", false));
@@ -111,6 +118,7 @@ int main()
         CHECK(hip.is_object() && hip.value("/children/0/$id"_json_pointer,
                                            0u) == stableNodeId("Hip/Knee"));
       }
+
       // A prefab file isn't a model's.
       const AssetRecord* a = database.findByPath("prefabs/a.prefab");
       const std::optional<nlohmann::json> file =
@@ -141,6 +149,7 @@ int main()
     CHECK(record && record->kind == AssetKind::VisualStyle);
     AssetStore store;
     store.setDatabase(&database);
+
     if (record)
     {
       const std::optional<VisualStyle> loaded = store.visualStyle(record->id);
@@ -150,12 +159,14 @@ int main()
       const std::optional<VisualStyle> again = store.visualStyle(record->id);
       CHECK(again && again->grading.exposure == 1.0f);
     }
+
     // Not a style: nothing.
     const AssetRecord* prefab = database.findByPath("prefabs/a.prefab");
     CHECK(prefab && !store.visualStyle(prefab->id).has_value());
 
     const auto styles = visualStyleAssets(database);
     CHECK(styles.size() == 2u);
+
     if (styles.size() == 2u)
     {
       CHECK(styles[0].second == "assets/styles/Cozy.style");
@@ -173,6 +184,7 @@ int main()
           for (const AssetRecord& candidate : database.records())
             if ("asset:" + candidate.id.toString() == name)
               return store.visualStyle(candidate.id);
+
           return std::nullopt;
         });
     CHECK(cycleVisualStyle(render, database) == "assets/styles/Cozy.style");

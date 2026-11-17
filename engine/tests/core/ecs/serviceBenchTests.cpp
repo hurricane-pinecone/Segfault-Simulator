@@ -1,8 +1,7 @@
 #include "../../testHarness.h"
-
-#include <engine/core/ecs/ecs.h>
-#include <engine/core/events/events.h>
-#include <engine/core/util/allocationMetrics.h>
+#include "engine/core/ecs/ecs.h"
+#include "engine/core/events/events.h"
+#include "engine/core/util/allocationMetrics.h"
 
 #include <algorithm>
 #include <chrono>
@@ -12,6 +11,7 @@
 #include <functional>
 #include <limits>
 #include <memory>
+#include <ratio>
 #include <string>
 #include <utility>
 #include <vector>
@@ -61,59 +61,12 @@ struct TaskB
   int value = 0;
 };
 
-constexpr int kRounds = 7;
-constexpr int kEvents = 1000;
+constexpr int ROUNDS = 7;
+constexpr int EVENTS = 1000;
 
 using Clock = std::chrono::steady_clock;
 
 volatile int64_t g_sink = 0;
-
-double nsSince(Clock::time_point start)
-{
-  return std::chrono::duration<double, std::nano>(Clock::now() - start).count();
-}
-
-void print(const char* name, int count, double ns)
-{
-  std::printf("bench %s %d %.3f\n", name, count, ns);
-}
-
-// Whether the gates are checked: asked for, in an optimised build.
-bool checkGates()
-{
-#ifdef NDEBUG
-  static const bool asked = std::getenv("SFS_BENCH_GATES") != nullptr;
-  return asked;
-#else
-  return false;
-#endif
-}
-
-// One gate, `now` at most `limit`: printed, and checked when checkGates().
-void gate(const std::string& what, double now, double limit)
-{
-  const bool met = now <= limit;
-  std::printf("  gate %-58s: %.3f against %.3f: %s\n",
-              what.c_str(),
-              now,
-              limit,
-              met ? "met" : "MISSED");
-  if (checkGates())
-    CHECK(met);
-}
-
-// Whether allocations are counted in this build (a static engine build).
-bool tracking()
-{
-  MemoryMetrics& metrics = getMemoryMetrics();
-  const std::size_t probe = metrics.allocationCount.load();
-  {
-    ScopedMemoryTracking track(MemoryTrackingPhase::Update);
-    int* volatile block = new int(1);
-    delete block;
-  }
-  return metrics.allocationCount.load() != probe;
-}
 
 // A service whose create() runs what a bench gives it.
 class Host : public Service
@@ -156,10 +109,59 @@ private:
   std::function<void(Runner&)> m_setUp;
 };
 
+double nsSince(Clock::time_point start)
+{
+  return std::chrono::duration<double, std::nano>(Clock::now() - start).count();
+}
+
+void print(const char* name, int count, double ns)
+{
+  std::printf("bench %s %d %.3f\n", name, count, ns);
+}
+
+// Whether the gates are checked: asked for, in an optimised build.
+bool checkGates()
+{
+#ifdef NDEBUG
+  static const bool asked = std::getenv("SFS_BENCH_GATES") != nullptr;
+  return asked;
+#else
+  return false;
+#endif
+}
+
+// One gate, `now` at most `limit`: printed, and checked when checkGates().
+void gate(const std::string& what, double now, double limit)
+{
+  const bool met = now <= limit;
+  std::printf("  gate %-58s: %.3f against %.3f: %s\n",
+              what.c_str(),
+              now,
+              limit,
+              met ? "met" : "MISSED");
+
+  if (checkGates())
+    CHECK(met);
+}
+
+// Whether allocations are counted in this build (a static engine build).
+bool tracking()
+{
+  MemoryMetrics& metrics = getMemoryMetrics();
+  const std::size_t probe = metrics.allocationCount.load();
+  {
+    ScopedMemoryTracking track(MemoryTrackingPhase::Update);
+    int* volatile block = new int(1);
+    delete block;
+  }
+  return metrics.allocationCount.load() != probe;
+}
+
 double benchIdle()
 {
   Registry registry;
   std::vector<std::unique_ptr<EventConsumer<IdleEvent>>> handles;
+
   for (int s = 0; s < 16; ++s)
     registry.addService<Host>(
         [&](Host& h)
@@ -169,20 +171,25 @@ double benchIdle()
                 h.consumer<IdleEvent>().onEvent(
                     [](const IdleEvent& e) { g_sink = g_sink + e.value; })));
         });
-  constexpr int kRuns = 100000;
+
+  constexpr int RUNS = 100000;
   double best = std::numeric_limits<double>::max();
-  for (int round = 0; round < kRounds; ++round)
+
+  for (int round = 0; round < ROUNDS; ++round)
   {
     const Clock::time_point start = Clock::now();
-    for (int i = 0; i < kRuns; ++i)
+
+    for (int i = 0; i < RUNS; ++i)
       registry.runServices();
-    best = std::min(best, nsSince(start) / (kRuns * 64.0));
+
+    best = std::min(best, nsSince(start) / (RUNS * 64.0));
   }
+
   handles.clear();
   return best;
 }
 
-// One run handling kEvents news events with onEvent(): through a service
+// One run handling EVENTS news events with onEvent(): through a service
 // (service true) or a system's updateSystem().
 double benchWoken(bool service)
 {
@@ -191,30 +198,37 @@ double benchWoken(bool service)
   int64_t sum = 0;
   const auto handler = [&sum](const WorkEvent& e) { sum += e.value; };
   Runner* runner = nullptr;
+
   if (service)
     registry.addService<Host>(
         [&](Host& h) { handle = h.consumer<WorkEvent>().onEvent(handler); });
   else
     runner = &registry.addSystem<Runner>(
         [&](Runner& r) { handle = r.consumer<WorkEvent>().onEvent(handler); });
+
   double best = std::numeric_limits<double>::max();
-  for (int round = 0; round < kRounds * 4; ++round)
+
+  for (int round = 0; round < ROUNDS * 4; ++round)
   {
-    for (int i = 0; i < kEvents; ++i)
+    for (int i = 0; i < EVENTS; ++i)
       registry.events().send(WorkEvent{i});
+
     const Clock::time_point start = Clock::now();
+
     if (service)
       registry.runServices();
     else
       registry.updateSystem(*runner, 0.0);
+
     best = std::min(best, nsSince(start));
     registry.events().update();
   }
+
   g_sink = g_sink + sum;
   return best;
 }
 
-// One run swapping TaskA and TaskB on kEvents entities, one per event: in a
+// One run swapping TaskA and TaskB on EVENTS entities, one per event: in a
 // service's handler (service true) or a system's update over the same
 // events; a system follows both lists either way.
 double benchSwap(bool service)
@@ -242,6 +256,7 @@ double benchSwap(bool service)
         r.observe<TaskB>([&](const Entity&) { ++joined; });
       });
   Runner* swapper = nullptr;
+
   if (service)
     registry.addService<Host>(
         [&](Host& h)
@@ -259,27 +274,35 @@ double benchSwap(bool service)
         swap(entity);
     };
   }
+
   std::vector<Entity> entities;
-  entities.reserve(kEvents);
-  for (int i = 0; i < kEvents; ++i)
+  entities.reserve(EVENTS);
+
+  for (int i = 0; i < EVENTS; ++i)
   {
     entities.push_back(registry.createEntity());
     entities.back().addComponent<TaskA>();
   }
+
   registry.flushEntities();
   double best = std::numeric_limits<double>::max();
-  for (int round = 0; round < kRounds * 2; ++round)
+
+  for (int round = 0; round < ROUNDS * 2; ++round)
   {
     for (const Entity& entity : entities)
       registry.events().send(entity, SwapEvent{1});
+
     const Clock::time_point start = Clock::now();
+
     if (service)
       registry.runServices();
     else
       registry.updateSystem(*swapper, 0.0);
+
     best = std::min(best, nsSince(start));
     registry.events().update();
   }
+
   g_sink = g_sink + joined;
   return best;
 }
@@ -290,6 +313,7 @@ bool steadyAllocatesNothing()
 {
   Registry registry;
   std::vector<std::unique_ptr<EventConsumer<WorkEvent>>> handles;
+
   for (int s = 0; s < 4; ++s)
     registry.addService<Host>(
         [&](Host& h)
@@ -298,20 +322,25 @@ bool steadyAllocatesNothing()
               h.consumer<WorkEvent>().onEvent([](const WorkEvent& e)
                                               { g_sink = g_sink + e.value; })));
         });
+
   const auto once = [&]
   {
     for (int i = 0; i < 16; ++i)
       registry.events().send(WorkEvent{i});
+
     registry.flushEntities();
     registry.events().update();
     registry.runServices();
   };
+
   for (int i = 0; i < 8; ++i)
     once();
+
   MemoryMetrics& metrics = getMemoryMetrics();
   const std::size_t before = metrics.allocationCount.load();
   {
     ScopedMemoryTracking track(MemoryTrackingPhase::Update);
+
     for (int i = 0; i < 1000; ++i)
       once();
   }
@@ -341,8 +370,8 @@ int main()
   {
     const double system = benchWoken(false);
     const double service = benchWoken(true);
-    print("woken_system", kEvents, system);
-    print("woken_service", kEvents, service);
+    print("woken_system", EVENTS, system);
+    print("woken_service", EVENTS, service);
     gate("woken service <= system + 5% (or + 50 ns)",
          service,
          std::max(system * 1.05, system + 50.0));
@@ -352,8 +381,8 @@ int main()
   {
     const double system = benchSwap(false);
     const double service = benchSwap(true);
-    print("swap_system", kEvents, system);
-    print("swap_service", kEvents, service);
+    print("swap_system", EVENTS, system);
+    print("swap_service", EVENTS, service);
     gate("task swap in a service <= 1.1 x in a system", service, system * 1.1);
   }
 

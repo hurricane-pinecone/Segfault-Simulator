@@ -1,7 +1,8 @@
 #pragma once
 
 #include "engine/runtime/rendering/uiDraw.h"
-#include "glm/glm/ext/vector_int2.hpp"
+
+#include <glm/glm/ext/vector_int2.hpp>
 
 namespace sfs
 {
@@ -20,11 +21,9 @@ public:
   explicit RenderTexture(glm::ivec2 size);
   RenderTexture(const RenderTexture&) = delete;
   RenderTexture& operator=(const RenderTexture&) = delete;
-
-  glm::ivec2 size() const { return m_texture.size; }
   /** Another size (at least 1 x 1): a new picture, from the next frame. */
   void resize(glm::ivec2 size);
-
+  glm::ivec2 size() const { return m_texture.size; }
   /** What a UI draws from (UiTexture::gpu). */
   const UiTexture& texture() const { return m_texture; }
 

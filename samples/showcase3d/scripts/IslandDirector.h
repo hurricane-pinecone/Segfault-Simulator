@@ -1,12 +1,11 @@
 #pragma once
 #include <sfs/sfs.h>
-
-#include "FollowCamera.h"
 #include "components/Bob.h"
 #include "components/Lantern.h"
 #include "components/Pin.h"
 #include "components/Spark.h"
 #include "components/Station.h"
+#include "FollowCamera.h"
 
 #include <algorithm>
 #include <cmath>
@@ -23,52 +22,28 @@ class IslandHud;
 class IslandDirector : public sfs::GameObject
 {
 public:
-  // A whole day, in seconds (T held: much faster).
-  [[sfs::range(20, 1200)]] float dayLength = 240.0f;
-  // Where the day starts: 0 midnight, 0.25 dawn, 0.5 noon, 0.75 dusk.
-  [[sfs::range(0, 1)]] float startTime = 0.36f;
-  // How many pins must be down for the strike spark.
-  [[sfs::range(1, 6)]] int pinsForStrike = 4;
-
-  int collected() const { return m_collected; }
-  int total() const { return m_total; }
-  bool won() const { return m_total > 0 && m_collected >= m_total; }
-  float clock() const { return m_clock; }
-  /** The time of day, 0 to 1 (0.5 noon). */
-  float timeOfDay() const { return m_time; }
-  /** How dark it is, 0 (day) to 1 (night). */
-  float darkness() const { return m_darkness; }
-  /** A message to show for a moment (empty: none), and how much is left. */
-  const std::string& message() const { return m_message; }
-  float messageLeft() const { return m_messageClock; }
-  /** The station the hero is near; null if none. */
-  const Station* nearStation() const { return m_near; }
-
   /** Fire one of the game's particle effects at a point. */
   void burst(const std::string& effect, const glm::vec3& at)
   {
     if (sfs::ParticleModule* fx = particles())
       fx->spawnBurst(effect, glm::vec2(at), at.z);
   }
-
-  void shake(float amount)
-  {
-    if (m_camera)
-      m_camera->shake(amount);
-  }
-
+  float clock() const { return m_clock; }
   /** The hero touched a spark: take it. */
   void collect(sfs::Entity spark)
   {
     const Spark* found = spark.getComponent<Spark>();
+
     if (!found)
       return;
+
     const glm::vec3 at = sfs::hierarchy::worldPosition(spark);
     m_collected += found->value;
     spark.removeComponent<Spark>(); // once
     scene().destroyBranch(spark);
     burst("sparkle", at);
     shake(0.18f);
+
     if (won())
     {
       say("Every spark found! The island glows.", 8.0f);
@@ -77,6 +52,30 @@ public:
     else
       say(std::to_string(m_total - m_collected) + " to go", 1.6f);
   }
+  int collected() const { return m_collected; }
+  /** How dark it is, 0 (day) to 1 (night). */
+  float darkness() const { return m_darkness; }
+  /** A message to show for a moment (empty: none), and how much is left. */
+  const std::string& message() const { return m_message; }
+  float messageLeft() const { return m_messageClock; }
+  /** The station the hero is near; null if none. */
+  const Station* nearStation() const { return m_near; }
+  void shake(float amount)
+  {
+    if (m_camera)
+      m_camera->shake(amount);
+  }
+  /** The time of day, 0 to 1 (0.5 noon). */
+  float timeOfDay() const { return m_time; }
+  int total() const { return m_total; }
+  bool won() const { return m_total > 0 && m_collected >= m_total; }
+
+  // A whole day, in seconds (T held: much faster).
+  [[sfs::range(20, 1200)]] float dayLength = 240.0f;
+  // Where the day starts: 0 midnight, 0.25 dawn, 0.5 noon, 0.75 dusk.
+  [[sfs::range(0, 1)]] float startTime = 0.36f;
+  // How many pins must be down for the strike spark.
+  [[sfs::range(1, 6)]] int pinsForStrike = 4;
 
 protected:
   void onCreate(sfs::Scene& scene) override;
@@ -102,6 +101,7 @@ protected:
     {
       m_celebrate -= dt;
       m_fireworkClock -= dt;
+
       if (m_fireworkClock <= 0.0f)
       {
         m_fireworkClock = 0.35f;
@@ -115,16 +115,64 @@ protected:
   }
 
 private:
-  sfs::ParticleModule* particles()
+  // Enough pins down: a spark appears where they stood.
+  void checkPins()
   {
-    auto* render = scene().tryGetSystem<sfs::RenderSystem>();
-    return render ? render->module<sfs::ParticleModule>() : nullptr;
+    if (m_strike)
+      return;
+
+    int down = 0;
+    glm::vec3 where(0.0f);
+    int count = 0;
+
+    for (auto [tag, transform] :
+         scene().query<Pin, sfs::TransformComponent>().components())
+    {
+      const glm::vec3 up = transform.rotation * glm::vec3(0.0f, 0.0f, 1.0f);
+      down += up.z < 0.55f ? 1 : 0;
+      where += transform.position;
+      ++count;
+    }
+
+    if (count == 0 || down < std::min(pinsForStrike, count))
+      return;
+
+    m_strike = true;
+    where /= static_cast<float>(count);
+    where.z = 1.2f;
+    spawnSpark(where);
+    burst("firework", where + glm::vec3(0.0f, 0.0f, 1.0f));
+    say("STRIKE! A spark appears.", 2.5f);
+    shake(0.3f);
   }
 
-  void say(std::string text, float seconds)
+  void findNearStation()
   {
-    m_message = std::move(text);
-    m_messageClock = seconds;
+    m_near = nullptr;
+
+    if (!m_hero.isValid())
+      return;
+
+    const auto* heroAt = m_hero.getComponent<sfs::TransformComponent>();
+
+    if (!sfs::expect(heroAt, m_hero))
+      return;
+
+    const glm::vec3 hero = heroAt->position;
+    float best = 1e9f;
+
+    for (auto [station, transform] :
+         scene().query<Station, sfs::TransformComponent>().components())
+    {
+      const float d =
+          glm::length(glm::vec2(transform.position) - glm::vec2(hero));
+
+      if (d < station.radius && d < best)
+      {
+        best = d;
+        m_near = &station;
+      }
+    }
   }
 
   // The sun goes round; the sky, the light and the lamps follow it: a cool
@@ -140,6 +188,7 @@ private:
     m_darkness = 1.0f - day;
     // Low sun: warm; high: white; night: a cool moonlight.
     const float low = 1.0f - glm::smoothstep(0.0f, 0.45f, std::abs(height));
+
     if (auto* light = scene().sceneData<sfs::DirectionalLighting>())
     {
       light->direction =
@@ -150,6 +199,7 @@ private:
                                      : glm::vec3(0.55f, 0.65f, 1.0f);
       light->intensity = height > -0.05f ? 0.85f * day + 0.1f : 0.22f;
     }
+
     if (auto* ambient = scene().sceneData<sfs::AmbientLighting>())
     {
       ambient->intensity = glm::mix(0.16f, 0.45f, day);
@@ -164,36 +214,24 @@ private:
       pointLight.intensity =
           glm::mix(lantern.dayIntensity, lantern.nightIntensity, m_darkness);
     }
+
     if (sfs::ParticleEmitterComponent* particleEmitter =
             m_fireflies.getComponent<sfs::ParticleEmitterComponent>())
       particleEmitter->enabled = m_darkness > 0.45f;
   }
 
-  // Enough pins down: a spark appears where they stood.
-  void checkPins()
+  sfs::ParticleModule* particles()
   {
-    if (m_strike)
-      return;
-    int down = 0;
-    glm::vec3 where(0.0f);
-    int count = 0;
-    for (auto [tag, transform] :
-         scene().query<Pin, sfs::TransformComponent>().components())
-    {
-      const glm::vec3 up = transform.rotation * glm::vec3(0.0f, 0.0f, 1.0f);
-      down += up.z < 0.55f ? 1 : 0;
-      where += transform.position;
-      ++count;
-    }
-    if (count == 0 || down < std::min(pinsForStrike, count))
-      return;
-    m_strike = true;
-    where /= static_cast<float>(count);
-    where.z = 1.2f;
-    spawnSpark(where);
-    burst("firework", where + glm::vec3(0.0f, 0.0f, 1.0f));
-    say("STRIKE! A spark appears.", 2.5f);
-    shake(0.3f);
+    auto* render = scene().tryGetSystem<sfs::RenderSystem>();
+    return render ? render->module<sfs::ParticleModule>() : nullptr;
+  }
+
+  void registerEffects();
+
+  void say(std::string text, float seconds)
+  {
+    m_message = std::move(text);
+    m_messageClock = seconds;
   }
 
   // A spark made in code, as the scene's are: a trigger with a floating glow.
@@ -221,31 +259,6 @@ private:
     sfs::hierarchy::setParent(glow, spark);
     ++m_total;
   }
-
-  void findNearStation()
-  {
-    m_near = nullptr;
-    if (!m_hero.isValid())
-      return;
-    const auto* heroAt = m_hero.getComponent<sfs::TransformComponent>();
-    if (!sfs::expect(heroAt, m_hero))
-      return;
-    const glm::vec3 hero = heroAt->position;
-    float best = 1e9f;
-    for (auto [station, transform] :
-         scene().query<Station, sfs::TransformComponent>().components())
-    {
-      const float d =
-          glm::length(glm::vec2(transform.position) - glm::vec2(hero));
-      if (d < station.radius && d < best)
-      {
-        best = d;
-        m_near = &station;
-      }
-    }
-  }
-
-  void registerEffects();
 
   sfs::Entity m_hero;
   sfs::Entity m_fireflies;
@@ -278,6 +291,7 @@ inline void IslandDirector::onCreate(sfs::Scene& scene)
   // The sparks to find: those in the scene, and the strike spark to come.
   for (Spark& worth : scene.query<Spark>())
     m_total += worth.value;
+
   for (sfs::Entity& glow : scene.findEntities("Spark Glow"))
     if (sfs::MeshRendererComponent* meshRenderer =
             glow.getComponent<sfs::MeshRendererComponent>())
@@ -285,6 +299,7 @@ inline void IslandDirector::onCreate(sfs::Scene& scene)
       m_sparkLook = *meshRenderer;
       break;
     }
+
   if (!scene.query<Pin>().empty())
     ++m_total;
 
@@ -295,8 +310,10 @@ inline void IslandDirector::onCreate(sfs::Scene& scene)
 inline void IslandDirector::registerEffects()
 {
   sfs::ParticleModule* fx = particles();
+
   if (!fx)
     return;
+
   using sfs::Curve;
   using sfs::FloatRange;
   using sfs::Gradient;

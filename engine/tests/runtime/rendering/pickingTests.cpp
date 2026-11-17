@@ -1,17 +1,19 @@
 #include "../../testHarness.h"
+#include "engine/core/components/cursorPickComponent.h"
+#include "engine/core/components/meshRendererComponent.h"
+#include "engine/core/components/pickableComponent.h"
+#include "engine/core/components/transformComponent.h"
+#include "engine/core/ecs/entity.h"
+#include "engine/core/hierarchy/hierarchy.h"
+#include "engine/core/rendering/camera.h"
+#include "engine/core/rendering/mesh.h"
+#include "engine/core/rendering/meshPrimitives.h"
+#include "engine/runtime/assetStore/assetStore.h"
+#include "engine/runtime/input/mouseInput.h"
+#include "engine/runtime/rendering/meshLibrary.h"
+#include "engine/runtime/rendering/picking.h"
+#include "engine/runtime/sceneManager/scene.h"
 #include "mockRenderer.h"
-
-#include <engine/core/components/cursorPickComponent.h>
-#include <engine/core/components/meshRendererComponent.h>
-#include <engine/core/components/pickableComponent.h>
-#include <engine/core/components/transformComponent.h>
-#include <engine/core/hierarchy/hierarchy.h>
-#include <engine/core/rendering/meshPrimitives.h>
-#include <engine/runtime/assetStore/assetStore.h>
-#include <engine/runtime/input/mouseInput.h>
-#include <engine/runtime/rendering/meshLibrary.h>
-#include <engine/runtime/rendering/picking.h>
-#include <engine/runtime/sceneManager/scene.h>
 
 using namespace sfs;
 using sfs::testing3d::MockRenderer;
@@ -31,8 +33,10 @@ struct World
   {
     Entity entity = scene.createEntity();
     entity.addComponent<TransformComponent>(TransformComponent{position});
+
     if (mesh.valid())
       entity.addComponent<MeshRendererComponent>(MeshRendererComponent{mesh});
+
     return entity;
   }
 };
@@ -140,6 +144,7 @@ int main()
 
     const auto top = pickSurface(world.scene, world.meshes, downAt(0.1f, 0.1f));
     CHECK(top.has_value());
+
     if (top)
     {
       CHECK(top->entity == box);
@@ -150,8 +155,10 @@ int main()
     const auto side =
         pickSurface(world.scene, world.meshes, Ray{{10, 0, 0.5f}, {-1, 0, 0}});
     CHECK(side.has_value());
+
     if (side)
       CHECK(side->section == 1u);
+
     CHECK(!pickSurface(world.scene, world.meshes, downAt(3.0f, 3.0f))
                .has_value());
   }

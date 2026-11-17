@@ -1,12 +1,17 @@
 #include "../../testHarness.h"
+#include "engine/core/rendering/aabb.h"
+#include "engine/core/rendering/camera.h"
+#include "engine/core/rendering/frustum.h"
+#include "engine/core/rendering/sunShadow.h"
 
-#include <engine/core/rendering/aabb.h>
-#include <engine/core/rendering/camera.h>
-#include <engine/core/rendering/frustum.h>
-#include <engine/core/rendering/sunShadow.h>
-
+#include <glm/glm/ext/matrix_float4x4.hpp>
 #include <glm/glm/ext/matrix_transform.hpp>
 #include <glm/glm/ext/scalar_constants.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
+#include <glm/glm/ext/vector_float4.hpp>
+
+#include <cmath>
+#include <cstdint>
 
 using namespace sfs;
 

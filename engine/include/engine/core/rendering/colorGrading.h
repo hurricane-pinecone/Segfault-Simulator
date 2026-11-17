@@ -1,8 +1,8 @@
 #pragma once
 
-#include "glm/glm/ext/matrix_float3x3.hpp"
-#include "glm/glm/ext/vector_float3.hpp"
-#include "nlohmann/json.hpp"
+#include <glm/glm/ext/matrix_float3x3.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
+#include <nlohmann/json.hpp>
 
 #include <optional>
 #include <string_view>
@@ -72,6 +72,18 @@ std::optional<ToneMapper> toneMapperFromName(std::string_view name);
  */
 struct ColorGrading
 {
+  /** Missing keys keep `defaults`' values (or the defaults). */
+  static ColorGrading fromJson(const nlohmann::json& json,
+                               const ColorGrading& defaults);
+  static ColorGrading fromJson(const nlohmann::json& json);
+
+  /** Whether it changes nothing: the picture exactly as with no grading. */
+  bool neutral() const;
+
+  bool operator==(const ColorGrading&) const = default;
+
+  nlohmann::json toJson() const;
+
   ToneMapper toneMapper = ToneMapper::None;
   float exposure = 0.0f;
   float temperature = 0.0f;
@@ -88,17 +100,6 @@ struct ColorGrading
   float exposureDarken = 1.5f;
   float exposureBrighten = 0.5f;
   float exposureSpeed = 1.5f;
-
-  /** Whether it changes nothing: the picture exactly as with no grading. */
-  bool neutral() const;
-
-  nlohmann::json toJson() const;
-  /** Missing keys keep `defaults`' values (or the defaults). */
-  static ColorGrading fromJson(const nlohmann::json& json,
-                               const ColorGrading& defaults);
-  static ColorGrading fromJson(const nlohmann::json& json);
-
-  bool operator==(const ColorGrading&) const = default;
 };
 
 /**
@@ -116,11 +117,11 @@ glm::mat3 whiteBalanceMatrix(float temperature, float tint);
  */
 struct LightBalance
 {
-  glm::vec3 sun{1.0f};
-  glm::vec3 ambient{1.0f};
-
   bool neutral() const { return *this == LightBalance{}; }
   bool operator==(const LightBalance&) const = default;
+
+  glm::vec3 sun{1.0f};
+  glm::vec3 ambient{1.0f};
 };
 
 } // namespace sfs

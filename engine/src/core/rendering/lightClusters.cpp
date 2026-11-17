@@ -1,17 +1,27 @@
 #include "engine/core/rendering/lightClusters.h"
 
-#include "glm/glm/common.hpp"
-#include "glm/glm/geometric.hpp"
+#include "engine/core/rendering/lighting.h"
+
+#include <glm/glm/common.hpp>
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
+#include <glm/glm/ext/vector_float4.hpp>
+#include <glm/glm/ext/vector_uint2.hpp>
+#include <glm/glm/geometric.hpp>
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <span>
+#include <vector>
 
 namespace sfs
 {
 
 namespace
 {
-constexpr uint32_t kSlices = 24;
+constexpr uint32_t SLICES = 24;
 }
 
 ClusterGrid
@@ -26,7 +36,7 @@ ClusterGrid::forViewport(glm::vec2 viewport, float nearPlane, float farPlane)
       1u, static_cast<uint32_t>(std::ceil(viewport.x / grid.tilePixels)));
   grid.size.y = std::max(
       1u, static_cast<uint32_t>(std::ceil(viewport.y / grid.tilePixels)));
-  grid.size.z = kSlices;
+  grid.size.z = SLICES;
   grid.nearPlane = std::max(nearPlane, 1e-3f);
   grid.farPlane = std::max(farPlane, grid.nearPlane * 1.01f);
   return grid;
@@ -66,6 +76,7 @@ void assignLights(const ClusterGrid& grid,
   };
   std::vector<Box> boxes(lights.size());
   std::vector<bool> placed(lights.size(), false);
+
   for (std::size_t i = 0; i < lights.size(); ++i)
   {
     // Its bounding sphere (a spot's, round its cone).
@@ -73,6 +84,7 @@ void assignLights(const ClusterGrid& grid,
     const glm::vec3 position(bounds);
     const float radius = bounds.w;
     const float depth = glm::dot(position - view.cameraPosition, view.forward);
+
     if (depth + radius < grid.nearPlane || depth - radius > grid.farPlane)
       continue;
 
@@ -81,6 +93,7 @@ void assignLights(const ClusterGrid& grid,
     glm::vec2 low(0.0f), high(view.viewport);
     bool behind = false;
     glm::vec2 cornerLow(1e30f), cornerHigh(-1e30f);
+
     for (int corner = 0; corner < 8 && !behind; ++corner)
     {
       const glm::vec3 offset((corner & 1) ? radius : -radius,
@@ -88,25 +101,30 @@ void assignLights(const ClusterGrid& grid,
                              (corner & 4) ? radius : -radius);
       const glm::vec4 clip =
           view.viewProjection * glm::vec4(position + offset, 1.0f);
+
       if (clip.w <= 1e-4f)
       {
         behind = true;
         break;
       }
+
       const glm::vec2 ndc = glm::vec2(clip) / clip.w;
       const glm::vec2 pixel((ndc.x * 0.5f + 0.5f) * view.viewport.x,
                             (0.5f - ndc.y * 0.5f) * view.viewport.y);
       cornerLow = glm::min(cornerLow, pixel);
       cornerHigh = glm::max(cornerHigh, pixel);
     }
+
     if (!behind)
     {
       if (cornerHigh.x < 0.0f || cornerHigh.y < 0.0f ||
           cornerLow.x > view.viewport.x || cornerLow.y > view.viewport.y)
         continue; // off screen
+
       low = cornerLow;
       high = cornerHigh;
     }
+
     boxes[i] = {grid.tileOf(low),
                 grid.tileOf(high),
                 grid.sliceOf(depth - radius),
@@ -124,11 +142,14 @@ void assignLights(const ClusterGrid& grid,
         for (uint32_t x = box.tileMin.x; x <= box.tileMax.x; ++x)
           visit(grid.index({x, y}, slice));
   };
+
   for (std::size_t i = 0; i < lights.size(); ++i)
     if (placed[i])
       forEachCluster(
           boxes[i], [&](uint32_t cluster) { ++out.ranges[cluster].y; });
+
   uint32_t offset = 0;
+
   for (glm::uvec2& range : out.ranges)
   {
     if (range.y > maxPerCluster)
@@ -136,22 +157,28 @@ void assignLights(const ClusterGrid& grid,
       range.y = maxPerCluster;
       ++out.overfull;
     }
+
     range.x = offset;
     offset += range.y;
     range.y = 0; // refilled below
   }
+
   out.indices.assign(offset, 0);
   std::vector<uint32_t> room(grid.count());
+
   for (std::size_t c = 0; c + 1 < out.ranges.size(); ++c)
     room[c] = out.ranges[c + 1].x - out.ranges[c].x;
+
   if (!out.ranges.empty())
     room.back() = offset - out.ranges.back().x;
+
   for (std::size_t i = 0; i < lights.size(); ++i)
     if (placed[i])
       forEachCluster(boxes[i],
                      [&](uint32_t cluster)
                      {
                        glm::uvec2& range = out.ranges[cluster];
+
                        if (range.y < room[cluster])
                          out.indices[range.x + range.y++] =
                              static_cast<uint32_t>(i);

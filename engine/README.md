@@ -344,19 +344,19 @@ python3 -m venv ~/.local/share/sfs-clang-format
 ln -sf ~/.local/share/sfs-clang-format/bin/clang-format ~/.local/bin/clang-format
 ```
 
-A pre-commit hook formats staged sources for you. Enable it once per clone:
+A pre-commit hook fixes and formats staged sources for you with sfs-lsp
+(clang-format, the house passes and the house lints' fixes). Enable it once per
+clone:
 
 ```bash
 git config core.hooksPath .githooks
 ```
 
-`git commit` then reformats the staged C and C++ files and restages them, so
-nothing unformatted reaches a commit. To format the whole tree by hand:
+`git commit` then fixes and formats the staged C and C++ files and restages
+them, so nothing unformatted reaches a commit. To format the whole tree by hand:
 
 ```bash
-find engine/src engine/include engine/tests \
-  \( -name '*.cpp' -o -name '*.h' -o -name '*.hpp' -o -name '*.inl' \) \
-  ! -path '*/engine/lib/*' -print0 | xargs -0 clang-format -i
+sfs-lsp --format .
 ```
 
 ### Cross-Compiler Lint (GCC)

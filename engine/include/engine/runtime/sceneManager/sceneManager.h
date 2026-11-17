@@ -1,10 +1,10 @@
 #pragma once
 
 #include "engine/core/logger/logger.h"
-#include "engine/runtime/assetStore/assetStore.h"
 #include "engine/runtime/sceneManager/scene.h"
-#include <SDL_render.h>
+
 #include <memory>
+#include <string>
 #include <unordered_map>
 
 namespace sfs
@@ -21,27 +21,28 @@ public:
   template <typename TScene = Scene, typename... TArgs>
   TScene* createScene(TArgs&&... args);
 
-  void destroyScene(SceneId id);
-  void destroyScene(const std::string& name);
+  Scene* current();
 
   // Destroy every scene, the current one included. Game calls this before the
   // render backend shuts down, so scene-owned GPU resources are released while
   // their device still exists.
   void destroyAll();
+
+  void destroyScene(SceneId id);
+  void destroyScene(const std::string& name);
+
   void load(SceneId id);
   void load(const std::string& name);
 
-  Scene* current();
+  operator bool() { return m_currentScene != nullptr; }
+
+  // The game the scenes run in, handed to each scene (Scene::game()).
+  void setGame(Game* game) { m_game = game; }
 
   // The renderer and asset store scenes are constructed against, supplied by
   // the active render backend. Must be set (Game::setup does this) before any
   // scene is created.
   void setSceneBackends(SceneBackends* backends);
-
-  // The game the scenes run in, handed to each scene (Scene::game()).
-  void setGame(Game* game) { m_game = game; }
-
-  operator bool() { return m_currentScene != nullptr; }
 
 private:
   Scene* m_currentScene = nullptr;

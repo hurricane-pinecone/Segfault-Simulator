@@ -1,24 +1,63 @@
 #include "../testHarness.h"
-
-#include <sfs/codegen/attributes.h>
-#include <sfs/codegen/generator.h>
-#include <sfs/codegen/parser.h>
-#include <sfs/codegen/rules.h>
-#include <sfs/codegen/suppressions.h>
+#include "sfs/codegen/attributes.h"
+#include "sfs/codegen/generator.h"
+#include "sfs/codegen/model.h"
+#include "sfs/codegen/parser.h"
+#include "sfs/codegen/rules.h"
 
 #include <algorithm>
 #include <array>
+#include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <initializer_list>
+#include <ios>
 #include <set>
 #include <sstream>
 #include <string>
+#include <string_view>
+#include <tuple>
+#include <vector>
 
 using namespace sfs::codegen;
 
 namespace
 {
+constexpr std::string_view SHIELD = R"(
+#pragma once
+namespace game {
+struct Helper { float notMe = 0.0f; };
+struct Shield
+{
+  [[sfs::range(0, 1)]] float strength = 0.5f;
+  [[sfs::color]] glm::vec3 tint{1.0f};
+  std::string kind = "steel";
+  float a, b;
+  [[sfs::hide]] int debug = 0;
+  static constexpr int kMax = 4;
+  const int fixed = 1;
+  void charge(float dt) { strength += dt; }
+  void declaredOnly();
+private:
+  [[sfs::show]] int secret = 3;
+  float hidden;
+};
+}
+)";
+
+constexpr std::string_view PLAYER = R"(
+class Player : public sfs::GameObject
+{
+public:
+  float speed = 5.0f;
+  Thing* target = nullptr;
+  std::vector<int> items;
+protected:
+  void onUpdate(double dt) override {}
+};
+)";
+
 const FieldModel* findField(const TypeModel& type, std::string_view name)
 {
   const auto it =
@@ -45,9 +84,11 @@ bool hasDiagnostic(const ParseResult& result,
 std::vector<const Diagnostic*> ofRule(const ParseResult& result, RuleId rule)
 {
   std::vector<const Diagnostic*> found;
+
   for (const Diagnostic& d : result.diagnostics)
     if (d.rule == rule)
       found.push_back(&d);
+
   return found;
 }
 
@@ -56,6 +97,7 @@ bool hasRule(const ParseResult& result, RuleId rule, std::string_view text)
   for (const Diagnostic* d : ofRule(result, rule))
     if (d->message.find(text) != std::string::npos)
       return true;
+
   return false;
 }
 
@@ -70,15 +112,19 @@ std::string applyFix(std::string source, const Diagnostic& diagnostic)
               return std::tie(a.range.startRow, a.range.startColumn) >
                      std::tie(b.range.startRow, b.range.startColumn);
             });
+
   for (const TextEdit& edit : edits)
   {
     std::size_t lineStart = 0;
+
     for (unsigned row = 0; row < edit.range.startRow; ++row)
       lineStart = source.find('\n', lineStart) + 1;
+
     const std::size_t from = lineStart + edit.range.startColumn;
     const std::size_t to = lineStart + edit.range.endColumn;
     source.replace(from, to - from, edit.text);
   }
+
   return source;
 }
 
@@ -98,51 +144,19 @@ std::string docsBlock(const std::filesystem::path& page, std::string_view name)
   const std::string end = "<!-- " + std::string(name) + ":end -->";
   const std::size_t from = text.find(begin);
   const std::size_t to = text.find(end);
+
   if (from == std::string::npos || to == std::string::npos || to < from)
     return {};
+
   return text.substr(from + begin.size(), to - from - begin.size());
 }
-
-constexpr std::string_view kShield = R"(
-#pragma once
-namespace game {
-struct Helper { float notMe = 0.0f; };
-struct Shield
-{
-  [[sfs::range(0, 1)]] float strength = 0.5f;
-  [[sfs::color]] glm::vec3 tint{1.0f};
-  std::string kind = "steel";
-  float a, b;
-  [[sfs::hide]] int debug = 0;
-  static constexpr int kMax = 4;
-  const int fixed = 1;
-  void charge(float dt) { strength += dt; }
-  void declaredOnly();
-private:
-  [[sfs::show]] int secret = 3;
-  float hidden;
-};
-}
-)";
-
-constexpr std::string_view kPlayer = R"(
-class Player : public sfs::GameObject
-{
-public:
-  float speed = 5.0f;
-  Thing* target = nullptr;
-  std::vector<int> items;
-protected:
-  void onUpdate(double dt) override {}
-};
-)";
 } // namespace
 
 int main()
 {
   TEST("the type named after the file should be the script type")
   {
-    const ParseResult result = parseHeader(kShield, "scripts/shield.h");
+    const ParseResult result = parseHeader(SHIELD, "scripts/shield.h");
     CHECK(result.type.has_value());
     CHECK(result.type->name == std::string("Shield"));
     CHECK(result.type->qualifiedName == std::string("game::Shield"));
@@ -151,7 +165,7 @@ int main()
 
   TEST("public fields, attributes and [[sfs::show]] should be collected")
   {
-    const TypeModel type = *parseHeader(kShield, "shield.h").type;
+    const TypeModel type = *parseHeader(SHIELD, "shield.h").type;
 
     const FieldModel* strength = findField(type, "strength");
     CHECK(strength != nullptr);
@@ -176,7 +190,7 @@ int main()
 
   TEST("hidden, private, static, const fields and methods should be skipped")
   {
-    const TypeModel type = *parseHeader(kShield, "shield.h").type;
+    const TypeModel type = *parseHeader(SHIELD, "shield.h").type;
     CHECK(findField(type, "debug") == nullptr);
     CHECK(findField(type, "hidden") == nullptr);
     CHECK(findField(type, "kMax") == nullptr);
@@ -189,7 +203,7 @@ int main()
 
   TEST("class members should default to private and bases set the kind")
   {
-    const ParseResult result = parseHeader(kPlayer, "Player.h");
+    const ParseResult result = parseHeader(PLAYER, "Player.h");
     CHECK(result.type->kind == TypeKind::GameObject);
     CHECK(findField(*result.type, "speed") != nullptr);
   }
@@ -237,7 +251,7 @@ int main()
 
   TEST("unsupported field types should warn and be skipped")
   {
-    const ParseResult result = parseHeader(kPlayer, "Player.h");
+    const ParseResult result = parseHeader(PLAYER, "Player.h");
     CHECK(findField(*result.type, "target") == nullptr);
     CHECK(findField(*result.type, "items") == nullptr);
     CHECK(hasDiagnostic(result, Severity::Warning, "pointer"));
@@ -246,13 +260,13 @@ int main()
 
   TEST("file names should match case-insensitively")
   {
-    const ParseResult result = parseHeader(kPlayer, "player.h");
+    const ParseResult result = parseHeader(PLAYER, "player.h");
     CHECK(result.type.has_value());
   }
 
   TEST("a header without its named type should warn")
   {
-    const ParseResult result = parseHeader(kPlayer, "Enemy.h");
+    const ParseResult result = parseHeader(PLAYER, "Enemy.h");
     CHECK(!result.type.has_value());
     CHECK(hasDiagnostic(result, Severity::Warning, "Enemy"));
   }
@@ -303,7 +317,7 @@ int main()
   TEST("generated code should register fields and use access tags for private "
        "ones")
   {
-    TypeModel type = *parseHeader(kShield, "/project/scripts/shield.h").type;
+    TypeModel type = *parseHeader(SHIELD, "/project/scripts/shield.h").type;
     GeneratorOptions options;
     options.module = "game";
     options.function = "game::registerTypes";
@@ -322,7 +336,7 @@ int main()
 
   TEST("systems and game objects should register how to instantiate them")
   {
-    TypeModel player = *parseHeader(kPlayer, "/project/scripts/Player.h").type;
+    TypeModel player = *parseHeader(PLAYER, "/project/scripts/Player.h").type;
     TypeModel regen = *parseHeader("class Regen : public sfs::System {};",
                                    "/project/scripts/Regen.h")
                            .type;
@@ -440,7 +454,7 @@ int main()
 
   TEST("a components-only module should not depend on the runtime")
   {
-    TypeModel shield = *parseHeader(kShield, "/project/scripts/shield.h").type;
+    TypeModel shield = *parseHeader(SHIELD, "/project/scripts/shield.h").type;
     GeneratorOptions options;
     options.module = "game";
     options.function = "registerTypes";
@@ -556,6 +570,7 @@ sfs::ui::View look(sfs::ui::View view);
                                                "ui/Town.ui.h");
     CHECK(result.diagnostics.empty());
     CHECK(result.types.size() == 3u);
+
     if (result.types.size() == 3u)
     {
       const UiTypeModel& row = result.types[0];
@@ -776,12 +791,16 @@ sfs::ui::View look(sfs::ui::View view);
     const auto has = [&](std::string_view text)
     {
       const bool found = traits.find(text) != std::string::npos;
+
       if (!found)
         std::fprintf(
             stderr, "the traits lack:\n%s\n", std::string(text).c_str());
+
       return found;
     };
-    CHECK(has("#pragma once\n\n#include <engine/core/events/eventTraits.h>\n"));
+    CHECK(has("#pragma once\n// IWYU pragma: private, include "
+              "\"engine/core/events/eventTraits.h\"\n\n"
+              "#include <engine/core/events/eventTraits.h>\n"));
     CHECK(has("namespace game { struct HitEvent; }\n"));
     CHECK(has("namespace game { class PathFoundResponse; }\n"));
     CHECK(has("namespace game { namespace nav { struct PathFailedResponse; } "
@@ -819,7 +838,9 @@ sfs::ui::View look(sfs::ui::View view);
           "// Generated by sfs-codegen from the event attributes: what the "
           "compiler\n// checks each event type against "
           "(engine/core/events/eventTraits.h).\n// Every file of the target "
-          "includes it first.\n#pragma once\n\n"
+          "includes it first: never include it by hand.\n#pragma once\n"
+          "// IWYU pragma: private, include "
+          "\"engine/core/events/eventTraits.h\"\n\n"
           "#include <engine/core/events/eventTraits.h>\n");
     CHECK(none.empty());
   }
@@ -966,11 +987,13 @@ sfs::ui::View look(sfs::ui::View view);
       std::vector<Diagnostic> found = parsed.diagnostics;
       generateEventTraits(parsed.events, parsed.plainTypes, found);
       std::string messages;
+
       for (const Diagnostic& d : found)
       {
         CHECK(d.rule == RuleId::EventDeclaration);
         messages += d.message + "\n";
       }
+
       return messages;
     };
     const std::string form = " Write [[sfs::event_request(Success, progress "
@@ -1005,12 +1028,14 @@ sfs::ui::View look(sfs::ui::View view);
           "A request has no role fail; its roles are progress and failure. "
           "Use failure if that's what you meant." +
               form);
+
     for (const std::string_view broken :
          {"(Found, failure = )", "(Found, failure: Failed)", "(Found,)"})
       CHECK(problem(broken) ==
             "A request's arguments are its success response type, then roles "
             "written role = Type, but " +
                 std::string(broken) + " isn't that." + form);
+
     CHECK(problem("(Found, failure = Found)") ==
           "Ask names Found as its success and its failure response, but a "
           "type plays one role in a request. Give each role a type of its "
@@ -1071,8 +1096,10 @@ struct [[sfs::event_request(sfs::EngineResponse)]] AskEngine { int g = 0; };
     const std::string traits =
         generateEventTraits(parsed.events, parsed.plainTypes, problems);
     CHECK(problems.empty());
+
     for (const Diagnostic& d : problems)
       std::fprintf(stderr, "%s\n", d.message.c_str());
+
     const auto successOf = [&](std::string_view request)
     {
       const std::size_t at =
@@ -1115,8 +1142,10 @@ struct [[sfs::event_request(sfs::EngineResponse)]] AskEngine { int g = 0; };
         "\" 2> \"" + (dir / "errors.txt").string() + "\"";
     const int status = std::system(command.c_str());
     CHECK(status == 0);
+
     if (status != 0)
       std::fprintf(stderr, "%s\n", readText(dir / "errors.txt").c_str());
+
     std::filesystem::remove_all(dir);
   }
 
@@ -1176,10 +1205,12 @@ struct [[sfs::event_request(sfs::EngineResponse)]] AskEngine { int g = 0; };
     CHECK(traits.find("using Ancestors = TypeList<::game::PingEvent>;") !=
           std::string::npos);
     std::size_t pings = 0;
+
     for (std::size_t at = traits.find("EventTraits<::game::PingEvent>");
          at != std::string::npos;
          at = traits.find("EventTraits<::game::PingEvent>", at + 1))
       ++pings;
+
     CHECK(pings == 1u);
   }
 
@@ -1193,6 +1224,7 @@ struct [[sfs::event_request(sfs::EngineResponse)]] AskEngine { int g = 0; };
       std::vector<std::string> plainTypes;
       std::vector<Diagnostic> found;
       int n = 0;
+
       for (const std::string_view source : sources)
       {
         ParseResult result =
@@ -1204,14 +1236,17 @@ struct [[sfs::event_request(sfs::EngineResponse)]] AskEngine { int g = 0; };
         found.insert(
             found.end(), result.diagnostics.begin(), result.diagnostics.end());
       }
+
       generateEventTraits(events, plainTypes, found);
       std::vector<std::string> messages;
+
       for (const Diagnostic& d : found)
         if (d.rule == RuleId::EventDeclaration)
         {
           CHECK(severityOf(d) == Severity::Error);
           messages.push_back(d.message);
         }
+
       return messages;
     };
     const auto says =
@@ -1219,10 +1254,12 @@ struct [[sfs::event_request(sfs::EngineResponse)]] AskEngine { int g = 0; };
     {
       const bool found =
           messages.size() == 1u && messages[0].find(text) != std::string::npos;
+
       if (!found)
         std::fprintf(stderr,
                      "expected one message with: %s\n",
                      std::string(text).c_str());
+
       return found;
     };
     CHECK(says(errors({"struct [[sfs::event_news, sfs::event_response]] Twice "
@@ -1480,9 +1517,11 @@ struct [[sfs::event_request(sfs::EngineResponse)]] AskEngine { int g = 0; };
     const auto has = [&](std::string_view text)
     {
       const bool found = traits.find(text) != std::string::npos;
+
       if (!found)
         std::fprintf(
             stderr, "the traits lack:\n%s\n", std::string(text).c_str());
+
       return found;
     };
     CHECK(has("#include <engine/core/ecs/sceneData.h>\n"));
@@ -1706,21 +1745,27 @@ struct [[sfs::event_request(sfs::EngineResponse)]] AskEngine { int g = 0; };
   TEST("the attribute table should be complete and consistent")
   {
     std::set<std::string_view> names;
+
     for (const AttributeInfo& info : attributes())
     {
       CHECK(names.insert(info.name).second);
       CHECK(!info.summary.empty());
       CHECK(findAttribute(info.name) == &info);
+
       for (const std::string_view kind : info.kinds)
         CHECK(kind.empty() || !cppTypeOfKind(kind).empty());
+
       // Snippet placeholders are numbered from 1, in order.
       int next = 1;
+
       for (std::size_t at = info.snippet.find("${"); at != std::string::npos;
            at = info.snippet.find("${", at + 2))
         CHECK(info.snippet.substr(at + 2, 1) == std::to_string(next++));
+
       CHECK((info.args == AttributeArgs::None) == info.arguments.empty());
       CHECK(info.snippet.empty() == info.arguments.empty());
     }
+
     CHECK(names.size() == attributes().size());
     CHECK(findAttribute("nope") == nullptr);
     CHECK(attributeFieldTypes(*findAttribute("color")) ==
@@ -1742,11 +1787,13 @@ struct [[sfs::event_request(sfs::EngineResponse)]] AskEngine { int g = 0; };
                : "struct Example\n{\n" + std::string(info.example) + "\n};\n";
       const ParseResult result = parseHeader(source, "Example.h");
       CHECK(result.diagnostics.empty());
+
       if (!result.diagnostics.empty())
         std::fprintf(stderr,
                      "%s: %s\n",
                      std::string(info.name).c_str(),
                      result.diagnostics[0].message.c_str());
+
       // An event registers nothing; the other type attributes a component.
       if (info.id == AttributeId::EventNews ||
           info.id == AttributeId::EventEntityNews ||
@@ -1800,6 +1847,7 @@ struct [[sfs::event_request(sfs::EngineResponse)]] AskEngine { int g = 0; };
   {
     std::set<std::string_view> names;
     std::size_t index = 0;
+
     for (const RuleInfo& rule : rules())
     {
       CHECK(static_cast<std::size_t>(rule.id) == index++);
@@ -1812,6 +1860,7 @@ struct [[sfs::event_request(sfs::EngineResponse)]] AskEngine { int g = 0; };
       CHECK(&ruleInfo(rule.id) == &rule);
       CHECK(findRule(rule.name) == (rule.reserved ? nullptr : &rule));
     }
+
     CHECK(index == static_cast<std::size_t>(RuleId::Count));
     CHECK(!canIgnore(RuleId::DuplicateType));
     CHECK(!canIgnore(RuleId::BadIgnore));
@@ -1845,6 +1894,7 @@ struct [[sfs::event_request(sfs::EngineResponse)]] AskEngine { int g = 0; };
         "service-update-method",
         "engine-internal"};
     std::size_t at = static_cast<std::size_t>(RuleId::StaleSavedName);
+
     for (const std::string_view name : names)
     {
       const RuleInfo& rule = rules()[++at];
@@ -1856,6 +1906,7 @@ struct [[sfs::event_request(sfs::EngineResponse)]] AskEngine { int g = 0; };
       CHECK(ruleDocsTable().find("`" + std::string(name) + "`") !=
             std::string::npos);
     }
+
     CHECK(rules()[at + 1].id == RuleId::BadIgnore);
     CHECK(ruleInfo(RuleId::HasThenGet).unnecessary);
     CHECK(ruleInfo(RuleId::RowLookup).unnecessary);
@@ -1913,6 +1964,7 @@ struct [[sfs::event_request(sfs::EngineResponse)]] AskEngine { int g = 0; };
          RuleId::EventDeclaration},
         {"// sfs-ignore-file(nope)\nstruct S {};", "S.h", RuleId::BadIgnore},
     };
+
     for (const Case& c : cases)
     {
       const ParseResult result = parseHeader(c.source, c.file);
@@ -2153,6 +2205,7 @@ struct [[sfs::event_request(sfs::EngineResponse)]] AskEngine { int g = 0; };
     const ParseResult result = parseHeader(source, "S.h");
     const auto bad = ofRule(result, RuleId::BadIgnore);
     CHECK(bad.size() == 6u);
+
     if (bad.size() == 6u)
     {
       CHECK(bad[0]->message ==
@@ -2181,6 +2234,7 @@ struct [[sfs::event_request(sfs::EngineResponse)]] AskEngine { int g = 0; };
             "The rule bad-ignore can't be ignored. Fix the sfs-ignore comment "
             "instead.");
     }
+
     // A misspelt directive name hides nothing, and gets a did-you-mean.
     const std::string misspelt =
         "struct S {};\n// sfs-ignore-nextline(field-type)\n"
@@ -2188,6 +2242,7 @@ struct [[sfs::event_request(sfs::EngineResponse)]] AskEngine { int g = 0; };
     const ParseResult names = parseHeader(misspelt, "S.h");
     const auto namesBad = ofRule(names, RuleId::BadIgnore);
     CHECK(namesBad.size() == 2u);
+
     if (namesBad.size() == 2u)
     {
       CHECK(namesBad[0]->message ==
@@ -2199,6 +2254,7 @@ struct [[sfs::event_request(sfs::EngineResponse)]] AskEngine { int g = 0; };
       CHECK(namesBad[1]->message.starts_with(
           "There is no directive sfs-ignore-all."));
     }
+
     CHECK(names.suppressions.lines.empty());
 
     // bad-ignore can't hide itself.
@@ -2246,6 +2302,7 @@ struct [[sfs::event_request(sfs::EngineResponse)]] AskEngine { int g = 0; };
         std::filesystem::path(SFS_DOCS_DIR) / "core/reflection/index.md",
         "sfs-attributes");
     CHECK(block == attributeDocsTable());
+
     if (block != attributeDocsTable())
       std::fprintf(stderr,
                    "docs/core/reflection/index.md should hold:\n%s",
@@ -2258,6 +2315,7 @@ struct [[sfs::event_request(sfs::EngineResponse)]] AskEngine { int g = 0; };
         std::filesystem::path(SFS_DOCS_DIR) / "editor/sfs-lsp/index.md",
         "sfs-rules");
     CHECK(block == ruleDocsTable());
+
     if (block != ruleDocsTable())
       std::fprintf(stderr,
                    "docs/editor/sfs-lsp/index.md should hold:\n%s",

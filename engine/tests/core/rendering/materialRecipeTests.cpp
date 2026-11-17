@@ -1,12 +1,15 @@
 #include "../../testHarness.h"
+#include "engine/core/rendering/materialGraph.h"
+#include "engine/core/rendering/materialGraphCompiler.h"
+#include "engine/core/rendering/materialNodes.h"
 
-#include <engine/core/rendering/materialGraph.h>
-#include <engine/core/rendering/materialGraphCompiler.h>
+#include <nlohmann/json.hpp>
 
+#include <cstdio>
 #include <fstream>
+#include <optional>
 #include <sstream>
 #include <string>
-#include <unordered_set>
 #include <vector>
 
 using namespace sfs::materialGraph;
@@ -30,6 +33,7 @@ std::vector<Recipe> recipes(const std::string& page)
   std::istringstream lines(page);
   std::string line, heading, block;
   bool inBlock = false;
+
   while (std::getline(lines, line))
   {
     if (!inBlock && line.rfind("## ", 0) == 0)
@@ -47,6 +51,7 @@ std::vector<Recipe> recipes(const std::string& page)
     else if (inBlock)
       block += line + "\n";
   }
+
   return found;
 }
 
@@ -74,6 +79,7 @@ int main()
           nlohmann::json::parse(recipe.json, nullptr, false);
       const bool wrapped =
           json.is_object() && json.contains("sfsMaterialNodes");
+
       if (!wrapped)
       {
         std::fprintf(
@@ -81,9 +87,11 @@ int main()
         CHECK(false);
         continue;
       }
+
       const nlohmann::json& saved = json["sfsMaterialNodes"];
       const std::optional<Graph> graph = Graph::fromJson(saved);
       CHECK(graph.has_value());
+
       if (!graph)
         continue;
 
@@ -91,13 +99,17 @@ int main()
       // pins exist.
       bool whole = graph->nodes.size() == saved["nodes"].size() &&
                    graph->links.size() == saved["links"].size();
+
       for (const Node& node : graph->nodes)
         whole = whole && findNodeType(node.type);
+
       const CompiledGraph compiled = compile(*graph);
       bool used = true;
+
       for (const Node& node : graph->nodes)
         used = used && (node.id == graph->output() ||
                         graph->feeds(node.id, graph->output()));
+
       if (!whole || !compiled.errors.empty() || !used)
       {
         std::fprintf(stderr,

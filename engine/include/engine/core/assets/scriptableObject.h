@@ -35,10 +35,10 @@ struct ScriptableObject
  */
 struct AssetRefBase
 {
-  std::string asset;
-
   bool empty() const { return asset.empty(); }
   bool operator==(const AssetRefBase&) const = default;
+
+  std::string asset;
 };
 
 /**
@@ -74,8 +74,8 @@ struct AssetRef : AssetRefBase
     return asset.empty() ? nullptr
                          : dynamic_cast<const T*>(findScriptableObject(asset));
   }
-  const T* operator->() const { return get(); }
   explicit operator bool() const { return get() != nullptr; }
+  const T* operator->() const { return get(); }
 };
 
 /**
@@ -84,11 +84,11 @@ struct AssetRef : AssetRefBase
  */
 struct AssetRefListBase
 {
-  std::vector<std::string> assets;
-
-  std::size_t size() const { return assets.size(); }
   bool empty() const { return assets.empty(); }
   bool operator==(const AssetRefListBase&) const = default;
+  std::size_t size() const { return assets.size(); }
+
+  std::vector<std::string> assets;
 };
 
 /**
@@ -107,6 +107,18 @@ struct AssetRefListBase
 template <typename T>
 struct AssetRefList : AssetRefListBase
 {
+  /** Every asset in the list that's there and is a T, in its order (unset,
+   * missing and other ones left out). */
+  std::vector<const T*> all() const
+  {
+    std::vector<const T*> found;
+
+    for (std::size_t i = 0; i < assets.size(); ++i)
+      if (const T* asset = get(i))
+        found.push_back(asset);
+
+    return found;
+  }
   /** The i'th asset; null if i is past the end, or it's unset, missing or
    * not a T. */
   const T* get(std::size_t i) const
@@ -114,16 +126,6 @@ struct AssetRefList : AssetRefListBase
     return i < assets.size() && !assets[i].empty()
                ? dynamic_cast<const T*>(findScriptableObject(assets[i]))
                : nullptr;
-  }
-  /** Every asset in the list that's there and is a T, in its order (unset,
-   * missing and other ones left out). */
-  std::vector<const T*> all() const
-  {
-    std::vector<const T*> found;
-    for (std::size_t i = 0; i < assets.size(); ++i)
-      if (const T* asset = get(i))
-        found.push_back(asset);
-    return found;
   }
 };
 

@@ -2,7 +2,6 @@
 
 #include "engine/core/ecs/system.h"
 #include "engine/runtime/systems/collision2D.h"
-#include "glm/glm/ext/vector_float2.hpp"
 
 #include <cstdint>
 #include <unordered_map>

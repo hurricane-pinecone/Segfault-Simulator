@@ -1,12 +1,23 @@
 #include "engine/runtime/rendering/modules/decalModule.h"
 
+#include "engine/core/particles/decal.h"
+#include "engine/core/rendering/mesh.h"
 #include "engine/runtime/assetStore/assetStore.h"
+#include "engine/runtime/rendering/commands.h"
+#include "engine/runtime/rendering/frame.h"
 #include "engine/runtime/rendering/meshLibrary.h"
 #include "engine/runtime/rendering/modules/imageQuads.h"
-#include "glm/glm/common.hpp"
+#include "engine/runtime/rendering/renderContext.h"
+#include "engine/runtime/rendering/space2D.h"
+
+#include <glm/glm/common.hpp>
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <unordered_map>
+#include <utility>
 
 namespace sfs
 {
@@ -14,31 +25,39 @@ namespace sfs
 namespace
 {
 // The images marks use unless their spawn names one.
-constexpr const char* kSoftImage = "white_dot";
-constexpr const char* kCrispImage = "white_pixel";
+constexpr const char* SOFT_IMAGE = "white_dot";
+constexpr const char* CRISP_IMAGE = "white_pixel";
 // In 3D, how far above its surface a mark lies (so it doesn't flicker with it).
-constexpr float kLift = 0.01f;
+constexpr float LIFT = 0.01f;
 } // namespace
 
 DecalModule::DecalModule(AssetStore& assets) : m_assets(assets)
 {
-  if (!m_assets.getSurface(kSoftImage))
-    m_assets.addRadialTexture(kSoftImage, 32);
-  if (!m_assets.getSurface(kCrispImage))
-    m_assets.addWhitePixelTexture(kCrispImage);
+  if (!m_assets.getSurface(SOFT_IMAGE))
+    m_assets.addRadialTexture(SOFT_IMAGE, 32);
+
+  if (!m_assets.getSurface(CRISP_IMAGE))
+    m_assets.addWhitePixelTexture(CRISP_IMAGE);
 }
 
-void DecalModule::setCoverage(float cellSize, int perCell)
+void DecalModule::update(double deltaTime)
 {
-  m_cellSize = cellSize;
-  m_perCell = perCell;
-}
+  const auto dt = static_cast<float>(deltaTime);
 
-long long DecalModule::cellOf(glm::vec2 position) const
-{
-  const auto x = static_cast<long long>(std::floor(position.x / m_cellSize));
-  const auto y = static_cast<long long>(std::floor(position.y / m_cellSize));
-  return x * 73856093LL ^ y * 19349663LL;
+  for (Decal& decal : m_decals)
+  {
+    decal.age += dt;
+
+    for (int axis = 0; axis < 2; ++axis)
+      if (decal.growTo[axis] > 0.0f && decal.size[axis] < decal.growTo[axis])
+        decal.size[axis] = std::min(
+            decal.growTo[axis], decal.size[axis] + decal.growRate * dt);
+  }
+
+  std::erase_if(m_decals,
+                [](const Decal& decal) {
+                  return decal.lifetime >= 0.0f && decal.age >= decal.lifetime;
+                });
 }
 
 void DecalModule::addDecal(const DecalSpawn& spawn)
@@ -50,10 +69,11 @@ void DecalModule::addDecal(const DecalSpawn& spawn)
   decal.rotation = spawn.rotation;
   decal.color = spawn.color;
   decal.image = spawn.textureId ? *spawn.textureId
-                : spawn.crisp   ? kCrispImage
-                                : kSoftImage;
+                : spawn.crisp   ? CRISP_IMAGE
+                                : SOFT_IMAGE;
   // fadeRate (alpha a second) -> how long it lasts.
   decal.lifetime = spawn.fadeRate > 0.0f ? 1.0f / spawn.fadeRate : -1.0f;
+
   // A drip hangs from where it landed and runs down.
   if (spawn.dripSpeed > 0.0f)
   {
@@ -61,6 +81,7 @@ void DecalModule::addDecal(const DecalSpawn& spawn)
     decal.growTo = {spawn.size.x, spawn.size.y * 5.0f};
     decal.growRate = spawn.dripSpeed;
   }
+
   decal.clipped = spawn.clipping == Clipping::Surface &&
                   spawn.clipMax.x > spawn.clipMin.x &&
                   spawn.clipMax.y > spawn.clipMin.y;
@@ -73,45 +94,35 @@ void DecalModule::addDecal(const DecalSpawn& spawn)
     const long long cell = cellOf(decal.position);
     int count = 0;
     std::size_t oldest = m_decals.size();
+
     for (std::size_t i = 0; i < m_decals.size(); ++i)
       if (m_decals[i].lifetime < 0.0f && cellOf(m_decals[i].position) == cell)
       {
         if (oldest == m_decals.size())
           oldest = i;
+
         ++count;
       }
+
     if (count >= m_perCell)
       m_decals.erase(m_decals.begin() + static_cast<std::ptrdiff_t>(oldest));
   }
+
   m_decals.push_back(std::move(decal));
+
   if (m_decals.size() > m_max)
     m_decals.erase(m_decals.begin(),
                    m_decals.begin() +
                        static_cast<std::ptrdiff_t>(m_decals.size() - m_max));
 }
 
-void DecalModule::update(double deltaTime)
-{
-  const auto dt = static_cast<float>(deltaTime);
-  for (Decal& decal : m_decals)
-  {
-    decal.age += dt;
-    for (int axis = 0; axis < 2; ++axis)
-      if (decal.growTo[axis] > 0.0f && decal.size[axis] < decal.growTo[axis])
-        decal.size[axis] = std::min(
-            decal.growTo[axis], decal.size[axis] + decal.growRate * dt);
-  }
-  std::erase_if(m_decals,
-                [](const Decal& decal) {
-                  return decal.lifetime >= 0.0f && decal.age >= decal.lifetime;
-                });
-}
-
 void DecalModule::computeCommands(const RenderContext& context)
 {
   flush();
+
   if (!context.meshes || m_decals.empty())
     return;
+
   // In 3D the game's plane is the ground (z up), each mark a hair above what
   // it landed on.
   const Space2D* space2D = context.space2D;
@@ -119,21 +130,26 @@ void DecalModule::computeCommands(const RenderContext& context)
   const auto place = [&](glm::vec2 position, float height)
   {
     return space2D ? space.place(position, height, m_layer)
-                   : glm::vec3(position, height + kLift);
+                   : glm::vec3(position, height + LIFT);
   };
   MeshLibrary& meshes = *context.meshes;
+
   if (!m_quad.valid())
     m_quad = imageQuad(meshes);
 
   std::unordered_map<uint32_t, std::size_t> byMaterial; // into m_commands
+
   for (const Decal& decal : m_decals)
   {
     auto [at, added] = m_materials.emplace(decal.image, MaterialHandle{});
+
     if (added)
       at->second = meshes.setMaterial(
           "decal:" + decal.image,
           imageMaterial(m_assets, decal.image, {}, AlphaMode::Blend));
+
     auto [slot, fresh] = byMaterial.emplace(at->second.id, m_commands.size());
+
     if (fresh)
     {
       MeshDrawCommand command;
@@ -144,6 +160,7 @@ void DecalModule::computeCommands(const RenderContext& context)
     }
 
     MeshInstance instance;
+
     if (space2D && space.projection == Space2D::Projection::Flat)
     {
       // Upright on the screen, turned by its rotation (as the game's plane
@@ -157,6 +174,7 @@ void DecalModule::computeCommands(const RenderContext& context)
                          y * ((0.5f - decal.anchor.y) * size.y);
       glm::vec2 shown = size;
       glm::vec4 uvRect(0.0f, 0.0f, 1.0f, 1.0f);
+
       // Unturned, it's cut to the surface it landed on, its image alike.
       if (decal.clipped && std::abs(angle) < 1.0e-3f)
       {
@@ -167,8 +185,10 @@ void DecalModule::computeCommands(const RenderContext& context)
             glm::max(from, glm::min(glm::vec2(a), glm::vec2(b)));
         const glm::vec2 high =
             glm::min(from + size, glm::max(glm::vec2(a), glm::vec2(b)));
+
         if (high.x <= low.x || high.y <= low.y)
           continue;
+
         // Image u runs along +X; v runs down it (-Y).
         uvRect = glm::vec4((low.x - from.x) / size.x,
                            1.0f - (high.y - from.y) / size.y,
@@ -177,6 +197,7 @@ void DecalModule::computeCommands(const RenderContext& context)
         shown = high - low;
         centre = glm::vec3((low + high) * 0.5f, centre.z);
       }
+
       instance.model[0] = glm::vec4(x * shown.x, 0.0f);
       instance.model[1] = glm::vec4(y * shown.y, 0.0f);
       instance.model[3] = glm::vec4(centre, 1.0f);
@@ -200,13 +221,29 @@ void DecalModule::computeCommands(const RenderContext& context)
       instance.model[1] = glm::vec4(up, 0.0f);
       instance.model[3] = glm::vec4(origin, 1.0f);
     }
+
     instance.model[2] = glm::vec4(0.0f, 0.0f, 1.0f, 0.0f);
     instance.tint = decal.color;
+
     if (decal.lifetime > 0.0f)
       instance.tint.a *=
           glm::clamp(1.0f - decal.age / decal.lifetime, 0.0f, 1.0f);
+
     m_commands[slot->second].instances.push_back(instance);
   }
+}
+
+long long DecalModule::cellOf(glm::vec2 position) const
+{
+  const auto x = static_cast<long long>(std::floor(position.x / m_cellSize));
+  const auto y = static_cast<long long>(std::floor(position.y / m_cellSize));
+  return x * 73856093LL ^ y * 19349663LL;
+}
+
+void DecalModule::setCoverage(float cellSize, int perCell)
+{
+  m_cellSize = cellSize;
+  m_perCell = perCell;
 }
 
 } // namespace sfs

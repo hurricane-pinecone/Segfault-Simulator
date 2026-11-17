@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/core/ecs/entityDeclaration.h"
 #include "registry.h"
 
 namespace sfs
@@ -19,6 +20,7 @@ const Entity& Entity::addComponent(TArgs&&... args) const
   else
     registry->add<TComponent>(
         "addComponent", *this, std::forward<TArgs>(args)...);
+
   return *this;
 }
 
@@ -30,6 +32,7 @@ const Entity& Entity::addTag(TArgs&&... args) const
         *this, "addTag", detail::componentTypeKey<TComponent>());
   else
     registry->add<TComponent>("addTag", *this, std::forward<TArgs>(args)...);
+
   return *this;
 }
 

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "engine/core/ecs/entity.h"
+#include "engine/core/ecs/entityDeclaration.h"
 #include "engine/core/events/eventOwner.h"
 #include "engine/core/events/eventQueue.h"
 #include "engine/core/events/eventRows.h"
@@ -11,12 +11,14 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <typeinfo>
 #include <utility>
@@ -46,6 +48,7 @@ auto spanRange(EventQueue<TEvent>& queue, uint32_t slot)
   uint64_t end = 0;
   queue.span(slot, kLatest ? Consuming::Latest : Consuming::All, begin, end);
   const EventSegment<TEvent> part = queue.segment(begin, end);
+
   if constexpr (kLatest)
     return LatestEventRange<TEvent>(part,
                                     PickCurrent{queue.channel().get()},
@@ -128,13 +131,10 @@ concept RowHandler =
 template <typename TEvent>
 class EventConsumer
 {
-  static_assert(detail::checkEvent<TEvent>());
-
 public:
   /** A consumer of nothing. */
   EventConsumer() = default;
   EventConsumer(const EventConsumer&) = delete;
-  EventConsumer& operator=(const EventConsumer&) = delete;
 
   /** Takes over `other`'s place, leaving it a consumer of nothing. */
   EventConsumer(EventConsumer&& other) noexcept
@@ -143,6 +143,11 @@ public:
   {
     other.m_owner = nullptr;
   }
+
+  /** Deregisters: the queue no longer keeps events for it. */
+  ~EventConsumer() { release(); }
+
+  EventConsumer& operator=(const EventConsumer&) = delete;
 
   /** Lets go of its own place, then takes over `other`'s. */
   EventConsumer& operator=(EventConsumer&& other) noexcept
@@ -155,41 +160,22 @@ public:
       m_slot = other.m_slot;
       other.m_owner = nullptr;
     }
+
     return *this;
   }
 
-  /** Deregisters: the queue no longer keeps events for it. */
-  ~EventConsumer() { release(); }
-
   /**
-   * The events that arrived since the last span, oldest first. A request's
-   * rows carry its Responder.
-   * @return the rows: `const E&`, `[entity, event]` for a keyed type,
-   *         `[entity, request, responder]` for a request
+   * Sends the failure response, closing the request as respond() does, to
+   * every requester whose current request about `key` is still open, if the
+   * request declares one (`failure = F`).
+   * @param key the entity the requests are about
+   * @param response the request's failure response (copied to each)
+   * @return whether any request was open
    */
-  EventRange<TEvent> read()
+  template <typename TResponse>
+  bool fail(const Entity& key, const TResponse& response)
   {
-    detail::EventQueue<TEvent>* queue = this->queue();
-    if (!queue)
-      return {};
-    return detail::spanRange<TEvent, false>(*queue, m_slot);
-  }
-
-  /**
-   * Each key's newest current event that arrived since the last span (not
-   * superseded by a newer send, a cancel or its entity's destruction).
-   * @return the rows, `[entity, event]` (`[entity, request, responder]` for a
-   *         request)
-   */
-  LatestEventRange<TEvent> readLatest()
-  {
-    static_assert(detail::kOwnChannel<TEvent>,
-                  "readLatest() reads [[sfs::event_entity_news]] or a "
-                  "request");
-    detail::EventQueue<TEvent>* queue = this->queue();
-    if (!queue)
-      return {};
-    return detail::spanRange<TEvent, true>(*queue, m_slot);
+    return respondOpen<detail::ResponseRole::Failure>(key, response);
   }
 
   /**
@@ -277,38 +263,86 @@ public:
   }
 
   /**
-   * How many events it hasn't read yet, past its place (those its next span
-   * will give).
-   * @return the count
+   * Whether a request of R about `key` is still open: current, from a
+   * requester that lives, with no final response taken in yet (a worker's
+   * comes in at the next frame step). Owning thread only: off it, logged
+   * and false.
+   * @param key the entity
+   * @return whether one is open
    */
-  std::size_t unread() const
+  bool open(const Entity& key) const
   {
-    const detail::EventQueueBase* queue = queueBase();
-    if (!queue)
-      return 0;
-    const uint64_t next = queue->consumer(m_slot).next;
-    const uint64_t from = next < queue->oldestId() ? queue->oldestId() : next;
-    return static_cast<std::size_t>(queue->endId() - from);
-  }
+    static_assert(detail::kRequest<TEvent>,
+                  "open(entity) asks a request type's consumer "
+                  "([[sfs::event_request(...)]])");
+    const detail::EventQueue<TEvent>* queue = this->queue();
 
-  /** Passes every kept event without going through them, this update's too. */
-  void skip()
-  {
-    if (detail::EventQueueBase* queue = queueBase())
+    if (!queue)
+      return false;
+
+    const detail::KeyedChannel& channel = *queue->channel();
+
+    if (channel.owner.load(std::memory_order_relaxed) !=
+        detail::currentThreadId()) [[unlikely]]
     {
-      detail::ConsumerSlot& self = queue->consumer(m_slot);
-      self.next = queue->endId();
-      // An update's span already fixed is passed too.
-      self.spanBegin = self.spanEnd;
+      Events::refuseOffThread<TEvent>("open", true);
+      return false;
     }
+
+    if (channel.stale(key))
+      return false;
+
+    return channel.tickets->open(key.getId());
   }
 
   /**
-   * Whether it's registered with a queue that lives (false for one made by
-   * default, refused, moved from, or outliving its events).
-   * @return whether it reads
+   * Sends a progress response, with more to come, to every requester whose
+   * current request about `key` is still open, as respond() does, if the
+   * request declares one (`progress = P`).
+   * @param key the entity the requests are about
+   * @param response the request's progress response (copied to each)
+   * @return whether any request was open
    */
-  bool valid() const { return queueBase() != nullptr; }
+  template <typename TResponse>
+  bool progress(const Entity& key, const TResponse& response)
+  {
+    return respondOpen<detail::ResponseRole::Progress>(key, response);
+  }
+
+  /**
+   * The events that arrived since the last span, oldest first. A request's
+   * rows carry its Responder.
+   * @return the rows: `const E&`, `[entity, event]` for a keyed type,
+   *         `[entity, request, responder]` for a request
+   */
+  EventRange<TEvent> read()
+  {
+    detail::EventQueue<TEvent>* queue = this->queue();
+
+    if (!queue)
+      return {};
+
+    return detail::spanRange<TEvent, false>(*queue, m_slot);
+  }
+
+  /**
+   * Each key's newest current event that arrived since the last span (not
+   * superseded by a newer send, a cancel or its entity's destruction).
+   * @return the rows, `[entity, event]` (`[entity, request, responder]` for a
+   *         request)
+   */
+  LatestEventRange<TEvent> readLatest()
+  {
+    static_assert(detail::kOwnChannel<TEvent>,
+                  "readLatest() reads [[sfs::event_entity_news]] or a "
+                  "request");
+    detail::EventQueue<TEvent>* queue = this->queue();
+
+    if (!queue)
+      return {};
+
+    return detail::spanRange<TEvent, true>(*queue, m_slot);
+  }
 
   /**
    * Sends the success response to every requester whose current request
@@ -327,122 +361,46 @@ public:
     return respondOpen<detail::ResponseRole::Success>(key, response);
   }
 
-  /**
-   * Sends a progress response, with more to come, to every requester whose
-   * current request about `key` is still open, as respond() does, if the
-   * request declares one (`progress = P`).
-   * @param key the entity the requests are about
-   * @param response the request's progress response (copied to each)
-   * @return whether any request was open
-   */
-  template <typename TResponse>
-  bool progress(const Entity& key, const TResponse& response)
+  /** Passes every kept event without going through them, this update's too. */
+  void skip()
   {
-    return respondOpen<detail::ResponseRole::Progress>(key, response);
-  }
-
-  /**
-   * Sends the failure response, closing the request as respond() does, to
-   * every requester whose current request about `key` is still open, if the
-   * request declares one (`failure = F`).
-   * @param key the entity the requests are about
-   * @param response the request's failure response (copied to each)
-   * @return whether any request was open
-   */
-  template <typename TResponse>
-  bool fail(const Entity& key, const TResponse& response)
-  {
-    return respondOpen<detail::ResponseRole::Failure>(key, response);
-  }
-
-  /**
-   * Whether a request of R about `key` is still open: current, from a
-   * requester that lives, with no final response taken in yet (a worker's
-   * comes in at the next frame step). Owning thread only: off it, logged
-   * and false.
-   * @param key the entity
-   * @return whether one is open
-   */
-  bool open(const Entity& key) const
-  {
-    static_assert(detail::kRequest<TEvent>,
-                  "open(entity) asks a request type's consumer "
-                  "([[sfs::event_request(...)]])");
-    const detail::EventQueue<TEvent>* queue = this->queue();
-    if (!queue)
-      return false;
-    const detail::KeyedChannel& channel = *queue->channel();
-    if (channel.owner.load(std::memory_order_relaxed) !=
-        detail::currentThreadId()) [[unlikely]]
+    if (detail::EventQueueBase* queue = queueBase())
     {
-      Events::refuseOffThread<TEvent>("open", true);
-      return false;
+      detail::ConsumerSlot& self = queue->consumer(m_slot);
+      self.next = queue->endId();
+      // An update's span already fixed is passed too.
+      self.spanBegin = self.spanEnd;
     }
-    if (channel.stale(key))
-      return false;
-    return channel.tickets->open(key.getId());
   }
+
+  /**
+   * How many events it hasn't read yet, past its place (those its next span
+   * will give).
+   * @return the count
+   */
+  std::size_t unread() const
+  {
+    const detail::EventQueueBase* queue = queueBase();
+
+    if (!queue)
+      return 0;
+
+    const uint64_t next = queue->consumer(m_slot).next;
+    const uint64_t from = next < queue->oldestId() ? queue->oldestId() : next;
+    return static_cast<std::size_t>(queue->endId() - from);
+  }
+
+  /**
+   * Whether it's registered with a queue that lives (false for one made by
+   * default, refused, moved from, or outliving its events).
+   * @return whether it reads
+   */
+  bool valid() const { return queueBase() != nullptr; }
 
 private:
+  static_assert(detail::checkEvent<TEvent>());
   friend class Events;
   friend class EventVerbs;
-
-  // respond(), progress() and fail(): the response to each open request
-  // about the key, through its response queue, as a Responder would on this
-  // thread.
-  template <detail::ResponseRole kRole, typename TResponse>
-  bool respondOpen(const Entity& key, const TResponse& response)
-  {
-    static_assert(detail::kRequest<TEvent>,
-                  "respond(), progress() and fail() by entity answer through "
-                  "a request type's consumer ([[sfs::event_request(...)]])");
-    using Value = std::remove_cvref_t<TResponse>;
-    constexpr bool last = kRole != detail::ResponseRole::Progress;
-    static_assert(std::is_copy_constructible_v<Value>,
-                  "An answer by entity is copied to each open request about "
-                  "it, so its response type must be copyable; answer a "
-                  "move-only response through the request's Responder");
-    if constexpr (!detail::kRequest<TEvent> ||
-                  !std::is_copy_constructible_v<Value>)
-      return false;
-    else if constexpr (!detail::checkRoleSent<TEvent, kRole, Value>() ||
-                       !std::is_same_v<detail::RoleType<TEvent, kRole>, Value>)
-      return false;
-    else
-    {
-      detail::EventQueue<TEvent>* queue = this->queue();
-      if (!queue)
-        return false;
-      detail::KeyedChannel& channel = *queue->channel();
-      if (channel.owner.load(std::memory_order_relaxed) !=
-          detail::currentThreadId()) [[unlikely]]
-      {
-        constexpr const char* call =
-            kRole == detail::ResponseRole::Success    ? "respond"
-            : kRole == detail::ResponseRole::Progress ? "progress"
-                                                      : "fail";
-        Events::refuseOffThread<TEvent>(call, true);
-        return false;
-      }
-      if (!channel.events || channel.stale(key))
-        return false;
-      auto& responses =
-          channel.events->template queue<detail::ResponseTo<TEvent, Value>>();
-      bool reached = false;
-      channel.tickets->forEachOpen(
-          key.getId(),
-          [&](uint32_t ticket, uint32_t generation)
-          {
-            reached |=
-                responses.respond(detail::ResponseTo<TEvent, Value>{response},
-                                  key,
-                                  generation,
-                                  last,
-                                  ticket);
-          });
-      return reached;
-    }
-  }
 
   // Registers a consumer with `queue`, at the oldest event kept, owned by
   // `owner` (null: none).
@@ -469,6 +427,7 @@ private:
             detail::EventQueueBase& base, uint32_t slot) mutable
         {
           auto& queue = static_cast<detail::EventQueue<TEvent>&>(base);
+
           for (auto&& row : detail::spanRange<TEvent, false>(queue, slot))
             detail::callWithRow<TEvent>(fn, row);
         });
@@ -486,6 +445,45 @@ private:
           auto& queue = static_cast<detail::EventQueue<TEvent>&>(base);
           EventRange<TEvent> events =
               detail::spanRange<TEvent, false>(queue, slot);
+
+          if (!events.empty())
+            fn(events);
+        });
+  }
+
+  // Hands a handler to the owner, which runs it in its slot.
+  void addHandler(std::function<void(detail::EventQueueBase&, uint32_t)> run)
+  {
+    if (!m_link)
+      return;
+
+    if (!m_owner) [[unlikely]]
+    {
+      if (const detail::EventQueueBase* queue = queueBase())
+        detail::handlersWithoutOwner(queue->name());
+
+      return;
+    }
+
+    m_owner->addHandler({m_link, m_slot, std::move(run)});
+  }
+
+  template <typename TFunction>
+  void addLatestEventsHandler(TFunction fn)
+  {
+    static_assert(detail::kOwnChannel<TEvent>,
+                  "onLatestEvents() takes an [[sfs::event_entity_news]] or a "
+                  "request");
+    static_assert(std::invocable<TFunction&, LatestEventRange<TEvent>>,
+                  "onLatestEvents() takes fn(sfs::LatestEventRange<E>)");
+    addHandler(
+        [fn = std::move(fn)](
+            detail::EventQueueBase& base, uint32_t slot) mutable
+        {
+          auto& queue = static_cast<detail::EventQueue<TEvent>&>(base);
+          LatestEventRange<TEvent> events =
+              detail::spanRange<TEvent, true>(queue, slot);
+
           if (!events.empty())
             fn(events);
         });
@@ -506,52 +504,20 @@ private:
             detail::EventQueueBase& base, uint32_t slot) mutable
         {
           auto& queue = static_cast<detail::EventQueue<TEvent>&>(base);
+
           for (auto&& row : detail::spanRange<TEvent, true>(queue, slot))
             detail::callWithRow<TEvent>(fn, row);
         });
   }
 
-  template <typename TFunction>
-  void addLatestEventsHandler(TFunction fn)
-  {
-    static_assert(detail::kOwnChannel<TEvent>,
-                  "onLatestEvents() takes an [[sfs::event_entity_news]] or a "
-                  "request");
-    static_assert(std::invocable<TFunction&, LatestEventRange<TEvent>>,
-                  "onLatestEvents() takes fn(sfs::LatestEventRange<E>)");
-    addHandler(
-        [fn = std::move(fn)](
-            detail::EventQueueBase& base, uint32_t slot) mutable
-        {
-          auto& queue = static_cast<detail::EventQueue<TEvent>&>(base);
-          LatestEventRange<TEvent> events =
-              detail::spanRange<TEvent, true>(queue, slot);
-          if (!events.empty())
-            fn(events);
-        });
-  }
-
-  detail::EventQueueBase* queueBase() const
-  {
-    return m_link ? m_link->queue : nullptr;
-  }
   detail::EventQueue<TEvent>* queue() const
   {
     return static_cast<detail::EventQueue<TEvent>*>(queueBase());
   }
 
-  // Hands a handler to the owner, which runs it in its slot.
-  void addHandler(std::function<void(detail::EventQueueBase&, uint32_t)> run)
+  detail::EventQueueBase* queueBase() const
   {
-    if (!m_link)
-      return;
-    if (!m_owner) [[unlikely]]
-    {
-      if (const detail::EventQueueBase* queue = queueBase())
-        detail::handlersWithoutOwner(queue->name());
-      return;
-    }
-    m_owner->addHandler({m_link, m_slot, std::move(run)});
+    return m_link ? m_link->queue : nullptr;
   }
 
   // Frees its slot and its handlers. The owner is the slot's, which its
@@ -560,15 +526,81 @@ private:
   {
     if (!m_link)
       return;
+
     if (detail::EventQueueBase* queue = m_link->queue)
     {
       detail::EventOwner* owner = queue->consumer(m_slot).owner;
       queue->removeConsumer(m_slot);
+
       if (owner)
         owner->forget();
     }
+
     m_link.reset();
     m_owner = nullptr;
+  }
+
+  // respond(), progress() and fail(): the response to each open request
+  // about the key, through its response queue, as a Responder would on this
+  // thread.
+  template <detail::ResponseRole kRole, typename TResponse>
+  bool respondOpen(const Entity& key, const TResponse& response)
+  {
+    static_assert(detail::kRequest<TEvent>,
+                  "respond(), progress() and fail() by entity answer through "
+                  "a request type's consumer ([[sfs::event_request(...)]])");
+    using Value = std::remove_cvref_t<TResponse>;
+    constexpr bool LAST = kRole != detail::ResponseRole::Progress;
+    static_assert(std::is_copy_constructible_v<Value>,
+                  "An answer by entity is copied to each open request about "
+                  "it, so its response type must be copyable; answer a "
+                  "move-only response through the request's Responder");
+
+    if constexpr (!detail::kRequest<TEvent> ||
+                  !std::is_copy_constructible_v<Value>)
+      return false;
+    else if constexpr (!detail::checkRoleSent<TEvent, kRole, Value>() ||
+                       !std::is_same_v<detail::RoleType<TEvent, kRole>, Value>)
+      return false;
+    else
+    {
+      detail::EventQueue<TEvent>* queue = this->queue();
+
+      if (!queue)
+        return false;
+
+      detail::KeyedChannel& channel = *queue->channel();
+
+      if (channel.owner.load(std::memory_order_relaxed) !=
+          detail::currentThreadId()) [[unlikely]]
+      {
+        constexpr const char* CALL =
+            kRole == detail::ResponseRole::Success    ? "respond"
+            : kRole == detail::ResponseRole::Progress ? "progress"
+                                                      : "fail";
+        Events::refuseOffThread<TEvent>(CALL, true);
+        return false;
+      }
+
+      if (!channel.events || channel.stale(key))
+        return false;
+
+      auto& responses =
+          channel.events->template queue<detail::ResponseTo<TEvent, Value>>();
+      bool reached = false;
+      channel.tickets->forEachOpen(
+          key.getId(),
+          [&](uint32_t ticket, uint32_t generation)
+          {
+            reached |=
+                responses.respond(detail::ResponseTo<TEvent, Value>{response},
+                                  key,
+                                  generation,
+                                  LAST,
+                                  ticket);
+          });
+      return reached;
+    }
   }
 
   std::shared_ptr<detail::EventQueueLink> m_link;
@@ -721,6 +753,7 @@ template <typename TRequest, ResponseRole kRole, bool kHandled>
 constexpr void checkRoleStep()
 {
   using Declared = RoleType<TRequest, kRole>;
+
   if constexpr (kRole == ResponseRole::Progress && std::is_void_v<Declared>)
     static_cast<void>(sizeof(NoProgressToHandle<TRequest>));
   else if constexpr (kRole == ResponseRole::Failure && std::is_void_v<Declared>)
@@ -754,16 +787,10 @@ constexpr void checkRoleStep()
 template <typename TRequest>
 class EventRequester
 {
-  static_assert(detail::checkEvent<TRequest>());
-  static_assert(detail::kRequest<TRequest>,
-                "An EventRequester asks for a request "
-                "([[sfs::event_request(...)]])");
-
 public:
   /** A requester of nothing. */
   EventRequester() = default;
   EventRequester(const EventRequester&) = delete;
-  EventRequester& operator=(const EventRequester&) = delete;
 
   /** Takes over `other`'s response consumers. */
   EventRequester(EventRequester&& other) noexcept
@@ -775,6 +802,11 @@ public:
     other.m_owner = nullptr;
     other.m_responses.clear();
   }
+
+  /** Deregisters its response consumers. */
+  ~EventRequester() { release(); }
+
+  EventRequester& operator=(const EventRequester&) = delete;
 
   /** Lets go of its own response consumers, then takes over `other`'s. */
   EventRequester& operator=(EventRequester&& other) noexcept
@@ -792,34 +824,8 @@ public:
       other.m_owner = nullptr;
       other.m_responses.clear();
     }
+
     return *this;
-  }
-
-  /** Deregisters its response consumers. */
-  ~EventRequester() { release(); }
-
-  /**
-   * Asks about `key`, superseding the key's current request: its responders
-   * stop and its responses are dropped.
-   * @param key the entity it's about
-   * @param request the request, moved in
-   */
-  void request(const Entity& key, TRequest request)
-  {
-    if (live())
-      m_events->requestAs(*m_channel, m_id, key, std::move(request));
-  }
-
-  /**
-   * Whether this requester's current request about the key has no final
-   * response yet (Responder::respond()).
-   * @param key the entity it asked about
-   * @return whether it waits
-   */
-  bool waiting(const Entity& key) const
-  {
-    return live() && !m_channel->stale(key) &&
-           m_channel->tickets->waiting(m_id, key.getId());
   }
 
   /**
@@ -835,21 +841,45 @@ public:
   }
 
   /**
+   * Asks about `key`, superseding the key's current request: its responders
+   * stop and its responses are dropped.
+   * @param key the entity it's about
+   * @param request the request, moved in
+   */
+  void request(const Entity& key, TRequest request)
+  {
+    if (live())
+      m_events->requestAs(*m_channel, m_id, key, std::move(request));
+  }
+
+  /**
    * Whether it was made with events to ask through (false for one made by
    * default, refused or moved from).
    * @return whether it asks
    */
   bool valid() const { return m_events != nullptr; }
 
+  /**
+   * Whether this requester's current request about the key has no final
+   * response yet (Responder::respond()).
+   * @param key the entity it asked about
+   * @return whether it waits
+   */
+  bool waiting(const Entity& key) const
+  {
+    return live() && !m_channel->stale(key) &&
+           m_channel->tickets->waiting(m_id, key.getId());
+  }
+
 private:
+  static_assert(detail::checkEvent<TRequest>());
+  static_assert(detail::kRequest<TRequest>,
+                "An EventRequester asks for a request "
+                "([[sfs::event_request(...)]])");
   template <typename, bool, bool, bool>
   friend class EventRequesterBuilder;
   friend class Events;
   friend class EventVerbs;
-
-  // Whether its events still live (their channel closes as they go): a
-  // requester outliving them asks nothing and waits for nothing.
-  bool live() const { return m_events && m_channel && m_channel->open; }
 
   EventRequester(Events& events,
                  detail::EventOwner* owner,
@@ -867,17 +897,22 @@ private:
   {
     if (!m_events)
       return;
+
     detail::EventQueue<detail::ResponseTo<TRequest, TResponse>>& queue =
         m_events->template queue<detail::ResponseTo<TRequest, TResponse>>();
+
     if (!m_owner) [[unlikely]]
     {
       detail::handlersWithoutOwner(queue.name());
       return;
     }
+
     const detail::ConsumerRef* found = nullptr;
+
     for (const detail::ConsumerRef& responses : m_responses)
       if (responses.link == queue.link())
         found = &responses;
+
     if (!found)
     {
       queue.openRoute(m_id,
@@ -888,8 +923,13 @@ private:
       found =
           &m_responses.emplace_back(detail::ConsumerRef{queue.link(), slot});
     }
+
     m_owner->addHandler({found->link, found->slot, std::move(run)});
   }
+
+  // Whether its events still live (their channel closes as they go): a
+  // requester outliving them asks nothing and waits for nothing.
+  bool live() const { return m_events && m_channel && m_channel->open; }
 
   void release()
   {
@@ -900,14 +940,18 @@ private:
         detail::EventOwner* owner = queue->consumer(responses.slot).owner;
         queue->removeConsumer(responses.slot);
         queue->closeRoute(m_id);
+
         if (owner)
           owner->forget();
       }
+
     m_responses.clear();
+
     // Its outstanding requests are superseded (their responders see it). A
     // channel closed already went with its events.
     if (m_channel && m_channel->open)
       m_channel->tickets->removeRequester(m_id);
+
     m_channel.reset();
     m_events = nullptr;
     m_owner = nullptr;
@@ -939,11 +983,91 @@ private:
 template <typename TRequest, bool kSuccess, bool kProgress, bool kFailure>
 class [[nodiscard]] EventRequesterBuilder
 {
-  using Success = detail::RoleType<TRequest, detail::ResponseRole::Success>;
-  using Progress = detail::RoleType<TRequest, detail::ResponseRole::Progress>;
-  using Failure = detail::RoleType<TRequest, detail::ResponseRole::Failure>;
-
 public:
+  /**
+   * Ignores R's failure response, on purpose: this requester gets none.
+   * @return the builder with the failure counted as handled
+   */
+  EventRequesterBuilder<TRequest, kSuccess, kProgress, true> ignoreFailure() &&
+  {
+    detail::checkRoleStep<TRequest, detail::ResponseRole::Failure, kFailure>();
+    return next<kSuccess, kProgress, true>();
+  }
+
+  /**
+   * Handles each failure response (a request declaring `failure = F`):
+   * `fn(const Entity& key, const F& response)`.
+   * @param fn the handler
+   * @return the builder with the failure handled
+   */
+  template <typename TFunction>
+  EventRequesterBuilder<TRequest, kSuccess, kProgress, true>
+  onFailure(TFunction fn) &&
+  {
+    detail::checkRoleStep<TRequest, detail::ResponseRole::Failure, kFailure>();
+
+    if constexpr (!std::is_void_v<Failure>)
+      addOne<detail::ResponseRole::Failure>(std::move(fn));
+
+    return next<kSuccess, kProgress, true>();
+  }
+
+  /**
+   * Handles each update's failure responses at once:
+   * `fn(sfs::ResponseRange<R, F>)`.
+   * @param fn the handler
+   * @return the builder with the failure handled
+   */
+  template <typename TFunction>
+  EventRequesterBuilder<TRequest, kSuccess, kProgress, true>
+  onFailures(TFunction fn) &&
+  {
+    detail::checkRoleStep<TRequest, detail::ResponseRole::Failure, kFailure>();
+
+    if constexpr (!std::is_void_v<Failure>)
+      addBatch<detail::ResponseRole::Failure>(std::move(fn));
+
+    return next<kSuccess, kProgress, true>();
+  }
+
+  /**
+   * Handles each progress response (a request declaring `progress = P`):
+   * `fn(const Entity& key, const P& response)`.
+   * @param fn the handler
+   * @return the builder with progress handled
+   */
+  template <typename TFunction>
+  EventRequesterBuilder<TRequest, kSuccess, true, kFailure>
+  onProgress(TFunction fn) &&
+  {
+    detail::
+        checkRoleStep<TRequest, detail::ResponseRole::Progress, kProgress>();
+
+    if constexpr (!std::is_void_v<Progress>)
+      addOne<detail::ResponseRole::Progress>(std::move(fn));
+
+    return next<kSuccess, true, kFailure>();
+  }
+
+  /**
+   * Handles each update's progress responses at once:
+   * `fn(sfs::ResponseRange<R, P>)`.
+   * @param fn the handler
+   * @return the builder with progress handled
+   */
+  template <typename TFunction>
+  EventRequesterBuilder<TRequest, kSuccess, true, kFailure>
+  onProgresses(TFunction fn) &&
+  {
+    detail::
+        checkRoleStep<TRequest, detail::ResponseRole::Progress, kProgress>();
+
+    if constexpr (!std::is_void_v<Progress>)
+      addBatch<detail::ResponseRole::Progress>(std::move(fn));
+
+    return next<kSuccess, true, kFailure>();
+  }
+
   /**
    * Handles each success response to a current request, in the owner's
    * slot: `fn(const Entity& key, const Success& response)`.
@@ -975,82 +1099,6 @@ public:
   }
 
   /**
-   * Handles each progress response (a request declaring `progress = P`):
-   * `fn(const Entity& key, const P& response)`.
-   * @param fn the handler
-   * @return the builder with progress handled
-   */
-  template <typename TFunction>
-  EventRequesterBuilder<TRequest, kSuccess, true, kFailure>
-  onProgress(TFunction fn) &&
-  {
-    detail::
-        checkRoleStep<TRequest, detail::ResponseRole::Progress, kProgress>();
-    if constexpr (!std::is_void_v<Progress>)
-      addOne<detail::ResponseRole::Progress>(std::move(fn));
-    return next<kSuccess, true, kFailure>();
-  }
-
-  /**
-   * Handles each update's progress responses at once:
-   * `fn(sfs::ResponseRange<R, P>)`.
-   * @param fn the handler
-   * @return the builder with progress handled
-   */
-  template <typename TFunction>
-  EventRequesterBuilder<TRequest, kSuccess, true, kFailure>
-  onProgresses(TFunction fn) &&
-  {
-    detail::
-        checkRoleStep<TRequest, detail::ResponseRole::Progress, kProgress>();
-    if constexpr (!std::is_void_v<Progress>)
-      addBatch<detail::ResponseRole::Progress>(std::move(fn));
-    return next<kSuccess, true, kFailure>();
-  }
-
-  /**
-   * Handles each failure response (a request declaring `failure = F`):
-   * `fn(const Entity& key, const F& response)`.
-   * @param fn the handler
-   * @return the builder with the failure handled
-   */
-  template <typename TFunction>
-  EventRequesterBuilder<TRequest, kSuccess, kProgress, true>
-  onFailure(TFunction fn) &&
-  {
-    detail::checkRoleStep<TRequest, detail::ResponseRole::Failure, kFailure>();
-    if constexpr (!std::is_void_v<Failure>)
-      addOne<detail::ResponseRole::Failure>(std::move(fn));
-    return next<kSuccess, kProgress, true>();
-  }
-
-  /**
-   * Handles each update's failure responses at once:
-   * `fn(sfs::ResponseRange<R, F>)`.
-   * @param fn the handler
-   * @return the builder with the failure handled
-   */
-  template <typename TFunction>
-  EventRequesterBuilder<TRequest, kSuccess, kProgress, true>
-  onFailures(TFunction fn) &&
-  {
-    detail::checkRoleStep<TRequest, detail::ResponseRole::Failure, kFailure>();
-    if constexpr (!std::is_void_v<Failure>)
-      addBatch<detail::ResponseRole::Failure>(std::move(fn));
-    return next<kSuccess, kProgress, true>();
-  }
-
-  /**
-   * Ignores R's failure response, on purpose: this requester gets none.
-   * @return the builder with the failure counted as handled
-   */
-  EventRequesterBuilder<TRequest, kSuccess, kProgress, true> ignoreFailure() &&
-  {
-    detail::checkRoleStep<TRequest, detail::ResponseRole::Failure, kFailure>();
-    return next<kSuccess, kProgress, true>();
-  }
-
-  /**
    * The requester, once R's success is handled and its failure handled or
    * ignored (a compile error names what isn't).
    * @return the requester
@@ -1059,8 +1107,10 @@ public:
   {
     if constexpr (!kSuccess)
       static_cast<void>(sizeof(detail::SuccessNotHandled<TRequest>));
+
     if constexpr (!std::is_void_v<Failure> && !kFailure)
       static_cast<void>(sizeof(detail::FailureNotHandled<TRequest>));
+
     give<detail::ResponseRole::Progress>();
     give<detail::ResponseRole::Success>();
     give<detail::ResponseRole::Failure>();
@@ -1068,6 +1118,9 @@ public:
   }
 
 private:
+  using Success = detail::RoleType<TRequest, detail::ResponseRole::Success>;
+  using Progress = detail::RoleType<TRequest, detail::ResponseRole::Progress>;
+  using Failure = detail::RoleType<TRequest, detail::ResponseRole::Failure>;
   template <typename, bool, bool, bool>
   friend class EventRequesterBuilder;
   friend class Events;
@@ -1082,47 +1135,6 @@ private:
                                  Runs&& runs = {})
       : m_requester(std::move(requester)), m_runs(std::move(runs))
   {
-  }
-
-  template <bool kNextSuccess, bool kNextProgress, bool kNextFailure>
-  EventRequesterBuilder<TRequest, kNextSuccess, kNextProgress, kNextFailure>
-  next()
-  {
-    return EventRequesterBuilder<TRequest,
-                                 kNextSuccess,
-                                 kNextProgress,
-                                 kNextFailure>(
-        std::move(m_requester), std::move(m_runs));
-  }
-
-  // Gives the owner the role's handler, if there is one.
-  template <detail::ResponseRole kRole>
-  void give()
-  {
-    using Response = detail::RoleType<TRequest, kRole>;
-    if constexpr (!std::is_void_v<Response>)
-      if (Run& run = m_runs[static_cast<std::size_t>(kRole)])
-        m_requester.template addHandler<Response>(std::move(run));
-  }
-
-  // A handler for each response of the role, unpacked.
-  template <detail::ResponseRole kRole, typename TFunction>
-  void addOne(TFunction fn)
-  {
-    using TResponse = detail::RoleType<TRequest, kRole>;
-    static_assert(std::invocable<TFunction&, const Entity&, const TResponse&>,
-                  "onResponse(), onProgress() and onFailure() take "
-                  "fn(const Entity&, const Response&), the role's response");
-    using Queue = detail::EventQueue<detail::ResponseTo<TRequest, TResponse>>;
-    m_runs[static_cast<std::size_t>(kRole)] =
-        [fn = std::move(fn), requester = m_requester.m_id](
-            detail::EventQueueBase& base, uint32_t slot) mutable
-    {
-      auto& queue = static_cast<Queue&>(base);
-      for (auto [key, response] :
-           detail::responseRange<TRequest, TResponse>(queue, slot, requester))
-        fn(key, response);
-    };
   }
 
   // A handler for each update's responses of the role at once.
@@ -1142,9 +1154,53 @@ private:
       auto& queue = static_cast<Queue&>(base);
       ResponseRange<TRequest, TResponse> responses =
           detail::responseRange<TRequest, TResponse>(queue, slot, requester);
+
       if (!responses.empty())
         fn(responses);
     };
+  }
+
+  // A handler for each response of the role, unpacked.
+  template <detail::ResponseRole kRole, typename TFunction>
+  void addOne(TFunction fn)
+  {
+    using TResponse = detail::RoleType<TRequest, kRole>;
+    static_assert(std::invocable<TFunction&, const Entity&, const TResponse&>,
+                  "onResponse(), onProgress() and onFailure() take "
+                  "fn(const Entity&, const Response&), the role's response");
+    using Queue = detail::EventQueue<detail::ResponseTo<TRequest, TResponse>>;
+    m_runs[static_cast<std::size_t>(kRole)] =
+        [fn = std::move(fn), requester = m_requester.m_id](
+            detail::EventQueueBase& base, uint32_t slot) mutable
+    {
+      auto& queue = static_cast<Queue&>(base);
+
+      for (auto [key, response] :
+           detail::responseRange<TRequest, TResponse>(queue, slot, requester))
+        fn(key, response);
+    };
+  }
+
+  // Gives the owner the role's handler, if there is one.
+  template <detail::ResponseRole kRole>
+  void give()
+  {
+    using Response = detail::RoleType<TRequest, kRole>;
+
+    if constexpr (!std::is_void_v<Response>)
+      if (Run& run = m_runs[static_cast<std::size_t>(kRole)])
+        m_requester.template addHandler<Response>(std::move(run));
+  }
+
+  template <bool kNextSuccess, bool kNextProgress, bool kNextFailure>
+  EventRequesterBuilder<TRequest, kNextSuccess, kNextProgress, kNextFailure>
+  next()
+  {
+    return EventRequesterBuilder<TRequest,
+                                 kNextSuccess,
+                                 kNextProgress,
+                                 kNextFailure>(
+        std::move(m_requester), std::move(m_runs));
   }
 
   EventRequester<TRequest> m_requester;
@@ -1159,6 +1215,7 @@ EventConsumer<TEvent> Events::consumer()
     refuseOffThread<TEvent>("consumer");
     return {};
   }
+
   return EventConsumer<TEvent>(queue<TEvent>(), m_settingUp, m_settingUpType);
 }
 
@@ -1170,6 +1227,7 @@ EventRequesterBuilder<TRequest> Events::requester()
     refuseOffThread<TRequest>("requester");
     return EventRequesterBuilder<TRequest>(EventRequester<TRequest>{});
   }
+
   return EventRequesterBuilder<TRequest>(
       EventRequester<TRequest>(*this, m_settingUp, m_settingUpType));
 }

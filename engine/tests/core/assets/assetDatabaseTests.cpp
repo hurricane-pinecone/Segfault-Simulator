@@ -1,11 +1,15 @@
 #include "../../testHarness.h"
-
-#include <engine/core/assets/assetDatabase.h>
+#include "engine/core/assets/assetDatabase.h"
 
 #include <algorithm>
+#include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
+#include <optional>
 #include <string>
+#include <vector>
 
 using namespace sfs;
 namespace fs = std::filesystem;
@@ -136,6 +140,7 @@ int main()
                         AssetDatabase::projectFolders());
     CHECK(database.folders() == fresh.folders());
     CHECK(database.records().size() == fresh.records().size());
+
     for (std::size_t i = 0;
          i < std::min(database.records().size(), fresh.records().size());
          ++i)
@@ -144,6 +149,7 @@ int main()
       CHECK(database.records()[i].id == fresh.records()[i].id);
       CHECK(database.records()[i].kind == fresh.records()[i].kind);
     }
+
     CHECK(rock && fresh.find(*rock) != nullptr);
     CHECK(!database.refresh()); // nothing for a rescan to find
   }

@@ -1,9 +1,9 @@
 #pragma once
 
+#include "engine/core/logger/logger.h"
 #include "panels/panel.h"
 
-#include "engine/core/logger/logger.h"
-
+#include <cstddef>
 #include <deque>
 #include <mutex>
 #include <string>

@@ -1,8 +1,11 @@
 #pragma once
 
+#include "engine/core/components/surfaceEffect.h"
 #include "engine/core/rendering/vertices.h"
 #include "engine/core/voxel/voxelView.h"
-#include "glm/glm/ext/vector_int3.hpp"
+
+#include <glm/glm/ext/vector_int3.hpp>
+
 #include <string>
 #include <vector>
 

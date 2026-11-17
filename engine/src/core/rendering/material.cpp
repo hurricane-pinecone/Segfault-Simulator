@@ -1,6 +1,16 @@
 #include "engine/core/rendering/material.h"
 
+#include "engine/core/rendering/materialGraph.h"
 #include "engine/core/rendering/materialNodes.h"
+#include "engine/core/rendering/mesh.h"
+#include "engine/core/rendering/terrain.h"
+
+#include <glm/glm/ext/vector_float2.hpp>
+#include <nlohmann/json.hpp>
+
+#include <cstdint>
+#include <optional>
+#include <string>
 
 namespace sfs
 {
@@ -28,31 +38,66 @@ void read(const nlohmann::json& json, const char* key, T& out)
 }
 } // namespace
 
-const char* alphaModeName(AlphaMode mode)
+std::optional<MaterialAsset> MaterialAsset::fromJson(const nlohmann::json& json)
 {
-  switch (mode)
-  {
-  case AlphaMode::Mask:
-    return "mask";
-  case AlphaMode::Blend:
-    return "blend";
-  case AlphaMode::Additive:
-    return "additive";
-  case AlphaMode::Opaque:
-    break;
-  }
-  return "opaque";
-}
+  if (!json.is_object())
+    return std::nullopt;
 
-std::optional<AlphaMode> alphaModeFromName(std::string_view name)
-{
-  for (const AlphaMode mode : {AlphaMode::Opaque,
-                               AlphaMode::Mask,
-                               AlphaMode::Blend,
-                               AlphaMode::Additive})
-    if (name == alphaModeName(mode))
-      return mode;
-  return std::nullopt;
+  MaterialAsset material;
+
+  if (const auto it = json.find("baseColor");
+      it != json.end() && it->is_array() && it->size() == 4)
+    for (int i = 0; i < 4; ++i)
+      if ((*it)[i].is_number())
+        material.baseColor[i] = (*it)[i].get<float>();
+
+  const auto readVec2 = [&json](const char* key, glm::vec2& out)
+  {
+    if (const auto it = json.find(key);
+        it != json.end() && it->is_array() && it->size() == 2)
+      for (int i = 0; i < 2; ++i)
+        if ((*it)[i].is_number())
+          out[i] = (*it)[i].get<float>();
+  };
+  readVec2("tiling", material.tiling);
+  readVec2("offset", material.offset);
+  read(json, "baseTexture", material.baseTexture);
+  read(json, "metallicRoughnessTexture", material.metallicRoughnessTexture);
+  read(json, "normalTexture", material.normalTexture);
+  read(json, "normalScale", material.normalScale);
+  read(json, "metallic", material.metallic);
+  read(json, "roughness", material.roughness);
+  read(json, "alphaCutoff", material.alphaCutoff);
+  read(json, "doubleSided", material.doubleSided);
+  read(json, "fadeNearCamera", material.fadeNearCamera);
+
+  if (const auto it = json.find("foliage"); it != json.end() && it->is_object())
+  {
+    material.foliage.enabled = true;
+    read(*it, "translucency", material.foliage.translucency);
+    read(*it, "bend", material.foliage.bend);
+    read(*it, "sway", material.foliage.sway);
+    read(*it, "flutter", material.foliage.flutter);
+  }
+
+  if (const auto it = json.find("alphaMode");
+      it != json.end() && it->is_string())
+    material.alphaMode =
+        alphaModeFromName(it->get<std::string>()).value_or(AlphaMode::Opaque);
+
+  if (const auto it = json.find("graph"); it != json.end())
+    material.graph = materialGraph::Graph::fromJson(*it);
+
+  if (const auto it = json.find("terrain"); it != json.end() && it->is_object())
+    material.terrain = TerrainAsset::fromJson(*it);
+
+  if (const auto it = json.find("variants");
+      it != json.end() && it->is_object())
+    for (const auto& [tag, name] : it->items())
+      if (name.is_string() && !tag.empty() && !name.get<std::string>().empty())
+        material.variants[tag] = name.get<std::string>();
+
+  return material;
 }
 
 materialGraph::Graph MaterialAsset::toGraph() const
@@ -79,20 +124,24 @@ materialGraph::Graph MaterialAsset::toGraph() const
                         !metallicRoughnessTexture.empty() ||
                         !normalTexture.empty();
   NodeId uv = 0;
+
   if (textured && (tiling != glm::vec2(1.0f) || offset != glm::vec2(0.0f)))
   {
     uv = graph.add("tilingOffset", {-1150.0f, 140.0f});
     graph.find(uv)->inputs[1] = glm::vec4(tiling, 0.0f, 0.0f);
     graph.find(uv)->inputs[2] = glm::vec4(offset, 0.0f, 0.0f);
   }
+
   const auto texture =
       [&](const std::string& name, bool data, glm::vec2 position)
   {
     const NodeId node = graph.add("texture", position);
     graph.find(node)->texture = name;
     graph.find(node)->dataTexture = data;
+
     if (uv)
       graph.connect(uv, 0, node, 0);
+
     return node;
   };
 
@@ -138,16 +187,20 @@ materialGraph::Graph MaterialAsset::toGraph() const
     const NodeId normalMap = graph.add("normalMap", {-470.0f, 620.0f});
     graph.find(normalMap)->texture = normalTexture;
     graph.find(normalMap)->inputs[1].x = normalScale; // Strength
+
     if (uv)
       graph.connect(uv, 0, normalMap, 0);
+
     graph.connect(normalMap, 0, output, kNormal);
   }
+
   return graph;
 }
 
 nlohmann::json MaterialAsset::toJson() const
 {
   nlohmann::json out;
+
   if (terrain)
     out = {
         {"formatVersion", kFormatVersion},
@@ -175,73 +228,53 @@ nlohmann::json MaterialAsset::toJson() const
         {"alphaMode", alphaModeName(alphaMode)},
         {"alphaCutoff", alphaCutoff},
     };
+
   // Only when it has some, so files without stay as they were.
   if (!terrain && !graph && doubleSided)
     out["doubleSided"] = true;
+
   if (!terrain && !graph && foliage.enabled)
     out["foliage"] = {{"translucency", foliage.translucency},
                       {"bend", foliage.bend},
                       {"sway", foliage.sway},
                       {"flutter", foliage.flutter}};
+
   if (!terrain && !graph && fadeNearCamera > 0.0f)
     out["fadeNearCamera"] = fadeNearCamera;
+
   if (!variants.empty())
     out["variants"] = variants;
+
   return out;
 }
 
-std::optional<MaterialAsset> MaterialAsset::fromJson(const nlohmann::json& json)
+const char* alphaModeName(AlphaMode mode)
 {
-  if (!json.is_object())
-    return std::nullopt;
-
-  MaterialAsset material;
-  if (const auto it = json.find("baseColor");
-      it != json.end() && it->is_array() && it->size() == 4)
-    for (int i = 0; i < 4; ++i)
-      if ((*it)[i].is_number())
-        material.baseColor[i] = (*it)[i].get<float>();
-  const auto readVec2 = [&json](const char* key, glm::vec2& out)
+  switch (mode)
   {
-    if (const auto it = json.find(key);
-        it != json.end() && it->is_array() && it->size() == 2)
-      for (int i = 0; i < 2; ++i)
-        if ((*it)[i].is_number())
-          out[i] = (*it)[i].get<float>();
-  };
-  readVec2("tiling", material.tiling);
-  readVec2("offset", material.offset);
-  read(json, "baseTexture", material.baseTexture);
-  read(json, "metallicRoughnessTexture", material.metallicRoughnessTexture);
-  read(json, "normalTexture", material.normalTexture);
-  read(json, "normalScale", material.normalScale);
-  read(json, "metallic", material.metallic);
-  read(json, "roughness", material.roughness);
-  read(json, "alphaCutoff", material.alphaCutoff);
-  read(json, "doubleSided", material.doubleSided);
-  read(json, "fadeNearCamera", material.fadeNearCamera);
-  if (const auto it = json.find("foliage"); it != json.end() && it->is_object())
-  {
-    material.foliage.enabled = true;
-    read(*it, "translucency", material.foliage.translucency);
-    read(*it, "bend", material.foliage.bend);
-    read(*it, "sway", material.foliage.sway);
-    read(*it, "flutter", material.foliage.flutter);
+  case AlphaMode::Mask:
+    return "mask";
+  case AlphaMode::Blend:
+    return "blend";
+  case AlphaMode::Additive:
+    return "additive";
+  case AlphaMode::Opaque:
+    break;
   }
-  if (const auto it = json.find("alphaMode");
-      it != json.end() && it->is_string())
-    material.alphaMode =
-        alphaModeFromName(it->get<std::string>()).value_or(AlphaMode::Opaque);
-  if (const auto it = json.find("graph"); it != json.end())
-    material.graph = materialGraph::Graph::fromJson(*it);
-  if (const auto it = json.find("terrain"); it != json.end() && it->is_object())
-    material.terrain = TerrainAsset::fromJson(*it);
-  if (const auto it = json.find("variants");
-      it != json.end() && it->is_object())
-    for (const auto& [tag, name] : it->items())
-      if (name.is_string() && !tag.empty() && !name.get<std::string>().empty())
-        material.variants[tag] = name.get<std::string>();
-  return material;
+
+  return "opaque";
+}
+
+std::optional<AlphaMode> alphaModeFromName(std::string_view name)
+{
+  for (const AlphaMode mode : {AlphaMode::Opaque,
+                               AlphaMode::Mask,
+                               AlphaMode::Blend,
+                               AlphaMode::Additive})
+    if (name == alphaModeName(mode))
+      return mode;
+
+  return std::nullopt;
 }
 
 } // namespace sfs

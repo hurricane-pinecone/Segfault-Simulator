@@ -1,19 +1,13 @@
 #include "../../testHarness.h"
-
-#include <engine/core/scripting/iLuaConfigurable.h>
-#include <engine/core/scripting/luaSchema.h>
-#include <engine/core/scripting/luaScripting.h>
+#include "engine/core/scripting/iLuaConfigurable.h"
+#include "engine/core/scripting/luaSchema.h"
+#include "engine/core/scripting/luaScripting.h"
 
 #include <stdexcept>
 #include <string>
 
 namespace
 {
-bool contains(const std::string& haystack, const std::string& needle)
-{
-  return haystack.find(needle) != std::string::npos;
-}
-
 // A configurable used to exercise the ILuaConfigurable + schema path end to
 // end.
 struct Range2
@@ -45,6 +39,11 @@ struct TestConfig : sfs::ILuaConfigurable
   void* luaConfigData() override { return this; }
   void onLuaConfigChanged() override { ++changedCount; }
 };
+
+bool contains(const std::string& haystack, const std::string& needle)
+{
+  return haystack.find(needle) != std::string::npos;
+}
 } // namespace
 
 int main()

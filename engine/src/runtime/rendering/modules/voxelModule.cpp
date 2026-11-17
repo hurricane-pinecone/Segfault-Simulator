@@ -1,11 +1,24 @@
 #include "engine/runtime/rendering/modules/voxelModule.h"
 
+#include "engine/core/rendering/iWaterSurfaceSource.h"
+#include "engine/core/rendering/mesh.h"
+#include "engine/core/rendering/vertices.h"
 #include "engine/core/voxel/voxelMesher.h"
 #include "engine/runtime/assetStore/assetStore.h"
+#include "engine/runtime/rendering/commands.h"
+#include "engine/runtime/rendering/frame.h"
 #include "engine/runtime/rendering/meshLibrary.h"
 #include "engine/runtime/rendering/modules/imageQuads.h"
+#include "engine/runtime/rendering/renderContext.h"
 #include "engine/runtime/voxel/voxelWorld.h"
-#include "glm/glm/geometric.hpp"
+
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_int3.hpp>
+#include <glm/glm/geometric.hpp>
+
+#include <cstdint>
+#include <utility>
+#include <vector>
 
 namespace sfs
 {
@@ -17,80 +30,30 @@ VoxelModule::VoxelModule(AssetStore& assets,
 {
 }
 
-MaterialHandle VoxelModule::blockMaterial(const std::string& sheet,
-                                          MeshLibrary& meshes)
-{
-  auto [at, added] = m_materials.emplace(sheet, MaterialHandle{});
-  if (added)
-    at->second = meshes.setMaterial(
-        "voxel:" + sheet, imageMaterial(m_assets, sheet, {}, AlphaMode::Mask));
-  return at->second;
-}
-
-void VoxelModule::forget(const glm::ivec3& chunk, MeshLibrary& meshes)
-{
-  const auto it = m_chunks.find(chunk);
-  if (it == m_chunks.end())
-    return;
-  for (const ChunkMesh& part : it->second)
-    meshes.remove(part.mesh);
-  m_chunks.erase(it);
-}
-
-void VoxelModule::remesh(const glm::ivec3& chunk, const RenderContext& context)
-{
-  MeshLibrary& meshes = *context.meshes;
-  // In 3D the grid is the world's ground (one block a unit), as is.
-  const Space2D space = context.space2D ? *context.space2D : Space2D{};
-  const bool placed = context.space2D != nullptr;
-  forget(chunk, meshes);
-  std::vector<ChunkMesh>& parts = m_chunks[chunk];
-  for (const VoxelMeshSlice& slice : meshChunk(chunk, m_world, m_blocks))
-  {
-    if (slice.vertices.empty() || !slice.textureId)
-      continue;
-    // The faces, from the game's grid into the world (their triangles turned
-    // the other way if the grid is the world's mirror image).
-    MeshData mesh;
-    mesh.vertices.reserve(slice.vertices.size());
-    for (const GeometryVertex& vertex : slice.vertices)
-    {
-      MeshVertex out;
-      out.position = placed ? space.place(vertex.worldPos, vertex.ground)
-                            : glm::vec3(vertex.worldPos, vertex.ground);
-      out.normal = glm::normalize(placed ? space.direction(vertex.normal)
-                                         : vertex.normal);
-      out.uv = vertex.uv;
-      mesh.vertices.push_back(out);
-    }
-    const bool flip = placed && space.mirrored();
-    for (uint32_t i = 0; i + 2 < mesh.vertices.size(); i += 3)
-      mesh.indices.insert(
-          mesh.indices.end(), {i, flip ? i + 2 : i + 1, flip ? i + 1 : i + 2});
-    const MeshHandle handle = meshes.add(mesh);
-    if (handle.valid())
-      parts.push_back({handle, blockMaterial(*slice.textureId, meshes)});
-  }
-}
-
 void VoxelModule::computeCommands(const RenderContext& context)
 {
   flush();
+
   if (!context.meshes)
     return;
+
   MeshLibrary& meshes = *context.meshes;
   const bool flat = context.space2D != nullptr;
 
   // Chunks streamed out go; those that changed (or streamed in) are made
   // again; the rest are kept as they were.
   std::vector<glm::ivec3> gone;
+
   for (const auto& [chunk, parts] : m_chunks)
     if (!m_world.hasChunk(chunk))
       gone.push_back(chunk);
+
   for (const glm::ivec3& chunk : gone)
     forget(chunk, meshes);
+
   for (const glm::ivec3& chunk : m_world.dirtyChunks())
     remesh(chunk, context);
+
   m_world.clearDirty();
 
   for (const auto& [chunk, parts] : m_chunks)
@@ -106,18 +69,23 @@ void VoxelModule::computeCommands(const RenderContext& context)
   // Water: a see-through surface over each column, at its level.
   std::vector<WaterColumn> columns;
   m_world.collectWaterColumns(columns);
+
   if (columns.empty())
     return;
+
   if (!m_quad.valid())
     m_quad = imageQuad(meshes);
+
   if (!m_water.valid())
     m_water = meshes.setMaterial(
         "voxel:water",
         imageMaterial(m_assets, "white_pixel", {}, AlphaMode::Blend));
+
   MeshDrawCommand water;
   water.pass = RenderPass::Transparent;
   water.mesh = m_quad;
   water.materials = {m_water};
+
   for (const WaterColumn& column : columns)
   {
     const glm::vec2 corner(column.tile);
@@ -137,7 +105,76 @@ void VoxelModule::computeCommands(const RenderContext& context)
     surface.tint = m_waterColor;
     water.instances.push_back(surface);
   }
+
   m_commands.push_back(std::move(water));
+}
+
+MaterialHandle VoxelModule::blockMaterial(const std::string& sheet,
+                                          MeshLibrary& meshes)
+{
+  auto [at, added] = m_materials.emplace(sheet, MaterialHandle{});
+
+  if (added)
+    at->second = meshes.setMaterial(
+        "voxel:" + sheet, imageMaterial(m_assets, sheet, {}, AlphaMode::Mask));
+
+  return at->second;
+}
+
+void VoxelModule::forget(const glm::ivec3& chunk, MeshLibrary& meshes)
+{
+  const auto it = m_chunks.find(chunk);
+
+  if (it == m_chunks.end())
+    return;
+
+  for (const ChunkMesh& part : it->second)
+    meshes.remove(part.mesh);
+
+  m_chunks.erase(it);
+}
+
+void VoxelModule::remesh(const glm::ivec3& chunk, const RenderContext& context)
+{
+  MeshLibrary& meshes = *context.meshes;
+  // In 3D the grid is the world's ground (one block a unit), as is.
+  const Space2D space = context.space2D ? *context.space2D : Space2D{};
+  const bool placed = context.space2D != nullptr;
+  forget(chunk, meshes);
+  std::vector<ChunkMesh>& parts = m_chunks[chunk];
+
+  for (const VoxelMeshSlice& slice : meshChunk(chunk, m_world, m_blocks))
+  {
+    if (slice.vertices.empty() || !slice.textureId)
+      continue;
+
+    // The faces, from the game's grid into the world (their triangles turned
+    // the other way if the grid is the world's mirror image).
+    MeshData mesh;
+    mesh.vertices.reserve(slice.vertices.size());
+
+    for (const GeometryVertex& vertex : slice.vertices)
+    {
+      MeshVertex out;
+      out.position = placed ? space.place(vertex.worldPos, vertex.ground)
+                            : glm::vec3(vertex.worldPos, vertex.ground);
+      out.normal = glm::normalize(placed ? space.direction(vertex.normal)
+                                         : vertex.normal);
+      out.uv = vertex.uv;
+      mesh.vertices.push_back(out);
+    }
+
+    const bool flip = placed && space.mirrored();
+
+    for (uint32_t i = 0; i + 2 < mesh.vertices.size(); i += 3)
+      mesh.indices.insert(
+          mesh.indices.end(), {i, flip ? i + 2 : i + 1, flip ? i + 1 : i + 2});
+
+    const MeshHandle handle = meshes.add(mesh);
+
+    if (handle.valid())
+      parts.push_back({handle, blockMaterial(*slice.textureId, meshes)});
+  }
 }
 
 } // namespace sfs

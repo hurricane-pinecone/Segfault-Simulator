@@ -1,6 +1,8 @@
 #pragma once
 
-#include "engine/core/ecs/component.h"
+// componentTypeKey<T>() is called in a template body, where the include checker
+// can't see it.
+#include "engine/core/ecs/component.h" // IWYU pragma: keep
 #include "engine/core/ecs/entity.h"
 
 #include <source_location>
@@ -60,6 +62,7 @@ bool expect(const TComponent* component,
 {
   if (component) [[likely]]
     return true;
+
   detail::expectFailed(where, entity, detail::componentTypeKey<TComponent>());
   return false;
 }

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/core/voxel/blockType.h"
 #include "engine/core/voxel/voxelView.h"
 #include "engine/core/voxel/waterChunk.h"
 
@@ -18,6 +19,7 @@ inline int cellSolidLevels(BlockId id, const IBlockRegistry& registry)
 {
   if (id == kAirBlock)
     return 0;
+
   const BlockType& bt = registry.type(id);
   return bt.solid ? blockSolidLevels(bt) : 0;
 }

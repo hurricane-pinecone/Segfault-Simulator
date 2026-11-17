@@ -17,18 +17,18 @@ namespace sfs
  */
 struct RigidBody2DComponent
 {
+  RigidBody2DComponent(glm::vec2 velocity = glm::vec2(0.0f),
+                       glm::vec2 gravity = glm::vec2(0.0f))
+      : velocity(velocity), gravity(gravity)
+  {
+  }
+
   glm::vec2 velocity{0.0f};
   glm::vec2 gravity{0.0f};
 
   // Where the body was on the plane before this frame's move (set by
   // PhysicsSystem2D).
   [[sfs::hide]] glm::vec2 previousPosition{0.0f};
-
-  RigidBody2DComponent(glm::vec2 velocity = glm::vec2(0.0f),
-                       glm::vec2 gravity = glm::vec2(0.0f))
-      : velocity(velocity), gravity(gravity)
-  {
-  }
 };
 
 } // namespace sfs

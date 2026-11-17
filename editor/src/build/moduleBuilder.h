@@ -8,6 +8,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 class Project;
@@ -18,16 +19,6 @@ class Project;
 class ModuleBuilder
 {
 public:
-  explicit ModuleBuilder(BuildEnvironment environment)
-      : m_environment(std::move(environment))
-  {
-  }
-
-  ~ModuleBuilder() { cancel(); }
-
-  ModuleBuilder(const ModuleBuilder&) = delete;
-  ModuleBuilder& operator=(const ModuleBuilder&) = delete;
-
   // What's built: the game module, or the UI Preview's module (the UI files
   // and their views' previews; see sfs_add_game_module).
   enum class Target
@@ -37,54 +28,24 @@ public:
     Web, // the whole game, for the browser (see startWeb())
   };
 
+  explicit ModuleBuilder(BuildEnvironment environment)
+      : m_environment(std::move(environment))
+  {
+  }
+
+  ModuleBuilder(const ModuleBuilder&) = delete;
+
+  ~ModuleBuilder() { cancel(); }
+
+  ModuleBuilder& operator=(const ModuleBuilder&) = delete;
+
   bool busy() const { return m_process != nullptr; }
-  /** What the running (or last) build is of. */
-  Target target() const { return m_target; }
-
-  /** How far the running build is, 0-100, as the build tool reports it; -1 if it hasn't said. */
-  int percent() const { return m_percent; }
-
-  /**
-   * Start building `project`'s module (or its UI Preview module). A UI
-   * Preview build only logs its output if it fails: it runs on every save.
-   *
-   * @return false (logged) if a build is already running or can't start
-   *         (an editor on a static engine can't build one at all, see
-   *         BuildEnvironment::engineShared()).
-   */
-  bool start(const Project& project, Target target = Target::Module);
 
   /**
    * Stop the running build, compilers and all. The next poll() reports it
    * failed.
    */
   void cancel();
-
-  /**
-   * Start building `project` as a web page into `output` (index.html and its
-   * files), its canvas `size` pixels: the engine and the scripts compiled for
-   * the browser with Emscripten (found as $EMSDK, else ~/emsdk). The first
-   * build compiles the engine too, so it takes a while.
-   *
-   * @return false (logged) if a build is running, or this editor can't.
-   */
-  bool startWeb(const Project& project,
-                const std::filesystem::path& output,
-                int width,
-                int height);
-
-  /**
-   * Advance the build. Returns nothing while it runs (or when idle), then once
-   * true (built) or false (failed, or cancelled) when it finishes.
-   */
-  std::optional<bool> poll();
-
-  /** Where `project`'s built module lands, as the editor sees it. */
-  std::filesystem::path modulePath(const Project& project) const;
-  /** Where its UI Preview module lands. */
-  std::filesystem::path uiPreviewPath(const Project& project) const;
-
-  const BuildEnvironment& environment() const { return m_environment; }
 
   /**
    * The files in `folders` (searched through) changed since `stamp` was last
@@ -99,37 +60,86 @@ public:
    * overwritten), until the header changes again.
    */
   static std::vector<std::filesystem::path>
-  changedSince(const std::filesystem::path& stamp, const std::vector<std::filesystem::path>& folders);
+  changedSince(const std::filesystem::path& stamp,
+               const std::vector<std::filesystem::path>& folders);
+
+  const BuildEnvironment& environment() const { return m_environment; }
+
+  /** Where `project`'s built module lands, as the editor sees it. */
+  std::filesystem::path modulePath(const Project& project) const;
+
+  /** How far the running build is, 0-100, as the build tool reports it; -1 if
+   * it hasn't said. */
+  int percent() const { return m_percent; }
+
+  /**
+   * Advance the build. Returns nothing while it runs (or when idle), then once
+   * true (built) or false (failed, or cancelled) when it finishes.
+   */
+  std::optional<bool> poll();
+
+  /**
+   * Start building `project`'s module (or its UI Preview module). A UI
+   * Preview build only logs its output if it fails: it runs on every save.
+   *
+   * @return false (logged) if a build is already running or can't start
+   *         (an editor on a static engine can't build one at all, see
+   *         BuildEnvironment::engineShared()).
+   */
+  bool start(const Project& project, Target target = Target::Module);
+
+  /**
+   * Start building `project` as a web page into `output` (index.html and its
+   * files), its canvas `size` pixels: the engine and the scripts compiled for
+   * the browser with Emscripten (found as $EMSDK, else ~/emsdk). The first
+   * build compiles the engine too, so it takes a while.
+   *
+   * @return false (logged) if a build is running, or this editor can't.
+   */
+  bool startWeb(const Project& project,
+                const std::filesystem::path& output,
+                int width,
+                int height);
+
+  /** What the running (or last) build is of. */
+  Target target() const { return m_target; }
+
+  /** Where its UI Preview module lands. */
+  std::filesystem::path uiPreviewPath(const Project& project) const;
 
 private:
-  bool startNextStep();
   std::filesystem::path buildDirectory(const Project& project) const;
   // After a build that succeeded: the sources saved while it ran are touched
   // (newer than every object) and it builds again. False if nothing changed.
   bool rebuildChanged();
+  std::vector<std::string> stampStep() const;
+  bool startNextStep();
+  // After a build that failed or was stopped: the sources saved while it ran
+  // are touched there and then, for the next build (which compiles them).
+  void touchChangedNow();
   // Queues the stamp and `buildStep` (the build of `sources`, into `buildDir`).
   void watch(const std::filesystem::path& buildDir,
              std::vector<std::filesystem::path> sources,
              std::vector<std::string> buildStep);
-  std::vector<std::string> stampStep() const;
-  // After a build that failed or was stopped: the sources saved while it ran
-  // are touched there and then, for the next build (which compiles them).
-  void touchChangedNow();
 
   BuildEnvironment m_environment;
   std::vector<std::vector<std::string>> m_steps; // commands still to run
   std::unique_ptr<ChildProcess> m_process;
   std::atomic<int> m_percent = -1; // written by the output reader thread
-  std::atomic<int> m_group = -1;   // the build's process group on the build machine (see stoppableCommand)
+  std::atomic<int> m_group = -1;   // the build's process group on the build
+                                   // machine (see stoppableCommand)
   bool m_cancelled = false;        // for poll() to report
   // Written (on the build machine, by its clock: the one the build tool
   // compares) just before each build step; the sources newer than it changed
   // during the build (see changedSince()).
   std::filesystem::path m_stamp;
-  std::vector<std::filesystem::path> m_sources; // the folders and files the build compiles from
-  std::vector<std::string> m_buildStep;          // the step that builds, run again by rebuildChanged()
-  int m_rebuilds = 0;                            // how many times this build has gone again
-  bool m_failAfterSteps = false;                 // the steps left only touch sources: then it failed
+  std::vector<std::filesystem::path>
+      m_sources; // the folders and files the build compiles from
+  std::vector<std::string>
+      m_buildStep;    // the step that builds, run again by rebuildChanged()
+  int m_rebuilds = 0; // how many times this build has gone again
+  bool m_failAfterSteps =
+      false; // the steps left only touch sources: then it failed
   Target m_target = Target::Module;
   // A UI Preview build's output, logged only if it fails. Written by the
   // output reader thread.

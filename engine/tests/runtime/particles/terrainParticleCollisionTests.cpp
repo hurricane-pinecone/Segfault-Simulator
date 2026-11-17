@@ -1,9 +1,10 @@
 #include "../../testHarness.h"
+#include "engine/core/particles/decal.h"
+#include "engine/core/particles/iParticleCollisionSource.h"
+#include "engine/core/rendering/iTerrainSurfaceSource.h"
+#include "engine/runtime/particles/terrainParticleCollision.h"
 
-#include <engine/core/particles/decal.h>
-#include <engine/core/particles/iParticleCollisionSource.h>
-#include <engine/core/rendering/iTerrainSurfaceSource.h>
-#include <engine/runtime/particles/terrainParticleCollision.h>
+#include <glm/glm/ext/vector_float2.hpp>
 
 #include <functional>
 

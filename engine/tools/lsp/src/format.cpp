@@ -5,8 +5,7 @@
 #include "formatOrder.h"
 #include "lintSupport.h"
 #include "runProcess.h"
-
-#include <sfs/codegen/parser.h>
+#include "sfs/codegen/parser.h"
 
 #include <tree_sitter/api.h>
 

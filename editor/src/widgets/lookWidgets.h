@@ -5,6 +5,7 @@
 #include "engine/core/rendering/contactShadows.h"
 #include "engine/core/rendering/fog.h"
 #include "engine/core/rendering/lighting.h"
+#include "engine/core/rendering/rain.h"
 #include "engine/core/rendering/sky.h"
 #include "engine/core/rendering/visualStyle.h"
 

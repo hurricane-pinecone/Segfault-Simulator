@@ -2,6 +2,8 @@
 
 #include "engine/core/logger/logger.h"
 
+#include <string>
+
 namespace sfs
 {
 

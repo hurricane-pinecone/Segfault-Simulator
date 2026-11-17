@@ -1,13 +1,17 @@
 #include "engine/core/rendering/mesh.h"
 
+#include "engine/core/rendering/aabb.h"
+
 namespace sfs
 {
 
 Aabb MeshData::bounds() const
 {
   Aabb box;
+
   for (const MeshVertex& vertex : vertices)
     box.expand(vertex.position);
+
   return box;
 }
 

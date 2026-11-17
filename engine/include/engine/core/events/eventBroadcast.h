@@ -1,7 +1,11 @@
 #pragma once
 
+#include "engine/core/ecs/entityDeclaration.h"
+#include "engine/core/events/eventInbox.h"
 #include "engine/core/events/eventQueue.h"
 
+#include <atomic>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <utility>
@@ -26,12 +30,6 @@ class Events;
 template <typename T>
 class EventBroadcast
 {
-  static_assert(detail::checkEvent<T>());
-  static_assert(detail::checkNotResponse<T>());
-  static_assert(!detail::kRequest<T>,
-                "Requests are sent on the owning thread; a worker responds "
-                "through a Responder");
-
 public:
   /** A broadcast to nowhere: send() always returns false. */
   EventBroadcast() = default;
@@ -74,6 +72,11 @@ public:
   }
 
 private:
+  static_assert(detail::checkEvent<T>());
+  static_assert(detail::checkNotResponse<T>());
+  static_assert(!detail::kRequest<T>,
+                "Requests are sent on the owning thread; a worker responds "
+                "through a Responder");
   friend class Events;
 
   explicit EventBroadcast(std::shared_ptr<detail::EventInbox<T>> inbox)
@@ -86,17 +89,24 @@ private:
   {
     if (!m_inbox)
       return false;
+
     detail::EventInbox<T>& inbox = *m_inbox;
     const std::lock_guard lock(inbox.mutex);
+
     if (!inbox.open)
       return false;
+
     inbox.staged.events.push_back(std::forward<TEvent>(event));
+
     if constexpr (detail::kKeyed<T>)
       inbox.staged.keys.push_back(*key);
+
     inbox.count.store(static_cast<uint32_t>(inbox.staged.events.size()),
                       std::memory_order_relaxed);
+
     if (inbox.log) [[unlikely]]
       detail::logWorkerSend(inbox.name);
+
     return true;
   }
 

@@ -1,12 +1,19 @@
 #include "../../testHarness.h"
+#include "engine/core/rendering/emissionLights.h"
+#include "engine/core/rendering/lighting.h"
+#include "engine/core/rendering/materialGraph.h"
+#include "engine/core/rendering/materialGraphCompiler.h"
+#include "engine/core/rendering/materialNodes.h"
+#include "engine/core/rendering/mesh.h"
+#include "engine/core/rendering/meshPrimitives.h"
 
-#include <engine/core/rendering/emissionLights.h>
-#include <engine/core/rendering/materialGraphCompiler.h>
-#include <engine/core/rendering/meshPrimitives.h>
-
-#include "glm/glm/geometric.hpp"
+#include <glm/glm/common.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
+#include <glm/glm/geometric.hpp>
 
 #include <cmath>
+#include <cstddef>
+#include <string>
 #include <vector>
 
 using namespace sfs;
@@ -17,6 +24,7 @@ namespace
 float meshArea(const MeshData& mesh)
 {
   float area = 0.0f;
+
   for (std::size_t i = 0; i + 2 < mesh.indices.size(); i += 3)
   {
     const glm::vec3& a = mesh.vertices[mesh.indices[i]].position;
@@ -24,6 +32,7 @@ float meshArea(const MeshData& mesh)
                        mesh.vertices[mesh.indices[i + 1]].position - a,
                        mesh.vertices[mesh.indices[i + 2]].position - a));
   }
+
   return area;
 }
 
@@ -32,8 +41,10 @@ std::vector<GlowPoint> glowing(const std::vector<SurfaceSample>& samples,
                                glm::vec3 offset = glm::vec3(0.0f))
 {
   std::vector<GlowPoint> points;
+
   for (const SurfaceSample& sample : samples)
     points.push_back({sample.position + offset, sample.area, emission});
+
   return points;
 }
 
@@ -51,6 +62,7 @@ int main()
     float area = 0.0f;
     int left = 0;
     bool onIt = true;
+
     for (const SurfaceSample& sample : samples)
     {
       area += sample.area;
@@ -60,21 +72,26 @@ int main()
              testing::approx(sample.normal.z, 1.0f);
       left += sample.position.x < 0.0f;
     }
+
     CHECK(testing::approx(area, 8.0f, 1e-3f));
     CHECK(onIt);
     CHECK(left >= 26 && left <= 38); // about half on each side
     const std::vector<SurfaceSample> again =
         sampleSurface(plane.vertices, plane.indices, 64);
     bool same = true;
+
     for (std::size_t i = 0; i < samples.size(); ++i)
       same = same && samples[i].position == again[i].position;
+
     CHECK(same);
 
     const MeshData sphere = meshes::sphere(0.5f, 24, 16, glm::vec3(1.0f));
     float sphereArea = 0.0f;
+
     for (const SurfaceSample& sample :
          sampleSurface(sphere.vertices, sphere.indices, 100))
       sphereArea += sample.area;
+
     CHECK(testing::approx(sphereArea, meshArea(sphere), 1e-3f));
 
     // More area, more samples, within bounds.
@@ -95,6 +112,7 @@ int main()
     emissionLights(
         glowing(samples, {4.0f, 2.0f, 0.0f}, at), 1.0f, 1.0f, lights);
     CHECK(lights.size() == 1u);
+
     if (lights.size() == 1u)
     {
       const PointLight& light = lights[0];
@@ -136,9 +154,11 @@ int main()
     const MeshData plane = meshes::plane({1.0f, 1.0f});
     std::vector<GlowPoint> points = glowing(
         sampleSurface(plane.vertices, plane.indices, 64), glm::vec3(1.0f));
+
     for (GlowPoint& point : points)
       if (point.position.x < 0.0f)
         point.emission = glm::vec3(0.0f);
+
     std::vector<PointLight> lights;
     emissionLights(points, 1.0f, 1.0f, lights);
     CHECK(lights.size() == 1u && lights[0].position.x > 0.15f);
@@ -156,12 +176,14 @@ int main()
     CHECK(lights.size() >= 8u && lights.size() <= 64u);
     glm::vec3 low(1e9f), high(-1e9f);
     float total = 0.0f;
+
     for (const PointLight& light : lights)
     {
       low = glm::min(low, light.position);
       high = glm::max(high, light.position);
       total += light.intensity;
     }
+
     CHECK(high.x - low.x > 25.0f && high.y - low.y > 25.0f);
     // Each as bright as the glow (the same all over).
     CHECK(testing::approx(
@@ -200,8 +222,10 @@ int main()
 
     // Its values decide: the same graph with the value at 0 can't.
     MeshMaterial material = compiled(lit);
+
     for (glm::vec4& value : material.shaderParameters)
       value = glm::vec4(0.0f);
+
     CHECK(!canGlow(material));
   }
 

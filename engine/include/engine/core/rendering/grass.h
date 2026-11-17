@@ -1,12 +1,13 @@
 #pragma once
 
-#include "glm/glm/common.hpp"
-#include "glm/glm/ext/matrix_float4x4.hpp"
-#include "glm/glm/ext/vector_float2.hpp"
-#include "glm/glm/ext/vector_float3.hpp"
-#include "glm/glm/ext/vector_float4.hpp"
-#include "glm/glm/ext/vector_int2.hpp"
-#include "nlohmann/json.hpp"
+#include <glm/glm/common.hpp>
+#include <glm/glm/ext/matrix_float4x4.hpp>
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
+#include <glm/glm/ext/vector_float4.hpp>
+#include <glm/glm/ext/vector_int2.hpp>
+#include <glm/glm/ext/vector_int4.hpp>
+#include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <array>
@@ -42,10 +43,17 @@ inline constexpr float kGrassMinUpness = 0.5f;
  */
 struct GrassGrid
 {
-  glm::vec2 min{0.0f};
-  glm::vec2 max{0.0f};
-  glm::ivec2 size{0, 0};
-
+  /** The centre of texel (x, y). */
+  glm::vec2 center(int x, int y) const
+  {
+    return min + (glm::vec2(x, y) + 0.5f) * texelSize();
+  }
+  std::size_t count() const
+  {
+    return empty() ? 0 : std::size_t(size.x) * size.y;
+  }
+  bool empty() const { return size.x <= 0 || size.y <= 0; }
+  bool operator==(const GrassGrid&) const = default;
   /**
    * A grid over `min`..`max` with square texels about `texel` across (at
    * most `maxTexels` a side, so coarser for big rectangles).
@@ -54,18 +62,7 @@ struct GrassGrid
                         glm::vec2 max,
                         float texel,
                         int maxTexels = kGrassMaxTexels);
-
-  bool empty() const { return size.x <= 0 || size.y <= 0; }
-  std::size_t count() const
-  {
-    return empty() ? 0 : std::size_t(size.x) * size.y;
-  }
   glm::vec2 texelSize() const { return (max - min) / glm::vec2(size); }
-  /** The centre of texel (x, y). */
-  glm::vec2 center(int x, int y) const
-  {
-    return min + (glm::vec2(x, y) + 0.5f) * texelSize();
-  }
   /** Where a point is, in texels (texel (x, y)'s centre at x + 0.5, y + 0.5).
    */
   glm::vec2 toTexels(glm::vec2 point) const
@@ -73,7 +70,9 @@ struct GrassGrid
     return (point - min) / texelSize();
   }
 
-  bool operator==(const GrassGrid&) const = default;
+  glm::vec2 min{0.0f};
+  glm::vec2 max{0.0f};
+  glm::ivec2 size{0, 0};
 };
 
 /**
@@ -100,9 +99,6 @@ GrassGrid grassWindow(glm::vec2 min,
 class GrassHeights
 {
 public:
-  /** Texels a side of a block. */
-  static constexpr int kBlock = 8;
-
   GrassHeights() = default;
   /** Of `texels` (xyz normal, zero where there's no ground; w height) over
    * `grid`. */
@@ -115,6 +111,9 @@ public:
    * touch. Low above high if there's none.
    */
   glm::vec2 range(glm::ivec2 from, glm::ivec2 to) const;
+
+  /** Texels a side of a block. */
+  static constexpr int kBlock = 8;
 
 private:
   GrassGrid m_grid;
@@ -145,8 +144,12 @@ public:
                            std::span<const glm::vec2> uvs = {},
                            const GrassGrid* window = nullptr);
 
-  const GrassGrid& grid() const { return m_grid; }
   bool empty() const { return m_texels.empty(); }
+
+  const GrassGrid& grid() const { return m_grid; }
+
+  /** How many texels have ground. */
+  std::size_t groundTexels() const;
 
   /** Whether texel (x, y) has ground. */
   bool has(int x, int y) const
@@ -154,6 +157,16 @@ public:
     return texel(x, y).x != 0.0f || texel(x, y).y != 0.0f ||
            texel(x, y).z != 0.0f;
   }
+
+  /**
+   * The mesh's texture coordinates at texel (x, y)'s ground (built with the
+   * mesh's UVs; else none): where a terrain's splat map is there.
+   */
+  bool hasUvs() const { return !m_uvs.empty(); }
+
+  /** How high its ground is, roughly, for finding it quickly. */
+  const GrassHeights& heights() const { return m_heights; }
+
   /** Texel (x, y): its normal (the mesh's own space, unit) and height; zero
    * normal if none. */
   const glm::vec4& texel(int x, int y) const
@@ -163,17 +176,6 @@ public:
   /** Every texel, rows from min y: as the GPU reads them. */
   std::span<const glm::vec4> texels() const { return m_texels; }
 
-  /** How many texels have ground. */
-  std::size_t groundTexels() const;
-
-  /** How high its ground is, roughly, for finding it quickly. */
-  const GrassHeights& heights() const { return m_heights; }
-
-  /**
-   * The mesh's texture coordinates at texel (x, y)'s ground (built with the
-   * mesh's UVs; else none): where a terrain's splat map is there.
-   */
-  bool hasUvs() const { return !m_uvs.empty(); }
   glm::vec2 uv(int x, int y) const
   {
     return m_uvs.empty() ? glm::vec2(0.0f)
@@ -209,62 +211,42 @@ public:
     m_values.assign(std::size_t(m_tiles.x) * m_tiles.y, value);
     m_texels.assign(m_values.size(), {});
   }
-
-  glm::ivec2 size() const { return m_size; }
-  /** Tiles across and down. */
-  glm::ivec2 tiles() const { return m_tiles; }
-  std::size_t tileCount() const { return m_values.size(); }
-  /** The tile texel (x, y) is in. */
-  int tileOf(int x, int y) const
-  {
-    return (y / kGrassMapTile) * m_tiles.x + x / kGrassMapTile;
-  }
-
   T at(int x, int y) const
   {
     const int tile = tileOf(x, y);
     const std::vector<T>& texels = m_texels[tile];
     return texels.empty() ? m_values[tile] : texels[inTile(x, y)];
   }
-  void set(int x, int y, const T& value)
+  /** About how much memory its values take (bytes). */
+  std::size_t bytes() const
   {
-    const int tile = tileOf(x, y);
-    std::vector<T>& texels = m_texels[tile];
-    if (texels.empty())
-    {
-      if (m_values[tile] == value)
-        return;
-      texels.assign(std::size_t(kGrassMapTile) * kGrassMapTile, m_values[tile]);
-    }
-    texels[inTile(x, y)] = value;
-  }
-  /** Every texel `value` (all tiles one value). */
-  void fill(const T& value)
-  {
-    std::fill(m_values.begin(), m_values.end(), value);
-    for (std::vector<T>& texels : m_texels)
-      std::vector<T>().swap(texels);
-  }
-  /** Whether a tile is one value all over (and so, uniform(), which). */
-  bool isUniform(int tile) const { return m_texels[tile].empty(); }
-  const T& uniform(int tile) const { return m_values[tile]; }
-  /** A whole tile `value`. */
-  void setTile(int tile, const T& value)
-  {
-    m_values[tile] = value;
-    std::vector<T>().swap(m_texels[tile]);
+    return m_values.size() * sizeof(T) +
+           mixedTiles() * kGrassMapTile * kGrassMapTile * sizeof(T);
   }
   /** A tile kept as one value again, if it's all one. */
   void compact(int tile)
   {
     std::vector<T>& texels = m_texels[tile];
+
     if (texels.empty())
       return;
+
     for (const T& value : texels)
       if (!(value == texels.front()))
         return;
+
     setTile(tile, T(texels.front()));
   }
+  /** Every texel `value` (all tiles one value). */
+  void fill(const T& value)
+  {
+    std::fill(m_values.begin(), m_values.end(), value);
+
+    for (std::vector<T>& texels : m_texels)
+      std::vector<T>().swap(texels);
+  }
+  /** Whether a tile is one value all over (and so, uniform(), which). */
+  bool isUniform(int tile) const { return m_texels[tile].empty(); }
   /** How many tiles keep a value a texel. */
   std::size_t mixedTiles() const
   {
@@ -273,12 +255,37 @@ public:
                                      [](const std::vector<T>& texels)
                                      { return !texels.empty(); }));
   }
-  /** About how much memory its values take (bytes). */
-  std::size_t bytes() const
+  void set(int x, int y, const T& value)
   {
-    return m_values.size() * sizeof(T) +
-           mixedTiles() * kGrassMapTile * kGrassMapTile * sizeof(T);
+    const int tile = tileOf(x, y);
+    std::vector<T>& texels = m_texels[tile];
+
+    if (texels.empty())
+    {
+      if (m_values[tile] == value)
+        return;
+
+      texels.assign(std::size_t(kGrassMapTile) * kGrassMapTile, m_values[tile]);
+    }
+
+    texels[inTile(x, y)] = value;
   }
+  /** A whole tile `value`. */
+  void setTile(int tile, const T& value)
+  {
+    m_values[tile] = value;
+    std::vector<T>().swap(m_texels[tile]);
+  }
+  glm::ivec2 size() const { return m_size; }
+  std::size_t tileCount() const { return m_values.size(); }
+  /** The tile texel (x, y) is in. */
+  int tileOf(int x, int y) const
+  {
+    return (y / kGrassMapTile) * m_tiles.x + x / kGrassMapTile;
+  }
+  /** Tiles across and down. */
+  glm::ivec2 tiles() const { return m_tiles; }
+  const T& uniform(int tile) const { return m_values[tile]; }
 
 private:
   static int inTile(int x, int y)
@@ -347,14 +354,15 @@ struct GrassRoll
  */
 struct GrassAnchor
 {
+  bool operator==(const GrassAnchor&) const = default;
+  bool settled() const { return time == kSettled; }
+
   static constexpr uint32_t kSettled = 0xffffffffu;
   uint32_t time = kSettled;
   uint8_t cover = 0;
   uint8_t length = 0;
   uint8_t flat = 255;
   uint8_t classes = 0;
-  bool settled() const { return time == kSettled; }
-  bool operator==(const GrassAnchor&) const = default;
 };
 
 /**
@@ -743,6 +751,8 @@ struct GrassShape
  */
 struct GrassVigourSettings
 {
+  bool operator==(const GrassVigourSettings&) const = default;
+
   bool on = false;
   float scale = 1.0f;
   float bias = 0.0f;
@@ -752,7 +762,6 @@ struct GrassVigourSettings
   float detailSize = 8.0f;
   float outside = 0.5f;
   bool drivesData0 = false;
-  bool operator==(const GrassVigourSettings&) const = default;
 };
 
 /**
@@ -762,14 +771,14 @@ struct GrassVigourSettings
  */
 struct GrassVigourField
 {
+  bool empty() const { return size.x <= 0 || size.y <= 0; }
+  /** Bilinear at a world XY point; `outside` off it. */
+  float sample(glm::vec2 point, float outside) const;
+
   glm::vec2 min{0.0f};
   glm::vec2 max{0.0f};
   glm::ivec2 size{0, 0};
   std::vector<float> values;
-
-  bool empty() const { return size.x <= 0 || size.y <= 0; }
-  /** Bilinear at a world XY point; `outside` off it. */
-  float sample(glm::vec2 point, float outside) const;
 };
 
 /** The ground's smooth detail noise vigour takes (GrassVigourSettings), 0..1.
@@ -797,10 +806,6 @@ struct GrassBender
 class GrassTrample
 {
 public:
-  /** Texels a world unit, and most a side. */
-  static constexpr float kTexelsPerUnit = 8.0f;
-  static constexpr int kMaxTexels = 512;
-
   GrassTrample() = default;
 
   /** A map over `ground` placed by `model`, its blades up to `bladeHeight`
@@ -808,6 +813,37 @@ public:
   GrassTrample(const GrassGround& ground,
                const glm::mat4& model,
                float bladeHeight);
+
+  /** Which way it's pressed there (unit, or zero). */
+  glm::vec2 direction(glm::vec2 point) const;
+
+  /** How flattened the grass at a world XY point is, 0 to 1. */
+  float flattened(glm::vec2 point) const;
+
+  /**
+   * RGBA8, rows from the map's min y: rg the direction (x 0.5 + 0.5), b how
+   * flattened, a 255.
+   */
+  std::vector<uint8_t> image() const { return m_pixels; }
+
+  /** Mark everything changed (e.g. for a fresh upload). */
+  void markAllChanged();
+
+  glm::vec2 max() const { return m_max; }
+
+  glm::vec2 min() const { return m_min; }
+
+  /** image() of a rectangle of texels (rows from its min y). */
+  void pixels(glm::ivec2 from, glm::ivec2 to, std::vector<uint8_t>& out) const;
+
+  glm::ivec2 size() const { return m_size; }
+
+  /**
+   * The texels whose image() changed since the last call, as a rectangle (min
+   * inclusive, max exclusive; empty if none), then forgets them. A new map's
+   * are all of it.
+   */
+  std::pair<glm::ivec2, glm::ivec2> takeChanged();
 
   /**
    * Spring back (fully over `recovery` seconds), then press down where
@@ -823,45 +859,23 @@ public:
   bool
   update(float seconds, std::span<const GrassBender> benders, float recovery);
 
-  /** How flattened the grass at a world XY point is, 0 to 1. */
-  float flattened(glm::vec2 point) const;
-  /** Which way it's pressed there (unit, or zero). */
-  glm::vec2 direction(glm::vec2 point) const;
-
-  /**
-   * RGBA8, rows from the map's min y: rg the direction (x 0.5 + 0.5), b how
-   * flattened, a 255.
-   */
-  std::vector<uint8_t> image() const { return m_pixels; }
-  /** image() of a rectangle of texels (rows from its min y). */
-  void pixels(glm::ivec2 from, glm::ivec2 to, std::vector<uint8_t>& out) const;
-
-  /**
-   * The texels whose image() changed since the last call, as a rectangle (min
-   * inclusive, max exclusive; empty if none), then forgets them. A new map's
-   * are all of it.
-   */
-  std::pair<glm::ivec2, glm::ivec2> takeChanged();
-  /** Mark everything changed (e.g. for a fresh upload). */
-  void markAllChanged();
-
-  glm::ivec2 size() const { return m_size; }
-  glm::vec2 min() const { return m_min; }
-  glm::vec2 max() const { return m_max; }
+  /** Texels a world unit, and most a side. */
+  static constexpr float kTexelsPerUnit = 8.0f;
+  static constexpr int kMaxTexels = 512;
 
 private:
-  int indexOf(glm::vec2 point) const; // -1 off the map
-  int tileOf(int x, int y) const { return (y / kTile) * m_tiles.x + x / kTile; }
-
-  // Square tiles of texels, each marked if any of its grass is down (and, in
-  // an update, if it's to be looked at for changes).
-  static constexpr int kTile = 16;
   enum TileFlags : uint8_t
   {
     kDown = 1,
     kTouched = 2,
   };
 
+  int indexOf(glm::vec2 point) const; // -1 off the map
+  int tileOf(int x, int y) const { return (y / kTile) * m_tiles.x + x / kTile; }
+
+  // Square tiles of texels, each marked if any of its grass is down (and, in
+  // an update, if it's to be looked at for changes).
+  static constexpr int kTile = 16;
   glm::vec2 m_min{0.0f};
   glm::vec2 m_max{0.0f};
   glm::ivec2 m_size{0, 0};
