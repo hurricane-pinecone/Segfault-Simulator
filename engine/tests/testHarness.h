@@ -38,22 +38,6 @@
 namespace testing
 {
 /**
- * Whether the build runs under AddressSanitizer or ThreadSanitizer, which slow
- * code several times over, so timing checks don't hold there and are skipped.
- */
-#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
-inline constexpr bool SANITIZED = true;
-#elif defined(__has_feature)
-  #if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer)
-inline constexpr bool SANITIZED = true;
-  #else
-inline constexpr bool SANITIZED = false;
-  #endif
-#else
-inline constexpr bool SANITIZED = false;
-#endif
-
-/**
  * Runs a command line as std::system does. On Windows, cmd.exe drops the first
  * and last quote of a line that starts with one, so there the whole line gets a
  * pair of its own.

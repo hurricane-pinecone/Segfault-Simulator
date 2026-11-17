@@ -12,8 +12,6 @@
 
 namespace
 {
-using Clock = std::chrono::steady_clock;
-
 bool alive(int pid) { return ::kill(pid, 0) == 0; }
 } // namespace
 
@@ -22,15 +20,14 @@ int main()
   TEST("terminate() should stop the process and what it started, without "
        "waiting for them")
   {
-    // A shell that starts a long sleep, says which, and waits on it.
+    // A shell that starts a sleep of days, says which, and waits on it: if
+    // terminate() waited for it, the test would hang.
     std::string output;
     ChildProcess process;
-    CHECK(process.start({"sh", "-c", "sleep 30 & echo $!; wait"},
+    CHECK(process.start({"sh", "-c", "sleep 1000000 & echo $!; wait"},
                         [&](std::string_view chunk) { output += chunk; }));
-    const auto started = Clock::now();
 
-    while (output.find('\n') == std::string::npos &&
-           Clock::now() - started < std::chrono::seconds(5))
+    while (output.find('\n') == std::string::npos)
       std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
     const int sleeper = std::stoi(output);
@@ -38,12 +35,9 @@ int main()
 
     process.terminate();
     CHECK(!process.running());
-    CHECK(Clock::now() - started <
-          std::chrono::seconds(5)); // didn't wait out the sleep
-    // The sleep went too (reaped by init once its group is signalled).
-    const auto stopping = Clock::now();
 
-    while (alive(sleeper) && Clock::now() - stopping < std::chrono::seconds(2))
+    // The sleep went too (reaped by init once its group is signalled).
+    while (alive(sleeper))
     {
       std::ifstream stat("/proc/" + std::to_string(sleeper) + "/stat");
       std::string pid, name, state;

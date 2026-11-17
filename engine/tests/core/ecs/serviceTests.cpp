@@ -553,7 +553,7 @@ int main()
     CHECK((found == std::vector<int>{1}));
     CHECK((failed == std::vector<int>{3}));
 
-    for (int i = 0; i < 2000 && jobsDone.load() < 1; ++i)
+    while (jobsDone.load() < 1)
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
 
     registry.events().takeIn();
@@ -562,7 +562,7 @@ int main()
     CHECK(legs == 1);
     asker.cancel(d);
 
-    for (int i = 0; i < 2000 && jobsDone.load() < 2; ++i)
+    while (jobsDone.load() < 2)
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
 
     CHECK(sawSuperseded.load());

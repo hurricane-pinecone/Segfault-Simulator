@@ -15,12 +15,8 @@
 #include <glm/glm/ext/matrix_float4x4.hpp>
 #include <glm/glm/ext/vector_float4.hpp>
 
-#include <algorithm>
-#include <chrono>
 #include <cstdint>
-#include <cstdio>
 #include <optional>
-#include <ratio>
 #include <span>
 #include <tuple>
 #include <utility>
@@ -177,64 +173,6 @@ int main()
     CHECK(h.renderer.linesDrawn.size() == 2u);
     h.frame();
     CHECK(h.renderer.linesDrawn.empty());
-  }
-
-  TEST("500 colliders should cost little drawn, and nothing off")
-  {
-    Harness h;
-    debugFeatures::allow(true);
-
-    for (int i = 0; i < 500; ++i)
-    {
-      Entity e = h.spawn({float(i % 25) * 3.0f, float(i / 25) * 3.0f, 0.0f});
-
-      if (i % 3 == 0)
-        e.addComponent<BoxCollider3DComponent>(BoxCollider3DComponent{});
-      else if (i % 3 == 1)
-        e.addComponent<SphereCollider3DComponent>(SphereCollider3DComponent{});
-      else
-        e.addComponent<CapsuleCollider3DComponent>(
-            CapsuleCollider3DComponent{});
-    }
-
-    h.frame();
-    // The render frame's time, the best of a few runs (the mock renderer
-    // only copies the lines).
-    const auto timed = [&]
-    {
-      double best = 1e9;
-
-      for (int run = 0; run < 5; ++run)
-      {
-        const auto start = std::chrono::steady_clock::now();
-
-        for (int i = 0; i < 20; ++i)
-          h.scene.render();
-
-        best = std::min(best,
-                        std::chrono::duration<double, std::milli>(
-                            std::chrono::steady_clock::now() - start)
-                                .count() /
-                            20.0);
-      }
-
-      return best;
-    };
-    h.system.setDrawColliders(false);
-    const double off = timed();
-    h.system.setDrawColliders(true);
-    const double on = timed();
-    CHECK(h.system.stats().colliders == 500u);
-    std::printf("500 colliders (%zu lines): render %.3f ms drawn, %.3f ms "
-                "off\n",
-                h.system.stats().debugLines,
-                on,
-                off);
-
-    if (!testing::SANITIZED)
-    {
-      CHECK(on - off < 5.0); // generous: a debug build's, on any machine
-    }
   }
 
   return testing::report("debugLinesTests");

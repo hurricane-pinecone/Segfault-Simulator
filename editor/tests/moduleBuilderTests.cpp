@@ -15,6 +15,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <vector>
 
 namespace fs = std::filesystem;
 
@@ -152,7 +153,7 @@ int main()
       CHECK(builder.start(*project));
       std::optional<bool> built;
 
-      for (int i = 0; i < 3000 && !(built = builder.poll()); ++i)
+      while (!(built = builder.poll()))
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
       CHECK(built == std::optional<bool>(true));

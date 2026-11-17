@@ -67,6 +67,11 @@ public:
     unsigned reserve = 1;   // workers look-ahead work leaves free
     float logLateAfter =
         0.25f; // s late a miss is logged from (all are counted)
+    /**
+     * The time it goes by: empty for the steady clock. A test gives its own,
+     * to set the time deadlines are judged at.
+     */
+    std::function<Clock::time_point()> now;
   };
 
   /** What a step is given: publish its legs, fork parallel tasks. */
@@ -204,6 +209,8 @@ private:
   // with m_mutex held.
   void forgetUncollectedLocked(const Job& job);
   void fork(Job& job, std::function<void(const std::atomic<bool>&)> task);
+  // Settings::now's time, or the steady clock's.
+  Clock::time_point now() const;
   // The task a free worker takes now (null: none; `wake`: when to look
   // again for a deferred one). Under m_mutex.
   std::shared_ptr<Task> pick(Clock::time_point now, Clock::time_point& wake);

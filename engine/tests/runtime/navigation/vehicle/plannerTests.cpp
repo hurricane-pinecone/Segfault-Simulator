@@ -796,12 +796,9 @@ int main()
         submitPlan(scheduler, 1, "test", PlanScheduler::Clock::now(), q);
     PlanResult r;
     int legs = 0;
-    // Waits by the clock, not a count of polls: a sanitized build plans
-    // several times slower.
-    const auto waitUntil =
-        std::chrono::steady_clock::now() + std::chrono::seconds(120);
 
-    while (std::chrono::steady_clock::now() < waitUntil)
+    // However long the machine takes to plan it.
+    for (;;)
     {
       const PlanScheduler::Collected c = scheduler.collect(t);
 

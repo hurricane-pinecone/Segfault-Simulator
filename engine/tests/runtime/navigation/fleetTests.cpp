@@ -1267,12 +1267,9 @@ int main()
     CHECK(partials > 0); // (the search did hand over clear ways so far)
     f.requestGoal(1, {{{22.0f, 0.0f}, 0.0f}});
     bool movedEarly = false, planned = false;
-    // Waits by the clock, not a count of frames: a sanitized build plans
-    // several times slower.
-    const auto waitUntil =
-        std::chrono::steady_clock::now() + std::chrono::seconds(60);
 
-    while (!f.path(1) && std::chrono::steady_clock::now() < waitUntil)
+    // Frames till the plan's in, however long the machine takes to make it.
+    while (!f.path(1))
     {
       f.update(1.0 / 60.0);
       planned = planned || f.state(1) == Fleet::State::Planning;
@@ -1312,7 +1309,7 @@ int main()
     CHECK(f.planningAhead(1));
     std::optional<AgentPlan> next;
 
-    for (int i = 0; i < 4000 && !next; ++i)
+    while (!next)
     {
       next = f.ahead(1);
 

@@ -186,12 +186,13 @@ void PlanScheduler::finishStep(const std::shared_ptr<Job>& job,
   }
 
   if (job->forks > 0)
-    job->doneWaits = true;
-  else
   {
-    job->state = State::Done;
-    forgetUncollectedLocked(*job);
+    job->doneWaits = true;
+    return;
   }
+
+  job->state = State::Done;
+  forgetUncollectedLocked(*job);
 }
 
 void PlanScheduler::forgetUncollectedLocked(const Job& job)
@@ -231,6 +232,11 @@ void PlanScheduler::fork(Job& job,
     m_queue.push_back(std::move(task));
   }
   m_wake.notify_one();
+}
+
+PlanScheduler::Clock::time_point PlanScheduler::now() const
+{
+  return m_settings.now ? m_settings.now() : Clock::now();
 }
 
 std::size_t PlanScheduler::pending() const
@@ -326,7 +332,7 @@ PlanScheduler::pick(Clock::time_point now, Clock::time_point& wake)
 
 void PlanScheduler::publish(Job& job, std::any leg)
 {
-  const Clock::time_point now = Clock::now();
+  const Clock::time_point now = this->now();
   double late = 0.0;
   std::size_t index = 0;
   {
@@ -399,7 +405,7 @@ void PlanScheduler::run()
         }
 
         Clock::time_point wake;
-        task = pick(Clock::now(), wake);
+        task = pick(now(), wake);
 
         if (task)
           break;
@@ -426,7 +432,7 @@ void PlanScheduler::run()
       ++(task->fork ? m_stats.forks : m_stats.steps);
     }
     Job& job = *task->job;
-    const Clock::time_point t0 = Clock::now();
+    const Clock::time_point t0 = now();
     bool more = false;
     std::string failed;
     try
@@ -449,7 +455,7 @@ void PlanScheduler::run()
     {
       failed = "unknown error";
     }
-    const double seconds = secondsBetween(t0, Clock::now());
+    const double seconds = secondsBetween(t0, now());
 
     if (!failed.empty())
       fail(job, failed);
@@ -522,7 +528,7 @@ PlanScheduler::Stats PlanScheduler::stats() const
 PlanScheduler::JobId PlanScheduler::submit(Request request)
 {
   auto job = std::make_shared<Job>();
-  job->asked = Clock::now();
+  job->asked = now();
   job->estimate = std::max(request.estimate, 0.0f);
   job->request = std::move(request);
 

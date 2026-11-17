@@ -18,9 +18,10 @@ vehicle.
 ## Pool
 
 `hardware threads - 2` workers, at least 2 (`PlanScheduler::defaultThreads()`;
-`Settings::threads` overrides it, for tests). No owner (an agent) holds more
-than `threads - reserve` workers at once, so another's short job always finds
-one free, however long this one's steps take. The workers run below normal
+`Settings::threads` overrides it, for tests; `Settings::now`, the clock it
+goes by, is the steady clock unless a test gives its own). No owner (an agent)
+holds more than `threads - reserve` workers at once, so another's short job
+always finds one free, however long this one's steps take. The workers run below normal
 priority (`lowerThisThreadPriority()`, `engine/core/util/threadPriority.h`):
 they may use every core they're given, but never take a time slice the game's
 or the renderer's thread is waiting for (a frame preempted while it hands a
@@ -137,8 +138,10 @@ current path ends. One look-ahead per agent at a time: a new one replaces it.
 ## Tests
 
 `engine/tests/runtime/navigation/schedulerTests.cpp`: earliest deadline first,
-escalation of a job that will miss, fairness (a big job never starves a short
-one), streaming order, cancel, look-ahead shedding under load, parallel tasks
-inside a job, errors, misses, and a benchmark (one long job of several seconds
-beside sixty short ones: the short ones' p50/p95 latency alone and beside it).
+escalation of a job that will miss, fairness (one owner's work, parallel tasks
+included, never holds every worker), streaming order, cancel, look-ahead
+shedding under load, parallel tasks inside a job, errors and misses. They hold
+however fast the machine runs: the schedulers go by a test clock
+(`Settings::now`) that only moves when a test moves it, and the tests wait on
+what they check, never for a while.
 `fleetTests` checks no partial leg is ever driven and the look-ahead hand-over.

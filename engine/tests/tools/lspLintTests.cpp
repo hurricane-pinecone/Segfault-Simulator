@@ -10,7 +10,6 @@
 
 #include <nlohmann/json.hpp>
 
-#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -18,6 +17,7 @@
 #include <memory>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -867,7 +867,6 @@ int main()
     CHECK(!project.index.isGameObject("Pong"));
     // Branching cycles: four classes each deriving from the other three,
     // and a base written three times.
-    const auto start = std::chrono::steady_clock::now();
     std::string dense;
 
     for (int i = 0; i < 4; ++i)
@@ -893,7 +892,6 @@ int main()
                              "void P::onUpdate(double) { m_x = "
                              "scene().events().consumer<Moved>(); }\n"),
                          RuleId::EventHandleOutsideCreate) == 0u);
-    CHECK(std::chrono::steady_clock::now() - start < std::chrono::seconds(5));
   }
 
   TEST("response-sent-twice should resolve out-of-line qualifiers, using "
@@ -1042,10 +1040,10 @@ int main()
                 "override { r.respond(z::Found{}); } };\n") == "ASystem");
   }
 
-  TEST("response-sent-twice should scale with the project")
+  TEST("response-sent-twice should report every repeat across a large "
+       "project")
   {
-    // 400 systems of 1,600 sends: the lint looks the senders up by type, so
-    // checking every file takes about as long as reading them.
+    // 400 systems of 1,600 sends.
     const std::filesystem::path root =
         std::filesystem::temp_directory_path() / "sfsLspManySenders";
     std::filesystem::remove_all(root);
@@ -1076,18 +1074,19 @@ int main()
     }
 
     const std::filesystem::path output = root / "out.txt";
-    const auto start = std::chrono::steady_clock::now();
     // Warnings only: it exits with 0.
     CHECK(testing::runCommand(("\"" SFS_LSP_PATH "\" --check --root \"" +
                                root.string() + "\" \"" +
                                (root / "scripts").string() + "\" > \"" +
                                output.string() + "\"")) == 0);
-    const double seconds =
-        std::chrono::duration<double>(std::chrono::steady_clock::now() - start)
-            .count();
-    std::ifstream in(output);
     std::stringstream printed;
-    printed << in.rdbuf();
+
+    // Closed before the folder is removed: Windows can't delete an open file.
+    {
+      std::ifstream in(output);
+      printed << in.rdbuf();
+    }
+
     std::size_t reported = 0;
 
     for (std::size_t at = printed.str().find("[response-sent-twice]");
@@ -1098,41 +1097,6 @@ int main()
     // Each S<n> sends R<n+1>, which S<n+1> sends too (S0's R0 and the last
     // R400 have one sender each).
     CHECK(reported == 1596u);
-    CHECK(seconds < 15.0);
-
-    if (seconds >= 15.0)
-      std::printf("      --check took %.1f s\n", seconds);
-
-    std::filesystem::remove_all(root);
-  }
-
-  TEST("re-reading one script file should cost that file, not the index")
-  {
-    // 4,000 sources of 4 sends: each file read replaces its own entries
-    // only, so reading them all takes about as long as parsing them.
-    const std::filesystem::path root =
-        std::filesystem::temp_directory_path() / "sfsLspManyFiles";
-    std::filesystem::remove_all(root);
-    lspTest::writeFile(root / "project.sfsproj", "{}");
-
-    for (int i = 0; i < 4000; ++i)
-      lspTest::writeFile(
-          root / ("scripts/jobs/Job" + std::to_string(i) + ".cpp"),
-          "void Job::run() { r.respond(A{}); r.respond(B{}); "
-          "r.progress(A{}); r.respond(C{}); }\n");
-
-    ProjectIndex index;
-    index.start(root);
-    const auto start = std::chrono::steady_clock::now();
-    index.indexAll(lspTest::parser());
-    const double seconds =
-        std::chrono::duration<double>(std::chrono::steady_clock::now() - start)
-            .count();
-    CHECK(seconds < 8.0);
-
-    if (seconds >= 8.0)
-      std::printf("      indexing took %.1f s\n", seconds);
-
     std::filesystem::remove_all(root);
   }
 

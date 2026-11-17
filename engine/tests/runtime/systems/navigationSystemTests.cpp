@@ -197,6 +197,16 @@ struct World
     return e;
   }
 
+  // One frame, then waits till the planning it asked for is done, so a plan
+  // takes the same frames however fast the machine runs it.
+  void step()
+  {
+    scene.update(FRAME);
+
+    while (navigation.scheduler().pending() > 0)
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+
   // Run till `agent` arrives or is blocked (or `seconds` pass).
   std::vector<Heard> run(const Entity& agent, double seconds)
   {
@@ -204,16 +214,12 @@ struct World
 
     for (double t = 0.0; t < seconds; t += FRAME)
     {
-      scene.update(FRAME);
+      step();
 
       for (auto [about, news] : agentNews.read())
         events.push_back({about, news.what.kind, news.what.blockers.size()});
 
       const nav::Fleet::State st = navigation.state(agent);
-
-      // (Plans run on worker threads: while it plans, wait for real.)
-      if (st == nav::Fleet::State::Planning)
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
 
       if (st == nav::Fleet::State::Arrived || st == nav::Fleet::State::Blocked)
         break;
@@ -274,12 +280,10 @@ int main()
         "test",
         nav::PlanScheduler::Clock::now(),
         [](const std::atomic<bool>&) { return std::any(42); });
-    const auto until =
-        std::chrono::steady_clock::now() + std::chrono::seconds(5);
     nav::PlanScheduler::Collected in;
     std::vector<std::any> legs;
 
-    while (std::chrono::steady_clock::now() < until)
+    for (;;)
     {
       in = shared->collect(job);
       legs.insert(legs.end(), in.legs.begin(), in.legs.end());
@@ -332,7 +336,7 @@ int main()
     {
       const bool before =
           world.navigation.state(car) == nav::Fleet::State::Arrived;
-      world.scene.update(FRAME);
+      world.step();
 
       for (const Heard& e : listener.heard)
         if (e.agent == car && e.kind == nav::Fleet::Event::Kind::Arrived)
@@ -341,9 +345,6 @@ int main()
           heardOnArrival = !before && world.navigation.state(car) ==
                                           nav::Fleet::State::Arrived;
         }
-
-      if (world.navigation.state(car) == nav::Fleet::State::Planning)
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
 
       if (arrivals > 0)
         break;
@@ -394,22 +395,17 @@ int main()
     World world;
     world.solid({12.0f, 0.0f, 1.0f}, {1.0f, 8.0f, 2.0f});
     Entity car = world.car({0.0f, 0.0f}, 0.0f, specs.car);
-    // Waits by the clock, not a count of frames: the graph is built on the
-    // scheduler's workers, which a busy machine runs late.
+    // The graph is built on the scheduler's workers: each frame waits for
+    // them.
     const auto graphWith = [&](std::size_t edges)
     {
-      const auto waitUntil =
-          std::chrono::steady_clock::now() + std::chrono::seconds(60);
-
-      while (std::chrono::steady_clock::now() < waitUntil)
+      for (int frame = 0; frame < 10; ++frame)
       {
-        world.scene.update(FRAME);
+        world.step();
         const auto& g = world.navigation.fleet().world().graph;
 
         if (g && g->edges().size() == edges)
           return g;
-
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
       }
 
       return std::shared_ptr<const nav::CoarseGraph>();

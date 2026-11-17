@@ -58,5 +58,5 @@ returns an invalid entity: check `isValid()`.
 Prefabs are read once and kept by the asset store, so spawning many copies of
 a few prefabs only costs the copies: 1000 spawns of a prefab with two entities
 and a capsule collider take about **24 ms**, and their bodies about **10 ms**
-on physics' next update (`prefabSystemTests`, Debug build). Spawning hundreds
+on physics' next update (measured in a Debug build). Spawning hundreds
 at load is fine; spread thousands over frames if they would cost a frame.

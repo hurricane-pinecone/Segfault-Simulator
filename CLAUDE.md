@@ -45,20 +45,20 @@ it. The standard engine approach is the baseline; do better where the data allow
   system-defined struct held from a component by pointer.
 - Systems and services are single-purpose and never read other systems or services: what one needs from another
   concern comes through components and events.
-- How systems communicate: a component holds its entity's state; any system may read it, and one system writes each
-  field. Everything a system or service tells another is an event (docs/core/events), never a flag, message or request
-  field on a component, a `getSystem` call or a callback. News (`[[sfs::event_news]]`, named `...Event`) says something
-  happened; entity news (`[[sfs::event_entity_news]]`) says it of one entity. A request (`[[sfs::event_request(...)]]`,
-  `...Request`) is asked through an `EventRequester` and answered with responses (`...Response`) that only that
-  requester gets. Consumers and requesters are made in `create()` and kept as members. What must outlast the moment is
-  state, written by its owner. Work that can't be done now goes to a job (WorkerPool, PlanScheduler), never an event
-  queue. Gameplay never depends on system order: a consumer earlier in the order hears an event a step later.
-- A **Service** (`sfs::Service`) is logic that runs only when its events bring it something, at the start of each
-  step before the systems: it has no update, never queries or iterates the registry, and works on the entities its
-  events hand it (and what those lead to through entity fields, parent and children) and the scene's data, its
-  own included (it may be a field's one writer); it may create and destroy entities. It makes its consumers (each
-  with a handler) and requesters in `create()` and keeps them as members; slow work goes to a job it owns, which
-  answers through the Responder it copied. Work over lists of entities, or that needs time to pass, is a System.
+- How systems communicate: a component holds its entity's state; any system may read it. Everything a system or service
+  tells another is an event (docs/core/events), never a flag, message or request field on a component, a `getSystem`
+  call or a callback. News (`[[sfs::event_news]]`, named `...Event`) says something happened; entity news
+  (`[[sfs::event_entity_news]]`) says it of one entity. A request (`[[sfs::event_request(...)]]`, `...Request`) is asked
+  through an `EventRequester` and answered with responses (`...Response`) that only that requester gets. Consumers and
+  requesters are made in `create()` and kept as members. What must outlast the moment is state, written by its owner.
+  Work that can't be done now goes to a job (WorkerPool, PlanScheduler), never an event queue. Gameplay never depends on
+  system order: a consumer earlier in the order hears an event a step later.
+- A **Service** (`sfs::Service`) is logic that runs only when its events bring it something, at the start of each step
+  before the systems: it has no update, never queries or iterates the registry, and works on the entities its events
+  hand it (and what those lead to through entity fields, parent and children) and the scene's data, its own included; it
+  may create and destroy entities. It makes its consumers (each with a handler) and requesters in `create()` and keeps
+  them as members; slow work goes to a job it owns, which answers through the Responder it copied. Work over lists of
+  entities, or that needs time to pass, is a System.
 - The registry is the engine's, its systems' and render modules': an `sfs::Entity`, a GameObject or a Service doesn't
   lead to it. Code that searches takes the list it searches (a query view) from its system or scene. Game code never
   uses `sfs::detail`.

@@ -329,8 +329,13 @@ jobs:
       - name: Build
         run: cmake --build --preset conan-release
 
+      # In a Visual Studio developer environment: codegenTests runs cl.exe
+      # itself, which finds the standard headers only through INCLUDE.
       - name: Run tests
-        run: ctest --timeout 900 --preset conan-release --output-on-failure
+        shell: cmd
+        run: |
+          for /f "usebackq delims=" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath`) do call "%%i\VC\Auxiliary\Build\vcvars64.bat"
+          ctest --timeout 900 --preset conan-release --output-on-failure
 
   # Enforce .clang-format on the engine sources. Pinned to the same
   # clang-format version the pre-commit hook uses, so local formatting and CI

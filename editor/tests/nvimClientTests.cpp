@@ -36,23 +36,21 @@ bool screenContains(const NvimScreen& screen, const std::string& text)
   return false;
 }
 
-// Poll until `done` or a few seconds pass.
+// Polls until `done`, however long it takes; false if nvim stops first.
 bool waitFor(NvimClient& nvim, const std::function<bool()>& done)
 {
-  const auto deadline =
-      std::chrono::steady_clock::now() + std::chrono::seconds(10);
-
-  while (std::chrono::steady_clock::now() < deadline)
+  for (;;)
   {
     nvim.poll();
 
     if (done())
       return true;
 
+    if (!nvim.running())
+      return false;
+
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
   }
-
-  return false;
 }
 } // namespace
 
@@ -233,10 +231,7 @@ int main()
     const auto shows =
         [&](const std::string& command, const std::string& expected)
     {
-      const auto deadline =
-          std::chrono::steady_clock::now() + std::chrono::seconds(10);
-
-      while (std::chrono::steady_clock::now() < deadline)
+      while (lsp.running())
       {
         lsp.input(command);
 

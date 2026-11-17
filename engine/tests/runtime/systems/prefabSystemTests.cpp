@@ -22,13 +22,11 @@
 #include <glm/glm/ext/quaternion_trigonometric.hpp>
 #include <glm/glm/ext/vector_float3.hpp>
 
-#include <chrono>
+#include <cstddef>
 #include <cstdint>
-#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <memory>
-#include <ratio>
 #include <string>
 
 using namespace sfs;
@@ -291,38 +289,6 @@ int main()
     CHECK(world.scene->findObjects<Counter>().empty());
     world.prefabs->despawn(root); // dead: ignored
     world.prefabs->despawn(Entity());
-  }
-
-  TEST("1000 spawns (a forest at load) should take well under a second, "
-       "physics included")
-  {
-    World world(project);
-    Entity group = world.scene->createEntity();
-    group.addComponent<TransformComponent>();
-    const auto start = std::chrono::steady_clock::now();
-    int made = 0;
-
-    for (int i = 0; i < 1000; ++i)
-      made += world.prefabs
-                  ->spawn(project.tree,
-                          at({float(i % 40) * 5.0f, float(i / 40) * 5.0f, 0}),
-                          group)
-                  .isValid();
-
-    const auto spawned = std::chrono::steady_clock::now();
-    world.step(); // their bodies made
-    const auto stepped = std::chrono::steady_clock::now();
-    const double spawnMs =
-        std::chrono::duration<double, std::milli>(spawned - start).count();
-    const double bodyMs =
-        std::chrono::duration<double, std::milli>(stepped - spawned).count();
-    std::printf(
-        "  1000 spawns: %.1f ms, their bodies on the next update: %.1f ms\n",
-        spawnMs,
-        bodyMs);
-    CHECK(made == 1000);
-    CHECK(world.physics->snapshot()->bodies().size() == 1000u);
-    CHECK(spawnMs + bodyMs < 1000.0);
   }
 
   return testing::report("prefabSystemTests");

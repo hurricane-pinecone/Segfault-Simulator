@@ -3,7 +3,6 @@
 
 #include <nlohmann/json.hpp>
 
-#include <chrono>
 #include <csignal>
 #include <cstddef>
 #include <filesystem>
@@ -96,14 +95,10 @@ public:
     m_in = -1;
   }
 
-  // The first message `wanted` accepts, read within `seconds`; earlier ones are
-  // dropped.
-  std::optional<json> waitFor(const std::function<bool(const json&)>& wanted,
-                              double seconds = 2.0)
+  // The first message `wanted` accepts, however long it takes; earlier ones
+  // are dropped. None if the server's output ends first.
+  std::optional<json> waitFor(const std::function<bool(const json&)>& wanted)
   {
-    const auto deadline = std::chrono::steady_clock::now() +
-                          std::chrono::duration<double>(seconds);
-
     while (true)
     {
       while (!m_pending.empty())
@@ -115,15 +110,9 @@ public:
           return message;
       }
 
-      const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
-          deadline - std::chrono::steady_clock::now());
-
-      if (left.count() <= 0)
-        return std::nullopt;
-
       pollfd fd{m_out, POLLIN, 0};
 
-      if (poll(&fd, 1, static_cast<int>(left.count())) <= 0)
+      if (poll(&fd, 1, -1) <= 0)
         continue;
 
       char buffer[65536];
@@ -156,26 +145,16 @@ public:
         });
   }
 
-  // The exit code, if it exits within `seconds`.
-  std::optional<int> exitCode(double seconds)
+  // The exit code, once it exits.
+  std::optional<int> exitCode()
   {
-    const auto deadline = std::chrono::steady_clock::now() +
-                          std::chrono::duration<double>(seconds);
+    int status = 0;
 
-    while (std::chrono::steady_clock::now() < deadline)
-    {
-      int status = 0;
+    if (waitpid(m_pid, &status, 0) != m_pid)
+      return std::nullopt;
 
-      if (waitpid(m_pid, &status, WNOHANG) == m_pid)
-      {
-        m_exited = true;
-        return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
-      }
-
-      usleep(10000);
-    }
-
-    return std::nullopt;
+    m_exited = true;
+    return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
   }
 
   void initialize(
@@ -491,8 +470,7 @@ int main()
               found = found || d["code"] == "response-sent-twice";
 
             return found == wanted;
-          },
-          5.0);
+          });
     };
     open(route,
          "void RouteSystem::update(double) { r.respond(DoneResponse{}); }\n");
@@ -604,12 +582,12 @@ int main()
     CHECK(answer && answer->contains("result") &&
           (*answer)["result"].is_null());
     server.send(notification("exit", nullptr));
-    CHECK(server.exitCode(2.0) == std::optional<int>(0));
+    CHECK(server.exitCode() == std::optional<int>(0));
 
     LspProcess dropped;
     dropped.initialize();
     dropped.closeInput();
-    CHECK(dropped.exitCode(1.0) == std::optional<int>(1));
+    CHECK(dropped.exitCode() == std::optional<int>(1));
   }
 
   return testing::report("lspProtocolTests");

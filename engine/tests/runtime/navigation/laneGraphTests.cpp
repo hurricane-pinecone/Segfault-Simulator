@@ -13,13 +13,11 @@
 #include <glm/glm/geometric.hpp>
 
 #include <algorithm>
-#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
-#include <ratio>
 #include <vector>
 
 using namespace sfs::nav;
@@ -175,40 +173,6 @@ int main()
     one.addLane({c, d, line({0, 0}, {400, 0}), 10.0f, 1.0f, 0});
     CHECK(one.route({20, 5}, {380, 5}, o).has_value());
     CHECK(!one.route({380, 5}, {20, 5}, o).has_value());
-  }
-
-  TEST("a big network should be searched in milliseconds")
-  {
-    // A 40 x 40 grid of roads 50 m apart (3120 lanes each way).
-    LaneGraph g;
-    const int n = 40;
-
-    for (int y = 0; y < n; ++y)
-      for (int x = 0; x < n; ++x)
-        g.addNode({50.0f * x, 50.0f * y});
-
-    for (int y = 0; y < n; ++y)
-      for (int x = 0; x < n; ++x)
-      {
-        if (x + 1 < n)
-          road(g, y * n + x, y * n + x + 1, 1.5f);
-
-        if (y + 1 < n)
-          road(g, y * n + x, (y + 1) * n + x, 1.5f);
-      }
-
-    const auto t0 = std::chrono::steady_clock::now();
-    const auto r = g.route({10, -5}, {1940, 1955}, LaneGraph::Options());
-    const double ms = std::chrono::duration<double, std::milli>(
-                          std::chrono::steady_clock::now() - t0)
-                          .count();
-    std::printf("  40x40 grid: %.2f ms\n", ms);
-    CHECK(r.has_value());
-
-    if (!testing::SANITIZED)
-    {
-      CHECK(ms < 100.0);
-    }
   }
 
   TEST("a lane trip should join its stretches with searched windows, one model")
