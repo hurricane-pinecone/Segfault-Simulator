@@ -45,6 +45,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -397,9 +398,17 @@ int main()
     Entity car = world.car({0.0f, 0.0f}, 0.0f, specs.car);
     // Frames till the graph has `edges` edges, however long the scheduler's
     // workers take to make it.
+    // Frames till the graph has `edges` edges: each waits for the scheduler,
+    // so it's in within a couple. If it isn't in 600, what the frames saw is
+    // printed: how often the physics changed, what the scheduler ran, the
+    // graphs that came.
     const auto graphWith = [&](std::size_t edges)
     {
-      for (;;)
+      int revisions = 0, graphs = 0;
+      uint64_t revision = world.physics.revision();
+      const nav::CoarseGraph* last = nullptr;
+
+      for (int frame = 0; frame < 600; ++frame)
       {
         world.step();
         const auto& g = world.navigation.fleet().world().graph;
@@ -407,8 +416,25 @@ int main()
         if (g && g->edges().size() == edges)
           return g;
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        revisions += world.physics.revision() != revision;
+        revision = world.physics.revision();
+        graphs += g && g.get() != last;
+        last = g.get();
       }
+
+      const nav::PlanScheduler::Stats stats =
+          world.navigation.scheduler().stats();
+      std::printf("      no graph of %zu edges in 600 frames: the physics "
+                  "changed in %d, %d graphs came (the last of %zu edges), the "
+                  "scheduler took %llu jobs, ran %llu steps, has %zu pending\n",
+                  edges,
+                  revisions,
+                  graphs,
+                  last ? last->edges().size() : 0,
+                  static_cast<unsigned long long>(stats.jobs),
+                  static_cast<unsigned long long>(stats.steps),
+                  world.navigation.scheduler().pending());
+      return std::shared_ptr<const nav::CoarseGraph>();
     };
     const auto plain = graphWith(0);
     CHECK(plain != nullptr);
