@@ -266,6 +266,23 @@ int main()
     return 77;
   }
 
+  // A software adapter (Windows' WARP on a machine without a GPU, Mesa's
+  // llvmpipe) runs every shader on the CPU: building hundreds of pipelines
+  // there takes far longer than the suite may run, so it's skipped like no
+  // adapter at all.
+  WGPUAdapterInfo adapterInfo = {};
+  wgpuAdapterGetInfo(context.adapter(), &adapterInfo);
+  const bool software = adapterInfo.adapterType == WGPUAdapterType_CPU;
+  wgpuAdapterInfoFreeMembers(adapterInfo);
+
+  if (software)
+  {
+    std::fputs("webGpuRendererTests: only a software WebGPU adapter here, "
+               "skipped\n",
+               stderr);
+    return 77;
+  }
+
   errors.clear();
 
   Harness harness(context);

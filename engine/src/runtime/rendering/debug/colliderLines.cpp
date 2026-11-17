@@ -124,13 +124,13 @@ void append(const Entity& entity,
   if (!entity.isValid() || !entity.hasComponent<TransformComponent>())
     return;
 
-  if (const BoxCollider2D* box2 = entity.getComponent<BoxCollider2D>();
+  if (const BoxCollider2D* box2 = entity.getComponent<const BoxCollider2D>();
       space && box2)
     box2D(entity, *box2, *space, out);
 
-  const auto* box = entity.getComponent<BoxCollider3DComponent>();
-  const auto* sphere = entity.getComponent<SphereCollider3DComponent>();
-  const auto* capsule = entity.getComponent<CapsuleCollider3DComponent>();
+  const auto* box = entity.getComponent<const BoxCollider3DComponent>();
+  const auto* sphere = entity.getComponent<const SphereCollider3DComponent>();
+  const auto* capsule = entity.getComponent<const CapsuleCollider3DComponent>();
 
   if (!box && !sphere && !capsule)
     return;
@@ -153,30 +153,30 @@ std::size_t appendAll(Registry& registry,
 {
   std::size_t drawn = 0;
 
-  for (auto [entity, transform, boxCollider3D] :
-       registry.query<TransformComponent, BoxCollider3DComponent>())
+  for (auto [entity, boxCollider3D] :
+       registry.query<With<TransformComponent>, BoxCollider3DComponent>())
   {
     box3D(placementOf(entity), boxCollider3D, out);
     ++drawn;
   }
 
-  for (auto [entity, transform, sphereCollider3D] :
-       registry.query<TransformComponent, SphereCollider3DComponent>())
+  for (auto [entity, sphereCollider3D] :
+       registry.query<With<TransformComponent>, SphereCollider3DComponent>())
   {
     sphere3D(placementOf(entity), sphereCollider3D, out);
     ++drawn;
   }
 
-  for (auto [entity, transform, capsuleCollider3D] :
-       registry.query<TransformComponent, CapsuleCollider3DComponent>())
+  for (auto [entity, capsuleCollider3D] :
+       registry.query<With<TransformComponent>, CapsuleCollider3DComponent>())
   {
     capsule3D(placementOf(entity), capsuleCollider3D, out);
     ++drawn;
   }
 
   if (space)
-    for (auto [entity, transform, boxCollider2D] :
-         registry.query<TransformComponent, BoxCollider2D>())
+    for (auto [entity, boxCollider2D] :
+         registry.query<With<TransformComponent>, BoxCollider2D>())
     {
       box2D(entity, boxCollider2D, *space, out);
       ++drawn;

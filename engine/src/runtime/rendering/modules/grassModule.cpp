@@ -131,9 +131,10 @@ void GrassModule::computeCommands(const RenderContext& context)
   if (context.camera)
     m_camera = context.camera->position();
 
-  for (auto [entity, transform, meshRenderer, grass] :
-       m_registry
-           ->query<TransformComponent, MeshRendererComponent, GrassComponent>())
+  for (auto [entity, meshRenderer, grass] :
+       m_registry->query<With<TransformComponent>,
+                         MeshRendererComponent,
+                         GrassComponent>())
   {
     const Patch* patch = refresh(entity);
 
@@ -423,7 +424,7 @@ void GrassModule::gatherBenders(float seconds)
                           glm::length(glm::vec3(model[2])));
 
     if (const SphereCollider3DComponent* sphere =
-            entity.getComponent<SphereCollider3DComponent>())
+            entity.getComponent<const SphereCollider3DComponent>())
     {
       if (!sphere->trigger)
         add(entity,
@@ -433,7 +434,7 @@ void GrassModule::gatherBenders(float seconds)
     }
 
     if (const BoxCollider3DComponent* box =
-            entity.getComponent<BoxCollider3DComponent>())
+            entity.getComponent<const BoxCollider3DComponent>())
     {
       if (!box->trigger)
       {
@@ -445,7 +446,7 @@ void GrassModule::gatherBenders(float seconds)
     }
 
     if (const CapsuleCollider3DComponent* capsule =
-            entity.getComponent<CapsuleCollider3DComponent>())
+            entity.getComponent<const CapsuleCollider3DComponent>())
     {
       if (!capsule->trigger)
       {
@@ -460,8 +461,8 @@ void GrassModule::gatherBenders(float seconds)
     }
   };
 
-  for (auto [entity, transform, bender] :
-       m_registry->query<TransformComponent, GrassBenderComponent>())
+  for (auto [entity, bender] :
+       m_registry->query<With<TransformComponent>, GrassBenderComponent>())
   {
     const glm::mat4 model = hierarchy::worldMatrix(entity);
 
@@ -603,8 +604,8 @@ void GrassModule::nowOf(const GrassMaps& maps,
 
 GrassModule::Patch* GrassModule::refresh(const Entity& entity)
 {
-  const auto* grass = entity.getComponent<GrassComponent>();
-  const auto* renderer = entity.getComponent<MeshRendererComponent>();
+  const auto* grass = entity.getComponent<const GrassComponent>();
+  const auto* renderer = entity.getComponent<const MeshRendererComponent>();
 
   if (!m_meshes || !grass || !renderer ||
       !entity.hasComponent<TransformComponent>())
@@ -873,7 +874,7 @@ void GrassModule::terrainPainted(const Entity& entity)
 std::shared_ptr<const TerrainMaterial>
 GrassModule::terrainUnder(const Entity& entity)
 {
-  const auto* meshRenderer = entity.getComponent<MeshRendererComponent>();
+  const auto* meshRenderer = entity.getComponent<const MeshRendererComponent>();
 
   if (!m_meshes || !meshRenderer || meshRenderer->materials.empty())
     return nullptr;

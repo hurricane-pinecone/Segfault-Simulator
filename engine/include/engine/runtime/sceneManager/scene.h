@@ -258,10 +258,10 @@ public:
 
   /**
    * The flushed, living entities that match these terms (components, one
-   * Any<...> group, Excluding<...> groups), in id order: a view of the
-   * registry's shared list, kept up to date, whose rows unpack the terms'
-   * components (Registry::query()). To add or remove these component types
-   * while going through it, go through a copy.
+   * Any<...> group, With<...> and Excluding<...> groups), in id order: a
+   * view of the registry's shared list, kept up to date, whose rows unpack
+   * the terms' components (Registry::query()). To add or remove these component
+   * types while going through it, go through a copy.
    * @return a view of the shared list, read-only
    */
   template <typename... TTerms>

@@ -162,6 +162,15 @@ class SomeSystem : public sfs::System
   if (const Score* score = registry.sceneData<const Score>())
     registry.sceneData<Score>()->points = score->points + 1;
   registry.removeSceneData<Score>();
+  // A With group, const members and all, beside the other terms.
+  (void)registry.query<sfs::With<const Health>, sfs::Excluding<Hidden>>();
+#elif SFS_COMPILE_FAIL_CASE == 19
+  // A With group needs a component, and takes components alone.
+  (void)registry.query<sfs::With<>>();
+#elif SFS_COMPILE_FAIL_CASE == 20
+  (void)registry.query<sfs::With<sfs::Excluding<Hidden>>>();
+#elif SFS_COMPILE_FAIL_CASE == 21
+  (void)registry.query<const sfs::With<Health>>();
 #elif SFS_COMPILE_FAIL_CASE == 12
   (void)registry.sceneData<const Health>();
 #elif SFS_COMPILE_FAIL_CASE == 14

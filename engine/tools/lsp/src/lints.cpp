@@ -158,6 +158,7 @@ struct Linter::Walk : lint::LintFile
     Role role;
     TSNode removal; // the node the fix removes: from its list, or a statement
     bool statement; // `removal` is a statement, removed with its line
+    bool with = false; // a With member: required, but bound by no row
   };
 
   // An Any group of a term list: its members are terms[first, first + count).
@@ -657,11 +658,16 @@ struct Linter::Walk : lint::LintFile
       hasCalls.push_back(call);
     else if (name == "getComponent" && hasArguments)
       lookups.push_back(call);
+    else if (name == "sceneData" && hasArguments)
+      sceneDataCalls.push_back(call);
     else if (name == "isAlive" && !hasArguments)
       aliveCalls.push_back(call);
 
     if ((name == "query" || name == "observe") && hasArguments)
     {
+      if (name == "observe" && isRegistryCall(call))
+        checkWithInRegister(call, arguments, false, false);
+
       checkTermList(arguments, isRegistryCall(call));
       return;
     }
@@ -686,6 +692,8 @@ struct Linter::Walk : lint::LintFile
 
     if (name == "registerComponent" && hasArguments)
     {
+      checkWithInRegister(call, arguments, true, true);
+
       if (inLateCode())
         report(RuleId::LateRegister,
                call,
@@ -1342,6 +1350,118 @@ struct Linter::Walk : lint::LintFile
 
   // ------------------------------------------------------------ term lists
 
+  /*
+   * with-in-register on the With groups written in a registerComponent<...>()
+   * or observe<...>() call's own terms (`arguments`), a Query list written
+   * there included: neither binds a row, so a With group is just its
+   * components. The fix unwraps it in place; registerComponent() takes one
+   * term, so a group of several written as its whole term (`single`)
+   * becomes one call per component, each a statement on its own line.
+   */
+  void checkWithInRegister(TSNode call,
+                           TSNode arguments,
+                           bool registering,
+                           bool single)
+  {
+    for (uint32_t i = 0; i < namedCount(arguments); ++i)
+    {
+      const TSNode term = namedChild(arguments, i);
+      TSNode inner;
+      const Wrapper wrapper = wrapperOf(term, inner);
+
+      if (wrapper == Wrapper::Query)
+      {
+        checkWithInRegister(call, inner, registering, false);
+        continue;
+      }
+
+      if (wrapper != Wrapper::With || namedCount(inner) == 0)
+        continue;
+
+      std::vector<std::string_view> members;
+      bool pack = false;
+
+      for (uint32_t j = 0; j < namedCount(inner); ++j)
+      {
+        const TSNode member = namedChild(inner, j);
+        pack = pack || kind(member) == Kind::ParameterPackExpansion;
+        members.push_back(text(member));
+      }
+
+      if (pack)
+        continue;
+
+      const std::string written = tidy(text(term));
+      std::string listed;
+
+      for (const std::string_view member : members)
+        listed += (listed.empty() ? "" : ", ") + tidy(member);
+
+      const std::string message =
+          std::string(registering ? "Registering" : "Observing") +
+          " binds no row, so " + written + " here is just " + listed +
+          ". Write the " + (members.size() == 1 ? "component" : "components") +
+          " without the group.";
+      const std::string title = "Write " + listed + " without the group";
+
+      if (!single || members.size() == 1)
+      {
+        std::string unwrapped;
+
+        for (const std::string_view member : members)
+          unwrapped += (unwrapped.empty() ? "" : ", ") + std::string(member);
+
+        report(RuleId::WithInRegister,
+               term,
+               message,
+               title,
+               {{codegen::rangeOf(term), std::move(unwrapped)}});
+        continue;
+      }
+
+      // One registerComponent() statement per component, on lines of their
+      // own at the statement's indentation.
+      const TSNode statement = ts_node_parent(call);
+      const uint32_t from = ts_node_start_byte(statement);
+      uint32_t lineStart = from;
+
+      while (lineStart > 0 &&
+             (source[lineStart - 1] == ' ' || source[lineStart - 1] == '\t'))
+        --lineStart;
+
+      if (kind(statement) != Kind::ExpressionStatement ||
+          (lineStart > 0 && source[lineStart - 1] != '\n'))
+      {
+        report(RuleId::WithInRegister, term, message);
+        continue;
+      }
+
+      const std::string_view indent =
+          source.substr(lineStart, from - lineStart);
+      const std::string_view before =
+          source.substr(from, ts_node_start_byte(term) - from);
+      const std::string_view after =
+          source.substr(ts_node_end_byte(term),
+                        ts_node_end_byte(statement) - ts_node_end_byte(term));
+      std::string statements;
+
+      for (const std::string_view member : members)
+      {
+        if (!statements.empty())
+          statements += "\n" + std::string(indent);
+
+        statements +=
+            std::string(before) + std::string(member) + std::string(after);
+      }
+
+      report(RuleId::WithInRegister,
+             term,
+             message,
+             title,
+             {{codegen::rangeOf(statement), std::move(statements)}});
+    }
+  }
+
   // The SFS wrapper a template argument is written in, and the wrapper's
   // arguments. An argument may parse as a type or, ambiguously, as an
   // expression (`Any<A, B>` as a template function).
@@ -1368,6 +1488,7 @@ struct Linter::Walk : lint::LintFile
 
     const std::string_view name = text(field(type, "name"));
     const Wrapper wrapper = name == "Any"         ? Wrapper::Any
+                            : name == "With"      ? Wrapper::With
                             : name == "Excluding" ? Wrapper::Excluding
                             : name == "Query"     ? Wrapper::Query
                                                   : Wrapper::None;
@@ -1460,12 +1581,25 @@ struct Linter::Walk : lint::LintFile
         continue;
       }
 
-      // An Excluding of one component goes as a whole.
+      // A With's members are required as plain components are. A group of
+      // one component goes as a whole.
+      const Role role =
+          wrapper == Wrapper::With ? Role::Required : Role::Excluded;
+
       if (count == 1)
-        terms.push_back(
-            {member, text(member), Role::Excluded, removal, statement});
+        terms.push_back({member,
+                         text(member),
+                         role,
+                         removal,
+                         statement,
+                         wrapper == Wrapper::With});
       else
-        terms.push_back({member, text(member), Role::Excluded, member, false});
+        terms.push_back({member,
+                         text(member),
+                         role,
+                         member,
+                         false,
+                         wrapper == Wrapper::With});
     }
 
     return !pack;
@@ -1492,8 +1626,9 @@ struct Linter::Walk : lint::LintFile
       return false;
 
     std::string_view inner;
+    const Wrapper wrapper = wrapperOfText(at, term, inner);
 
-    switch (wrapperOfText(at, term, inner))
+    switch (wrapper)
     {
     case Wrapper::None:
       if (const QueryAlias* nested = alias(ownerAt(at), term))
@@ -1520,16 +1655,26 @@ struct Linter::Walk : lint::LintFile
       }
 
       return true;
+    case Wrapper::With:
     case Wrapper::Excluding:
+    {
+      const bool with = wrapper == Wrapper::With;
+
       for (const std::string_view member : lint::splitTerms(inner))
       {
         if (member.ends_with("..."))
           return false;
 
-        terms.push_back({at, member, Role::Excluded, TSNode{}, false});
+        terms.push_back({at,
+                         member,
+                         with ? Role::Required : Role::Excluded,
+                         TSNode{},
+                         false,
+                         with});
       }
 
       return true;
+    }
     }
 
     return true;
@@ -1549,10 +1694,11 @@ struct Linter::Walk : lint::LintFile
     }
 
     const bool wrapped =
-        !groups.empty() || std::any_of(terms.begin(),
-                                       terms.end(),
-                                       [](const Term& term)
-                                       { return term.role == Role::Excluded; });
+        !groups.empty() ||
+        std::any_of(terms.begin(),
+                    terms.end(),
+                    [](const Term& term)
+                    { return term.role == Role::Excluded || term.with; });
 
     // A second Any group is a static_assert, which the compiler reports.
     if (complete && groups.size() <= 1 && (registryCall || wrapped))
@@ -1639,21 +1785,38 @@ struct Linter::Walk : lint::LintFile
   // excluded-any-member and matches-nothing.
   void checkTerms(std::string_view what)
   {
+    // A component both plain and in a With group: the With's goes, so the
+    // rows keep their bindings.
+    std::vector<bool> repeats(terms.size(), false);
+
     for (std::size_t i = 0; i < terms.size(); ++i)
     {
       const Term& term = terms[i];
 
-      if (term.role == Role::Any)
-        continue; // within its group, below
+      if (term.role == Role::Any || !listed(term.role, term, i))
+        continue; // an Any member within its group, below
 
-      if (listed(term.role, term, i))
-        reportRemovable(RuleId::DuplicateTerm,
-                        term.node,
-                        "This list names " + tidy(term.spelling) +
-                            " twice. Remove the repeat.",
-                        "Remove the repeat",
-                        term.removal,
-                        term.statement);
+      std::size_t repeat = i;
+
+      for (std::size_t j = 0; j < i && !term.with; ++j)
+        if (terms[j].role == term.role && terms[j].with &&
+            sameSpelling(terms[j].spelling, term.spelling))
+        {
+          repeat = j;
+          break;
+        }
+
+      if (repeats[repeat])
+        continue;
+
+      repeats[repeat] = true;
+      reportRemovable(RuleId::DuplicateTerm,
+                      terms[repeat].node,
+                      "This list names " + tidy(term.spelling) +
+                          " twice. Remove the repeat.",
+                      "Remove the repeat",
+                      terms[repeat].removal,
+                      terms[repeat].statement);
     }
 
     for (const Group& group : groups)

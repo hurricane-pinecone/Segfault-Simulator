@@ -126,8 +126,8 @@ void PhysicsSystem2D::update(double deltaTime)
   // The statics that stop bodies: their solid boxes, as they are now.
   std::vector<Box> solids;
 
-  for (auto [entity, boxCollider2D, transform] :
-       registry->query<BoxCollider2D, TransformComponent>())
+  for (auto [entity, boxCollider2D] :
+       registry->query<BoxCollider2D, With<TransformComponent>>())
     if (!entity.hasComponent<RigidBody2DComponent>() && !boxCollider2D.trigger)
       solids.push_back(
           boxOf(entity, boxCollider2D, hierarchy::worldTransform(entity)));
@@ -168,8 +168,8 @@ void PhysicsSystem2D::update(double deltaTime)
   // (two statics never meet).
   std::vector<Box> boxes;
 
-  for (auto [entity, collider, transform] :
-       registry->query<BoxCollider2D, TransformComponent>())
+  for (auto [entity, collider] :
+       registry->query<BoxCollider2D, With<TransformComponent>>())
     boxes.push_back(boxOf(entity, collider, hierarchy::worldTransform(entity)));
 
   std::unordered_map<uint64_t, Contact2D> touching;

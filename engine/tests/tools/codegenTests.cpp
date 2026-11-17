@@ -1889,7 +1889,7 @@ struct [[sfs::event_request(sfs::EngineResponse)]] AskEngine { int g = 0; };
        "and ignorable")
   {
     // After stale-saved-name, in this order, before bad-ignore.
-    const std::array<std::string_view, 14> names = {
+    const std::array<std::string_view, 16> names = {
         "has-then-get",
         "is-alive",
         "row-lookup",
@@ -1897,7 +1897,9 @@ struct [[sfs::event_request(sfs::EngineResponse)]] AskEngine { int g = 0; };
         "component-pointer",
         "filter-in-loop",
         "unused-row-entity",
+        "unused-row-component",
         "row-component-copy",
+        "mutable-read",
         "event-handle-outside-create",
         "reader-on-component",
         "response-sent-twice",
@@ -1922,6 +1924,7 @@ struct [[sfs::event_request(sfs::EngineResponse)]] AskEngine { int g = 0; };
     CHECK(ruleInfo(RuleId::HasThenGet).unnecessary);
     CHECK(ruleInfo(RuleId::RowLookup).unnecessary);
     CHECK(ruleInfo(RuleId::UnusedRowEntity).unnecessary);
+    CHECK(ruleInfo(RuleId::UnusedRowComponent).unnecessary);
     CHECK(ruleInfo(RuleId::IsAlive).deprecated);
     CHECK(ruleInfo(RuleId::ComponentPointer).deprecated);
     CHECK(!ruleInfo(RuleId::SetupInConstructor).unnecessary &&

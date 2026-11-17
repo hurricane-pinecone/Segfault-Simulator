@@ -1908,8 +1908,8 @@ void animatorPreview(const sfs::Entity& entity,
 std::optional<std::pair<glm::vec2, glm::vec2>>
 spriteBox(const sfs::Entity& entity, const MeshScene& scene)
 {
-  const auto* sprite = entity.getComponent<sfs::SpriteComponent>();
-  const auto* transform = entity.getComponent<sfs::TransformComponent>();
+  const auto* sprite = entity.getComponent<const sfs::SpriteComponent>();
+  const auto* transform = entity.getComponent<const sfs::TransformComponent>();
 
   if (!scene.render || !scene.store || !sprite || !transform)
     return std::nullopt;
@@ -2006,7 +2006,8 @@ void colliderFitRows(const TypeInfo& type,
                      EditorHistory* history)
 {
   static bool includeChildren = false;
-  const auto* ownRenderer = entity.getComponent<sfs::MeshRendererComponent>();
+  const auto* ownRenderer =
+      entity.getComponent<const sfs::MeshRendererComponent>();
   const bool hasOwn =
       ownRenderer && scene.meshes && scene.meshes->bounds(ownRenderer->mesh);
 
@@ -3691,7 +3692,8 @@ void InspectorPanel::drawPrefabHeader(EditorContext& context,
   }
 
   const sfs::Entity root = sfs::SceneSerializer::instanceRootOf(entity);
-  const auto* instance = root.getComponent<sfs::PrefabInstanceComponent>();
+  const auto* instance =
+      root.getComponent<const sfs::PrefabInstanceComponent>();
 
   if (!instance)
     return;
@@ -3755,13 +3757,14 @@ void InspectorPanel::drawPrefabHeader(EditorContext& context,
 const InspectorPanel::ModelNodes*
 InspectorPanel::modelNodesOf(EditorContext& context, const sfs::Entity& entity)
 {
-  const auto* link = entity.getComponent<sfs::PrefabLinkComponent>();
+  const auto* link = entity.getComponent<const sfs::PrefabLinkComponent>();
 
   if (!context.assets || !link || (link->id & sfs::kModelNodeIdBit) == 0)
     return nullptr;
 
   const sfs::Entity model = sfs::SceneSerializer::instanceRootOf(entity);
-  const auto* instance = model.getComponent<sfs::PrefabInstanceComponent>();
+  const auto* instance =
+      model.getComponent<const sfs::PrefabInstanceComponent>();
 
   if (!instance || model == entity)
     return nullptr;
@@ -3809,7 +3812,7 @@ void InspectorPanel::drawModelNode(EditorContext& context,
   if (!model)
     return;
 
-  const uint32_t id = entity.getComponent<sfs::PrefabLinkComponent>()->id;
+  const uint32_t id = entity.getComponent<const sfs::PrefabLinkComponent>()->id;
   const auto node =
       std::find_if(model->nodes.begin(),
                    model->nodes.end(),
@@ -3884,7 +3887,7 @@ void InspectorPanel::drawUnusedOverrides(EditorContext& context,
     if (!m_unused.items.empty())
       for (const sfs::Entity& entity : sfs::hierarchy::descendants(root))
         if (const auto* prefabLink =
-                entity.getComponent<sfs::PrefabLinkComponent>();
+                entity.getComponent<const sfs::PrefabLinkComponent>();
             prefabLink && (prefabLink->id & sfs::kModelNodeIdBit) != 0)
         {
           m_unused.modelNodes = true;
@@ -3906,7 +3909,8 @@ void InspectorPanel::drawUnusedOverrides(EditorContext& context,
       "renamed or deleted in its source file): kept, unused, until they're "
       "reattached or removed.");
 
-  if (const auto* holding = holder.getComponent<sfs::PrefabInstanceComponent>();
+  if (const auto* holding =
+          holder.getComponent<const sfs::PrefabInstanceComponent>();
       !editable && holding)
     ImGui::TextDisabled("They're %s's: edit that prefab to reattach them.",
                         prefabs::label(context, holding->prefab).c_str());

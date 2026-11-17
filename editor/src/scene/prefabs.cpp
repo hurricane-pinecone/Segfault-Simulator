@@ -65,8 +65,8 @@ sfs::Entity rebuild(EditorContext& context, const sfs::Entity& root, json entry)
       references::inboundTo(*context.scene, root);
   const sfs::Entity parent = sfs::hierarchy::parentOf(root);
 
-  if (sfs::PrefabLinkComponent* prefabLink =
-          root.getComponent<sfs::PrefabLinkComponent>())
+  if (const sfs::PrefabLinkComponent* prefabLink =
+          root.getComponent<const sfs::PrefabLinkComponent>())
     entry["$id"] = prefabLink->id;
 
   context.scene->destroyBranch(root);
@@ -145,7 +145,8 @@ create(EditorContext& context, sfs::Entity entity, const fs::path& folder)
 
   std::error_code error;
   fs::create_directories(context.assets->root() / folder, error);
-  const sfs::NameComponent* named = entity.getComponent<sfs::NameComponent>();
+  const sfs::NameComponent* named =
+      entity.getComponent<const sfs::NameComponent>();
   const std::string stem =
       safeName(named ? named->name : std::string("Prefab"));
   fs::path relative = folder / (stem + ".prefab");
@@ -239,8 +240,8 @@ sfs::Entity place(EditorContext& context,
 
 void apply(EditorContext& context, const sfs::Entity& root)
 {
-  sfs::PrefabInstanceComponent* prefabInstance =
-      root.getComponent<sfs::PrefabInstanceComponent>();
+  const sfs::PrefabInstanceComponent* prefabInstance =
+      root.getComponent<const sfs::PrefabInstanceComponent>();
 
   if (!prefabInstance || !context.scene)
     return;

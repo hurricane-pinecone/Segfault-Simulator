@@ -412,8 +412,10 @@ public:
    * have been flushed (a new entity joins at the next flushEntities(), as it
    * joins systems; a destroyed one leaves at the flush). A term is a
    * component the entity must have, one Any<...> group it must have at least
-   * one of, or an Excluding<...> group it must have none of (it wins over
-   * the others), e.g. query<TransformComponent, Any<A, B>, Excluding<C>>().
+   * one of, a With<...> group it must have all of (as plain terms, but its
+   * rows don't bind them), or an Excluding<...> group it must have none of
+   * (it wins over the others), e.g. query<TransformComponent, Any<A, B>,
+   * With<D>, Excluding<C>>().
    * A Query<...> list of terms stands for those terms written out, so a long
    * list can be named once: `using Served = Query<A, B, Excluding<C>>;` then
    * query<Served>().
@@ -421,7 +423,8 @@ public:
    * keeps it up to date from then on as components are added and removed,
    * so asking again, every frame or anywhere else, costs nothing, and
    * everyone asking for the same terms shares it (in any order, and terms
-   * that always list the same entities count as the same: Any<A> is A). The
+   * that always list the same entities count as the same: Any<A> is A, and
+   * With<A> is A). The
    * list stays valid as long as the registry. Its rows unpack the terms'
    * components (queryView.h): `for (auto [e, a, b] : query<A, B>())`. To add
    * or remove these component types while going through it, go through a

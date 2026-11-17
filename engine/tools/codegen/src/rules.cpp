@@ -238,6 +238,16 @@ constexpr std::array<RuleInfo, static_cast<std::size_t>(Count)> RULES = {{
      false,
      "A system takes one `sfs::Any` group, and a second one is ignored "
      "at run time. List every alternative in one group."},
+    {WithInRegister,
+     "with-in-register",
+     W,
+     L,
+     true,
+     false,
+     false,
+     "An `sfs::With` group written in `registerComponent<...>()` or "
+     "`observe<...>()` is just its components, since neither binds a row. "
+     "Register or observe the components themselves."},
     {LateRegister,
      "late-register",
      W,
@@ -381,6 +391,16 @@ constexpr std::array<RuleInfo, static_cast<std::size_t>(Count)> RULES = {{
      "A query loop should not unpack an entity it never uses. Loop over "
      "the components alone, with `T& t` for one or `.components()` for "
      "several."},
+    {UnusedRowComponent,
+     "unused-row-component",
+     W,
+     L,
+     true,
+     false,
+     false,
+     "A query loop should not bind a component it never uses. Require it "
+     "with `sfs::With<T>`, which lists the same entities, and drop the "
+     "binding."},
     {RowComponentCopy,
      "row-component-copy",
      W,
@@ -391,6 +411,16 @@ constexpr std::array<RuleInfo, static_cast<std::size_t>(Count)> RULES = {{
      "A query loop should not copy a row's component only to read it. Read "
      "it in place with `const T&`, or, for a copy it changes, keep it as "
      "scratch or use `T&`."},
+    {MutableRead,
+     "mutable-read",
+     W,
+     L,
+     false,
+     false,
+     false,
+     "Code that only reads a component or scene data should take it as "
+     "const: `getComponent<const T>()`, `sceneData<const T>()`, a query's "
+     "`const T` term. Then taking it mutably says the code changes it."},
     {EventHandleOutsideCreate,
      "event-handle-outside-create",
      W,

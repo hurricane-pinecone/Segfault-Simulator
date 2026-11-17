@@ -91,7 +91,8 @@ bool hasGrass(const sfs::Entity& entity)
 std::shared_ptr<const sfs::TerrainMaterial>
 terrainOf(const EditorContext& context, const sfs::Entity& entity)
 {
-  const auto* meshRenderer = entity.getComponent<sfs::MeshRendererComponent>();
+  const auto* meshRenderer =
+      entity.getComponent<const sfs::MeshRendererComponent>();
 
   if (!context.render || !meshRenderer || meshRenderer->materials.empty() ||
       meshRenderer->materials[0].empty())
@@ -400,8 +401,9 @@ void ViewportPanel::drawCameraIcons(const EditorContext& context,
   const sfs::Entity gameCamera = context.render->sceneCamera();
   const glm::vec3 viewer = context.render->camera().position();
 
-  for (auto [entity, lens, transform] :
-       context.scene->query<sfs::CameraComponent, sfs::TransformComponent>())
+  for (auto [entity, lens] :
+       context.scene
+           ->query<sfs::CameraComponent, sfs::With<sfs::TransformComponent>>())
   {
     // The camera's view, as the game would set it up.
     sfs::Camera camera;
@@ -682,9 +684,9 @@ void ViewportPanel::drawLightIcons(const EditorContext& context,
 {
   ImDrawList* drawList = ImGui::GetWindowDrawList();
 
-  for (auto [entity, light, transform] :
-       context.scene
-           ->query<sfs::PointLightComponent, sfs::TransformComponent>())
+  for (auto [entity, light] :
+       context.scene->query<sfs::PointLightComponent,
+                            sfs::With<sfs::TransformComponent>>())
   {
     // Where the renderer puts it: the offset turns and scales with the entity.
     const std::optional<ImVec2> at =
@@ -1383,7 +1385,7 @@ bool ViewportPanel::paintGrass(EditorContext& context,
 
   // Where the cursor meets the grass's mesh.
   const sfs::MeshHandle mesh =
-      lawn.getComponent<sfs::MeshRendererComponent>()->mesh;
+      lawn.getComponent<const sfs::MeshRendererComponent>()->mesh;
   sfs::MeshLibrary& meshes = context.render->meshes();
   const glm::mat4 world = sfs::hierarchy::worldMatrix(lawn);
   const ImVec2 mouse = ImGui::GetMousePos();
@@ -1469,7 +1471,7 @@ bool ViewportPanel::paintTerrain(EditorContext& context,
 
   // Where the cursor meets the mesh, and its texture coordinates there.
   const sfs::MeshHandle mesh =
-      ground.getComponent<sfs::MeshRendererComponent>()->mesh;
+      ground.getComponent<const sfs::MeshRendererComponent>()->mesh;
   const glm::mat4 world = sfs::hierarchy::worldMatrix(ground);
   const ImVec2 mouse = ImGui::GetMousePos();
   const sfs::Ray ray = context.render->camera().screenRay(

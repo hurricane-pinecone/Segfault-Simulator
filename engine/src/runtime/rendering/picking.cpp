@@ -156,11 +156,11 @@ pickPickable(Scene& scene, const MeshLibrary& meshes, const Ray& ray)
   std::optional<PickHit> best;
   float nearest = std::numeric_limits<float>::max();
 
-  for (auto [part, meshRenderer, transform] :
-       scene.query<MeshRendererComponent, TransformComponent>())
+  for (auto [part, meshRenderer] :
+       scene.query<const MeshRendererComponent, With<TransformComponent>>())
   {
     const Entity pickable = pickableOf(part);
-    const auto* pick = pickable.getComponent<PickableComponent>();
+    const auto* pick = pickable.getComponent<const PickableComponent>();
 
     if (!pick || !pick->enabled)
       continue;
@@ -231,8 +231,8 @@ pickSurface(Scene& scene, const MeshLibrary& meshes, const Ray& ray)
   // sfs-ignore-next-line(filter-in-loop)
   for (const Entity& entity : scene.entities())
   {
-    MeshRendererComponent* meshRenderer =
-        entity.getComponent<MeshRendererComponent>();
+    const MeshRendererComponent* meshRenderer =
+        entity.getComponent<const MeshRendererComponent>();
 
     if (!meshRenderer || !entity.hasComponent<TransformComponent>())
       continue;

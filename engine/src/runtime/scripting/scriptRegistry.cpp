@@ -144,14 +144,16 @@ void startObjects(Scene& scene,
   std::vector<Entity> scripted;
 
   for (const Entity& entity : entities)
-    if (ScriptComponent* script = entity.getComponent<ScriptComponent>();
+    if (const ScriptComponent* script =
+            entity.getComponent<const ScriptComponent>();
         script && !script->script.empty())
       scripted.push_back(entity);
 
   for (const Entity& entity : scripted)
   {
     // An earlier onCreate may have destroyed it.
-    const ScriptComponent* component = entity.getComponent<ScriptComponent>();
+    const ScriptComponent* component =
+        entity.getComponent<const ScriptComponent>();
 
     if (!component)
       continue;

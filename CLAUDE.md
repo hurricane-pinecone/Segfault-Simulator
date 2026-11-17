@@ -70,7 +70,8 @@ it. The standard engine approach is the baseline; do better where the data allow
 - Data that belongs to the scene rather than to any entity (a world clock, the weather) is scene data: a plain struct
   marked `[[sfs::scene_data]]`, one of each type per scene, never a component. It's read with `registry->sceneData<T>()`
   (scripts: `scene().sceneData<T>()`, services: `sceneData<T>()`) and added with `addSceneData<T>()`; data an entity
-  carries is a component, read through queries.
+  carries is a component, read through queries. Scene data has one writer, the system or service that owns it;
+  everything else reads it with `sceneData<const T>()`, live each update.
 - Component fields the editor can't edit (or that shouldn't be saved or shown) are `[[sfs::hide]]`.
 - A component describes its own concern only. It never holds references to another feature's data or assets: e.g.
   `NavAgentComponent` does not reference a `VehicleSpec`. A system that needs several concerns views the entities

@@ -201,8 +201,8 @@ void DeformationModule::computeCommands(const RenderContext& context)
   for (auto& [key, field] : m_fields)
     field.seen = false;
 
-  for (auto [entity, transform, renderer] :
-       m_registry->query<TransformComponent, MeshRendererComponent>())
+  for (auto [entity, renderer] :
+       m_registry->query<With<TransformComponent>, MeshRendererComponent>())
   {
     if (renderer.materials.empty())
       continue;
@@ -390,8 +390,8 @@ void DeformationModule::deform()
 
   // Only a mesh with a deformer of its own, or with a parent, can have one,
   // so only those are walked up from.
-  for (auto [mesh, transform, meshRenderer] :
-       m_registry->query<TransformComponent, MeshRendererComponent>())
+  for (auto [mesh, meshRenderer] :
+       m_registry->query<With<TransformComponent>, MeshRendererComponent>())
   {
     if (!mesh.hasComponent<DeformerComponent>() &&
         !hierarchy::parentOf(mesh).isValid())
@@ -403,7 +403,8 @@ void DeformationModule::deform()
 
     for (bool own = true; at.isValid(); own = false)
     {
-      if (const DeformerComponent* found = at.getComponent<DeformerComponent>())
+      if (const DeformerComponent* found =
+              at.getComponent<const DeformerComponent>())
       {
         if (own || found->children)
           deformer = found;

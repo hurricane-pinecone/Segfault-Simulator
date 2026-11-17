@@ -631,7 +631,8 @@ void HierarchyPanel::finishRename(EditorContext& context,
                                   const sfs::Entity& entity)
 {
   m_renaming = UINT32_MAX;
-  const sfs::NameComponent* name = entity.getComponent<sfs::NameComponent>();
+  const sfs::NameComponent* name =
+      entity.getComponent<const sfs::NameComponent>();
   const std::string current = name ? name->name : "";
 
   if (m_renameText == current || !entity.isValid())
@@ -652,7 +653,8 @@ void HierarchyPanel::finishRename(EditorContext& context,
 void HierarchyPanel::startRename(const sfs::Entity& entity)
 {
   m_renaming = entity.getId();
-  const sfs::NameComponent* name = entity.getComponent<sfs::NameComponent>();
+  const sfs::NameComponent* name =
+      entity.getComponent<const sfs::NameComponent>();
   m_renameText = name ? name->name : "";
   m_renameFocus = true;
 }

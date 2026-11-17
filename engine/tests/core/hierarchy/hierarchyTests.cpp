@@ -426,6 +426,29 @@ int main()
 
     CHECK((walked == std::vector<Entity>{tagged}));
 
+    // A With group requires its components and binds none of them.
+    sum = 0;
+
+    for (auto [child, mark] :
+         hierarchy::childrenOf<Marked, With<Tagged>>(parent))
+    {
+      static_assert(std::is_same_v<decltype(mark), Marked&>);
+      sum += child == both ? mark.value : 1000;
+    }
+
+    for (const Marked& mark :
+         hierarchy::childrenOf<With<Tagged>, const Marked>(parent))
+      sum += mark.value * 10;
+
+    CHECK(sum == 77);
+    walked.clear();
+
+    for (const Entity& child :
+         hierarchy::childrenOf<With<Tagged>, Excluding<Marked>>(parent))
+      walked.push_back(child);
+
+    CHECK((walked == std::vector<Entity>{tagged}));
+
     // Without the entity: one component converts, components() unpacks.
     sum = 0;
 
@@ -504,6 +527,12 @@ int main()
       walked.push_back(entity);
 
     CHECK((walked == std::vector<Entity>{a1, a1x, b, b1}));
+    walked.clear();
+
+    for (const Entity& entity : hierarchy::descendants<With<Tagged>>(root))
+      walked.push_back(entity);
+
+    CHECK((walked == std::vector<Entity>{a1, a1x, b, b1}));
     int found = 0;
 
     for (Tagged& tag : hierarchy::descendants<Tagged>(root))
@@ -554,6 +583,8 @@ int main()
 
     CHECK(hierarchy::findChild<Tagged, Marked>(parent) == both);
     CHECK(hierarchy::findChild<Tagged, Excluding<Marked>>(parent) == tagged);
+    CHECK(hierarchy::findChild<With<Tagged>, Excluding<Marked>>(parent) ==
+          tagged);
     CHECK(!hierarchy::findChild<Marked, NameComponent>(parent).isValid());
     std::vector<Entity> found;
     hierarchy::findChildren<Any<Marked, NameComponent>>(parent, found);

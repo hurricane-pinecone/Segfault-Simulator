@@ -155,7 +155,7 @@ namespace
 {
 bool named(const Entity& entity, std::string_view name)
 {
-  const NameComponent* component = entity.getComponent<NameComponent>();
+  const NameComponent* component = entity.getComponent<const NameComponent>();
   return component && component->name == name;
 }
 } // namespace
@@ -397,7 +397,7 @@ void Scene::processInput(const Input& input)
       }
 
       const Entity& entity = object.entity();
-      const auto* context = entity.getComponent<InputContextComponent>();
+      const auto* context = entity.getComponent<const InputContextComponent>();
       const int rank = context && context->active ? context->priority : INT_MIN;
       own = seen;
 

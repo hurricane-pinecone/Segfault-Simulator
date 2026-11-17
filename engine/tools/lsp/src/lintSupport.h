@@ -298,6 +298,7 @@ enum class Wrapper : uint8_t
 {
   None,
   Any,
+  With,
   Excluding,
   Query,
 };
@@ -426,8 +427,9 @@ struct LintFile
   bool visible(std::string_view name) const;
 
   /**
-   * The SFS wrapper a written term is (`sfs::Any<...>`, `Excluding<...>` where
-   * SFS's is visible at `at`, `sfs::Query<...>`), and its arguments' text.
+   * The SFS wrapper a written term is (`sfs::Any<...>`, `With<...>` or
+   * `Excluding<...>` where SFS's is visible at `at`, `sfs::Query<...>`), and
+   * its arguments' text.
    */
   Wrapper wrapperOfText(TSNode at,
                         std::string_view spelled,
@@ -463,8 +465,13 @@ struct LintFile
   std::vector<TSNode> hasCalls;
   /** isAlive() calls, for is-alive. */
   std::vector<TSNode> aliveCalls;
-  /** getComponent<T>() calls, for row-lookup and component-pointer. */
+  /**
+   * getComponent<T>() calls, for row-lookup, component-pointer and
+   * mutable-read.
+   */
   std::vector<TSNode> lookups;
+  /** sceneData<T>() calls, for mutable-read. */
+  std::vector<TSNode> sceneDataCalls;
   /** Range-for loops, for the row rules (row-lookup, filter-in-loop, ...). */
   std::vector<TSNode> loops;
   /** Constructor definitions (in class or out of line). */
@@ -473,8 +480,9 @@ struct LintFile
 
 /**
  * The entity API rules (entityLints.cpp): has-then-get, is-alive, row-lookup,
- * filter-in-loop, unused-row-entity, row-component-copy, setup-in-constructor
- * and component-pointer, run over the sites the walk found once it's done.
+ * filter-in-loop, unused-row-entity, unused-row-component, row-component-copy,
+ * mutable-read, setup-in-constructor and component-pointer, run over the
+ * sites the walk found once it's done.
  * Their diagnostics go to file.out.
  *
  * @param file the run, with the walk done and the system registrations read

@@ -93,6 +93,74 @@ std::unique_ptr<Document> fixed(const Document& document,
                            index);
 }
 
+// Whether a document's only diagnostics are mutable-read's and
+// unused-row-component's, which code a fix leaves only reading a component, or
+// binding one it never uses, may well have.
+bool onlyFollowUps(const Document& document)
+{
+  for (const sfs::codegen::Diagnostic& diagnostic : document.diagnostics)
+    if (diagnostic.rule != RuleId::MutableRead &&
+        diagnostic.rule != RuleId::UnusedRowComponent)
+      return false;
+
+  return true;
+}
+
+// `text` with the first fix of `rule` applied again and again, as --fix
+// does, until none is left (or `passes` were applied).
+std::string fixedAll(std::string text, RuleId rule, int passes = 10)
+{
+  for (int i = 0; i < passes; ++i)
+  {
+    const auto now = lspTest::analysed(text);
+    const sfs::codegen::Diagnostic* next = lspTest::first(*now, rule);
+
+    if (!next || next->fix.empty())
+      break;
+
+    text = lspTest::applyEdits(text, next->fix);
+  }
+
+  return text;
+}
+
+// Whether `code` compiles against the engine's headers with the build's own
+// compiler, syntax only; what it says goes to the output when it doesn't.
+bool compilesWithEngine(const std::string& name, const std::string& code)
+{
+  const std::filesystem::path dir =
+      std::filesystem::temp_directory_path() / "sfsLspFixCompile";
+  std::filesystem::create_directories(dir);
+  const std::filesystem::path file = dir / name;
+  const std::filesystem::path errors = dir / (name + ".txt");
+  std::ofstream(file) << code;
+#if defined(_MSC_VER)
+  const std::string command =
+      "\"" SFS_CXX_COMPILER
+      "\" /nologo /std:c++latest /Zs /EHsc /I\"" SFS_ENGINE_INCLUDE_DIR
+      "\" \"" +
+      file.string() + "\" > \"" + errors.string() + "\"";
+#else
+  const std::string command =
+      "\"" SFS_CXX_COMPILER "\" -std=c++23 -fsyntax-only -Wno-attributes "
+      "-I\"" SFS_ENGINE_INCLUDE_DIR "\" \"" +
+      file.string() + "\" 2> \"" + errors.string() + "\"";
+#endif
+  const int status = testing::runCommand(command);
+
+  if (status != 0)
+  {
+    std::ifstream in(errors);
+    std::stringstream printed;
+    printed << in.rdbuf();
+    std::printf("      %s:\n%s\n", name.c_str(), printed.str().c_str());
+  }
+
+  std::filesystem::remove(file);
+  std::filesystem::remove(errors);
+  return status == 0;
+}
+
 // Fixtures that make every rule report, codegen's included: each a path
 // under a project's scripts/ folder and its text.
 std::vector<std::pair<std::string, std::string>> everyRuleFixtures()
@@ -122,6 +190,7 @@ std::vector<std::pair<std::string, std::string>> everyRuleFixtures()
        "using namespace sfs;\nclass Mover : public sfs::System\n{\n"
        "  std::map<sfs::Entity, int> m_map;\n"
        "  Mover()\n  {\n    registerComponent<A>();\n"
+       "    registerComponent<sfs::With<F>>();\n"
        "    registerComponent<Any<B, C>>();\n"
        "    registerComponent<Any<D, E>>();\n  }\n"
        "  void update(double) override\n  {\n    registerComponent<A>();\n"
@@ -149,7 +218,11 @@ std::vector<std::pair<std::string, std::string>> everyRuleFixtures()
        "};\n"},
       {"t/rows.cpp",
        "void g()\n{\n  for (auto [e, a] : registry->query<A>())\n"
-       "    a.x = 1;\n  for (A a : registry->query<A>())\n    n += a.x;\n}\n"},
+       "    a.x = 1;\n  for (A a : registry->query<A>())\n    n += a.x;\n"
+       "  for (auto [e, a, health] : registry->query<A, Health>())\n"
+       "    use(e, a);\n}\n"},
+      {"t/reads.cpp",
+       "float h(sfs::Entity e) { return e.getComponent<A>()->x; }\n"},
       {"t/events.cpp",
        "class Spinner : public sfs::GameObject\n{\n"
        "  void onCreate(sfs::Scene& scene) override { auto once = "
@@ -1647,7 +1720,7 @@ int main()
           "void f(sfs::Entity e)\n{\n"
           "  if (const Door* h = e.getComponent<Door>(); h && ready)\n  {\n"
           "    use(h->y, h);\n  }\n}\n");
-    CHECK(chainedFixed->diagnostics.empty());
+    CHECK(onlyFollowUps(*chainedFixed));
 
     // (d) the negated early-out, with the handle's validity test dropped.
     const auto early = lspTest::analysed(
@@ -1820,7 +1893,7 @@ int main()
           "  for (auto [a, b, c] : "
           "registry->query<A, sfs::Any<B, C>>().components())\n"
           "  {\n    a.n += b->k;\n  }\n}\n");
-    CHECK(queryFixed->diagnostics.empty());
+    CHECK(onlyFollowUps(*queryFixed));
 
     // The system's own list: only what's used, in registration order.
     const auto system = lspTest::analysed(
@@ -1947,7 +2020,7 @@ int main()
           "registry->query<A, B, Ticket>().components())\n"
           "  {\n    ticket.x = 1;\n    use(&ticket);\n"
           "    (ticket).y = 2;\n  }\n}\n");
-    CHECK(declaredFixed->diagnostics.empty());
+    CHECK(onlyFollowUps(*declaredFixed));
 
     // A loop that unpacks its row already gains a binding.
     const auto unpacked = lspTest::analysed(
@@ -1959,7 +2032,7 @@ int main()
     CHECK(unpackedFixed->text ==
           "void f()\n{\n  for (auto [a, door] : registry->query<A, "
           "Door>().components())\n    door.n += a.n;\n}\n");
-    CHECK(unpackedFixed->diagnostics.empty());
+    CHECK(onlyFollowUps(*unpackedFixed));
     // The entity stays when what's left of the body reads it.
     const auto kept = fixed(
         *lspTest::analysed("void f()\n{\n  for (auto [e, a] : "
@@ -1970,7 +2043,7 @@ int main()
     CHECK(kept->text == "void f()\n{\n  for (auto [e, a, door] : "
                         "registry->query<A, Door>())\n    door.n += a.n + "
                         "e.getId();\n}\n");
-    CHECK(kept->diagnostics.empty());
+    CHECK(onlyFollowUps(*kept));
 
     // A plain test in a block, as hasComponent: the list alone changes.
     const auto tested = lspTest::analysed(
@@ -2183,7 +2256,7 @@ int main()
           "sfs::hierarchy::descendants<sfs::Any<Leaf, Stem>>(root)"
           ".components())\n"
           "    leaf->open = !stem;\n}\n");
-    CHECK(lspTest::analysed(text)->diagnostics.empty());
+    CHECK(onlyFollowUps(*lspTest::analysed(text)));
 
     // A variable holding the view takes components(); a bound list, a
     // helper's view or the system's own list doesn't, so no fix.
@@ -2265,7 +2338,9 @@ int main()
           "void f()\n{\n"
           "  for (const Pos& pos : registry->query<Pos>())\n"
           "    total += pos.x * 2 + (pos.ready ? 1 : 0);\n}\n");
-    CHECK(readFixed->diagnostics.empty());
+    // Then mutable-read makes the term const.
+    CHECK(lspTest::count(*readFixed, RuleId::MutableRead) == 1u);
+    CHECK(onlyFollowUps(*readFixed));
     // A const copy reads whatever it's passed to; a walk's rows convert too,
     // and a const term reads.
     const auto constant = lspTest::analysed(
@@ -2333,6 +2408,813 @@ int main()
       CHECK(lspTest::count(*lspTest::analysed("void f()\n{\n" + loop +
                                               "    total += pos.x;\n}\n"),
                            RuleId::RowComponentCopy) == 0u);
+  }
+
+  TEST("mutable-read should take a component or scene data that's only "
+       "read as const")
+  {
+    const auto takes = [](const std::string& body)
+    {
+      return lspTest::analysed(
+          "void f(sfs::Entity e, sfs::Registry* registry)\n{\n" + body + "}\n");
+    };
+    const auto fixedAll = [](std::string text)
+    {
+      for (int i = 0; i < 20; ++i)
+      {
+        const auto now = lspTest::analysed(text);
+        const auto* next = lspTest::first(*now, RuleId::MutableRead);
+
+        if (!next)
+          break;
+
+        text = lspTest::applyEdits(text, next->fix);
+      }
+
+      return text;
+    };
+
+    // A pointer variable only read: the lookup and its type become const.
+    const auto held = takes("  Health* health = e.getComponent<Health>();\n"
+                            "  if (!health || health->points <= 0.0f)\n"
+                            "    return;\n"
+                            "  total += health->points * 2;\n");
+    const auto* found = lspTest::first(*held, RuleId::MutableRead);
+    CHECK(found && found->message ==
+                       "This only reads Health. Take it as const, "
+                       "getComponent<const Health>(), so it's clear the code "
+                       "doesn't change it.");
+    CHECK(found && found->fixTitle == "Take Health as const");
+    CHECK(
+        fixed(*held, RuleId::MutableRead)
+            ->text.find(
+                "  const Health* health = e.getComponent<const Health>();\n") !=
+        std::string::npos);
+
+    // Each form, before and after.
+    const std::pair<std::string, std::string> forms[] = {
+        {"  auto* motion = e.getComponent<Motion>();\n"
+         "  if (motion)\n    speed = motion->speed;\n",
+         "  const auto* motion = e.getComponent<const Motion>();\n"
+         "  if (motion)\n    speed = motion->speed;\n"},
+        {"  auto score = registry->getComponent<Score>(e);\n"
+         "  total = score ? score->value : 0;\n",
+         "  auto score = registry->getComponent<const Score>(e);\n"
+         "  total = score ? score->value : 0;\n"},
+        {"  if (Health* health = e.getComponent<Health>())\n"
+         "    total += health->points;\n",
+         "  if (const Health* health = e.getComponent<const Health>())\n"
+         "    total += health->points;\n"},
+        {"  if (auto* health = e.getComponent<Health>(); health && "
+         "health->points > 0)\n    ++alive;\n",
+         "  if (const auto* health = e.getComponent<const Health>(); health && "
+         "health->points > 0)\n    ++alive;\n"},
+        {"  total += e.getComponent<Health>()->points;\n",
+         "  total += e.getComponent<const Health>()->points;\n"},
+        {"  const Health* health = e.getComponent<Health>();\n  "
+         "show(health);\n",
+         "  const Health* health = e.getComponent<const Health>();\n"
+         "  show(health);\n"},
+        {"  if (!sfs::expect(e.getComponent<Health>(), e))\n    return;\n",
+         "  if (!sfs::expect(e.getComponent<const Health>(), e))\n    "
+         "return;\n"},
+        {"  const Health& health = *e.getComponent<Health>();\n  "
+         "show(health);\n",
+         "  const Health& health = *e.getComponent<const Health>();\n"
+         "  show(health);\n"},
+        {"  auto& health = *e.getComponent<Health>();\n"
+         "  total += health.points;\n",
+         "  auto& health = *e.getComponent<const Health>();\n"
+         "  total += health.points;\n"},
+        {"  for (const Item& item : e.getComponent<Bag>()->items)\n"
+         "    show(item);\n"
+         "  count = e.getComponent<Bag>()->items.size();\n",
+         "  for (const Item& item : e.getComponent<const Bag>()->items)\n"
+         "    show(item);\n"
+         "  count = e.getComponent<const Bag>()->items.size();\n"},
+        {"  total = std::max(e.getComponent<Health>()->points, 1.0f) + "
+         "static_cast<int>(e.getComponent<Score>()->value);\n",
+         "  total = std::max(e.getComponent<const Health>()->points, 1.0f) + "
+         "static_cast<int>(e.getComponent<const Score>()->value);\n"},
+        {"  const Clock* clock = scene().sceneData<Clock>();\n"
+         "  if (Clock* now = registry->sceneData<Clock>())\n"
+         "    total = now->time + (clock ? clock->time : 0);\n",
+         "  const Clock* clock = scene().sceneData<const Clock>();\n"
+         "  if (const Clock* now = registry->sceneData<const Clock>())\n"
+         "    total = now->time + (clock ? clock->time : 0);\n"}};
+
+    for (const auto& [before, after] : forms)
+    {
+      const std::string head = "void f(sfs::Entity e, sfs::Registry* "
+                               "registry)\n{\n";
+      CHECK(lspTest::count(*takes(before), RuleId::MutableRead) > 0u);
+      const std::string result = fixedAll(head + before + "}\n");
+      CHECK(result == head + after + "}\n");
+
+      if (result != head + after + "}\n")
+        std::printf("      got:\n%s\n", result.c_str());
+    }
+
+    const auto sceneData =
+        takes("  total = scene().sceneData<Clock>()->time;\n");
+    const auto* clock = lspTest::first(*sceneData, RuleId::MutableRead);
+    CHECK(clock && clock->message ==
+                       "This only reads Clock. Take it as const, "
+                       "sceneData<const Clock>(), so it's clear the code "
+                       "doesn't change it.");
+
+    // A value returned by copy or const reference reads it; by reference,
+    // not.
+    CHECK(lspTest::count(*lspTest::analysed(
+                             "float pointsOf(sfs::Entity e)\n{\n"
+                             "  return e.getComponent<Health>()->points;\n}\n"
+                             "const Bag& bagOf(sfs::Entity e)\n{\n"
+                             "  return *e.getComponent<Bag>();\n}\n"
+                             "auto speedOf = [](sfs::Entity e)\n"
+                             "{ return e.getComponent<Motion>()->speed; };\n"),
+                         RuleId::MutableRead) == 3u);
+    CHECK(lspTest::count(*lspTest::analysed(
+                             "float& pointsOf(sfs::Entity e)\n{\n"
+                             "  return e.getComponent<Health>()->points;\n}\n"
+                             "Health* healthOf(sfs::Entity e)\n{\n"
+                             "  Health* health = e.getComponent<Health>();\n"
+                             "  return health;\n}\n"
+                             "auto speedOf = [](sfs::Entity e) -> float&\n"
+                             "{ return e.getComponent<Motion>()->speed; };\n"
+                             "decltype(auto) bagOf(sfs::Entity e)\n{\n"
+                             "  return (e.getComponent<Bag>()->items);\n}\n"),
+                         RuleId::MutableRead) == 0u);
+
+    // Anything that may write it, or that it can't see through, isn't
+    // reported.
+    for (const std::string body :
+         {"  health->points = 1;\n",
+          "  ++health->points;\n",
+          "  health->points--;\n",
+          "  health->points += 2;\n",
+          "  heal(health);\n",
+          "  heal(health->points);\n",
+          "  heal(*health);\n",
+          "  health->items.push_back(1);\n",
+          "  health->items.clear();\n",
+          "  float* at = &health->points;\n",
+          "  auto& points = health->points;\n  points = 0;\n",
+          "  float& points = health->points;\n  show(points);\n",
+          "  auto hurt = [&] { health->points -= 1; };\n  hurt();\n",
+          "  auto read = [health] { return health->points; };\n",
+          "  if (hit)\n    health->points = 0;\n  else\n"
+          "    total += health->points;\n",
+          "  total += health->points;\n  health->points = 0;\n",
+          "  Health* other = health;\n  other->points = 0;\n",
+          "  auto other = health;\n  show(other);\n",
+          "  health = registry->getComponent<Health>(e);\n",
+          "  stream >> health->points;\n",
+          "  health->stream << 1;\n",
+          "  total += health->bonus[key];\n",
+          "  LOG(health->points);\n",
+          "  std::swap(health->points, spare);\n",
+          "  (hit ? health->points : spare) = 1;\n",
+          "  health->owner->points = 1;\n",
+          "  Health copy = *health;\n  *health = copy;\n",
+          "  total += health->total();\n",
+          "  for (auto& item : health->items)\n    item = 0;\n",
+          "  auto [a, b] = *health;\n  auto& [c, d] = *health;\n  c = 1;\n",
+          "  if (auto points = health->points; points > 0)\n"
+          "    health->points = 0;\n",
+          "  std::span<float> all = health->values;\n",
+          "  int Health::*member = &Health::points;\n"
+          "  health->*member = 1;\n"})
+    {
+      const auto written =
+          takes("  Health* health = e.getComponent<Health>();\n" + body);
+
+      if (lspTest::count(*written, RuleId::MutableRead) != 0u)
+        std::printf("      reported:\n%s\n", body.c_str());
+
+      CHECK(lspTest::count(*written, RuleId::MutableRead) == 0u);
+    }
+
+    for (const std::string body :
+         {"  e.getComponent<Health>()->points = 1;\n",
+          "  e.getComponent<Health>()->items.push_back(1);\n",
+          "  heal(e.getComponent<Health>());\n",
+          "  Health& health = *e.getComponent<Health>();\n  show(health);\n",
+          "  auto* a = e.getComponent<Health>(), *b = "
+          "e.getComponent<Health>();\n",
+          "  e.getComponent<const Health>()->points;\n",
+          "  const Health* health = e.getComponent<Health>();\n"
+          "  const_cast<Health*>(health)->points = 1;\n",
+          "  Clock* clock = registry->sceneData<Clock>();\n"
+          "  clock->time += 1;\n",
+          "  scene().sceneData<Clock>()->time = 0;\n",
+          "  switch (mode)\n  {\n  case 0:\n"
+          "    Health* health = e.getComponent<Health>();\n"
+          "    show(health->points);\n  case 1:\n"
+          "    health->points = 0;\n  }\n",
+          "  void* raw = e.getComponent<Health>();\n"})
+    {
+      const auto written = takes(body);
+
+      if (lspTest::count(*written, RuleId::MutableRead) != 0u)
+        std::printf("      reported:\n%s\n", body.c_str());
+
+      CHECK(lspTest::count(*written, RuleId::MutableRead) == 0u);
+    }
+  }
+
+  TEST("mutable-read should take a query term the loop only reads as const")
+  {
+    const auto loop = [](const std::string& code)
+    { return lspTest::analysed("void f()\n{\n" + code + "}\n"); };
+
+    // Each term on its own: only the one the loop reads.
+    const auto rows =
+        loop("  for (auto [e, health, motion] : registry->query<Health, "
+             "Motion>())\n    motion.speed += health.points;\n");
+    CHECK(lspTest::count(*rows, RuleId::MutableRead) == 1u);
+    const auto* found = lspTest::first(*rows, RuleId::MutableRead);
+    CHECK(found && found->message ==
+                       "This loop only reads Health. Take it as const Health "
+                       "in the query, so it's clear the loop doesn't change "
+                       "it.");
+    CHECK(fixed(*rows, RuleId::MutableRead)->text ==
+          "void f()\n{\n  for (auto [e, health, motion] : "
+          "registry->query<const Health, Motion>())\n"
+          "    motion.speed += health.points;\n}\n");
+
+    const std::pair<std::string, std::string> forms[] = {
+        {"  for (auto [health, motion] : registry->query<Health, "
+         "Motion>().components())\n    motion.speed += health.points;\n",
+         "  for (auto [health, motion] : registry->query<const Health, "
+         "Motion>().components())\n    motion.speed += health.points;\n"},
+        {"  for (Health& health : registry->query<Health>())\n"
+         "    total += health.points;\n",
+         "  for (const Health& health : registry->query<const Health>())\n"
+         "    total += health.points;\n"},
+        {"  for (const Health& health : scene().query<Health, "
+         "sfs::Excluding<Dead>>())\n    show(health);\n",
+         "  for (const Health& health : scene().query<const Health, "
+         "sfs::Excluding<Dead>>())\n    show(health);\n"},
+        {"  for (const auto& [e, health, shield, armour] : "
+         "registry->query<Health, sfs::Any<Shield, Armour>>())\n  {\n"
+         "    total += health.points + (shield ? shield->strength : 0);\n"
+         "    if (armour)\n      armour->dents += 1;\n  }\n",
+         "  for (const auto& [e, health, shield, armour] : "
+         "registry->query<const Health, sfs::Any<const Shield, Armour>>())\n"
+         "  {\n"
+         "    total += health.points + (shield ? shield->strength : 0);\n"
+         "    if (armour)\n      armour->dents += 1;\n  }\n"}};
+
+    for (const auto& [before, after] : forms)
+    {
+      std::string text = "void f()\n{\n" + before + "}\n";
+
+      for (int i = 0; i < 5; ++i)
+      {
+        const auto now = lspTest::analysed(text);
+
+        if (const auto* next = lspTest::first(*now, RuleId::MutableRead))
+          text = lspTest::applyEdits(text, next->fix);
+      }
+
+      CHECK(text == "void f()\n{\n" + after + "}\n");
+
+      if (text != "void f()\n{\n" + after + "}\n")
+        std::printf("      got:\n%s\n", text.c_str());
+    }
+
+    // A system's own typed list: its term becomes const, which matches what
+    // it registered just the same.
+    const auto system =
+        lspTest::analysed("class Mover : public sfs::System\n{\n"
+                          "  void create() override { "
+                          "registerComponent<Health>(); }\n"
+                          "  void update(double) override\n  {\n"
+                          "    for (auto [e, health] : getEntities<Health>())\n"
+                          "      total += health.points;\n  }\n};\n");
+    CHECK(fixed(*system, RuleId::MutableRead)
+              ->text.find("getEntities<const Health>()") != std::string::npos);
+
+    // Written, passed on, or out of sight: not reported.
+    for (const std::string code :
+         {"  for (auto [e, health] : registry->query<Health>())\n"
+          "    health.points = 0;\n",
+          "  for (auto [e, health] : registry->query<Health>())\n"
+          "    ++health.points;\n",
+          "  for (auto [e, health] : registry->query<Health>())\n"
+          "    heal(health);\n",
+          "  for (auto [e, health] : registry->query<Health>())\n"
+          "    health = Health{};\n",
+          "  for (auto [e, health] : registry->query<Health>())\n"
+          "    health.items.push_back(1);\n",
+          "  for (auto [e, health] : registry->query<Health>())\n"
+          "  {\n    auto& points = health.points;\n    points = 1;\n  }\n",
+          "  for (auto [e, health] : registry->query<Health>())\n"
+          "    later.push_back([&] { health.points = 0; });\n",
+          "  for (auto [e, health] : registry->query<Health>())\n"
+          "    if (hit)\n      health.points = 0;\n",
+          "  for (auto [e, shield] : registry->query<sfs::Any<Shield>>())\n"
+          "    if (shield)\n      shield->strength = 0;\n",
+          "  for (auto [e, shield] : registry->query<sfs::Any<Shield>>())\n"
+          "    show(shield);\n",
+          "  for (Health health : registry->query<Health>())\n"
+          "    total += health.points;\n",
+          "  for (auto [e, health] : registry->query<const Health>())\n"
+          "    total += health.points;\n",
+          "  auto list = registry->query<Health>();\n"
+          "  for (auto [e, health] : list)\n    total += health.points;\n",
+
+          "  for (const sfs::Entity& e : registry->query<Health>())\n"
+          "    show(e);\n"})
+    {
+      const auto written = loop(code);
+
+      if (lspTest::count(*written, RuleId::MutableRead) != 0u)
+        std::printf("      reported:\n%s\n", code.c_str());
+
+      CHECK(lspTest::count(*written, RuleId::MutableRead) == 0u);
+    }
+
+    // Terms named through an alias aren't seen; in a project, a term it
+    // doesn't know as a component may be an alias it can't see.
+    CHECK(lspTest::count(
+              *lspTest::analysed(
+                  "using Served = sfs::Query<Health>;\n"
+                  "void f()\n{\n"
+                  "  for (auto [e, health] : registry->query<Served>())\n"
+                  "    total += health.points;\n}\n"),
+              RuleId::MutableRead) == 0u);
+    Project project;
+    const std::string inProject =
+        "void f()\n{\n"
+        "  for (auto [e, health, unknown] : registry->query<Health, "
+        "Unknown>())\n"
+        "    total += health.points + unknown.points;\n}\n";
+    const auto known = lspTest::analysed(
+        inProject, project.root / "scripts/systems/F.cpp", &project.index);
+    CHECK(lspTest::count(*known, RuleId::MutableRead) == 1u);
+    const auto* health = lspTest::first(*known, RuleId::MutableRead);
+    CHECK(health && health->message.find(" Health.") != std::string::npos);
+  }
+
+  TEST("mutable-read's fixes should compile against the engine's headers")
+  {
+    const std::string source =
+        "#include \"engine/core/ecs/expect.h\"\n"
+        "#include \"engine/core/ecs/queryView.h\"\n"
+        "#include \"engine/core/ecs/registry.h\"\n"
+        "#include <algorithm>\n"
+        "struct Health { float points = 0; };\n"
+        "struct Motion { float speed = 0; };\n"
+        "struct Shield { float strength = 0; };\n"
+        "struct Armour { int dents = 0; };\n"
+        "struct [[sfs::scene_data]] Clock { double time = 0; };\n"
+        "class Mover : public sfs::System\n{\n"
+        "  using Entities = sfs::Query<Health, Motion>;\n"
+        "  void create() override { registerComponent<Entities>(); }\n"
+        "  void update(double) override\n  {\n"
+        "    for (auto [e, health, motion] : getEntities<Health, Motion>())\n"
+        "      motion.speed = health.points;\n"
+        "    for (auto [health, shield, armour] : registry->query<Health, "
+        "sfs::Any<Shield, Armour>>().components())\n    {\n"
+        "      total += health.points + (shield ? shield->strength : 0.0f);\n"
+        "      if (armour)\n        armour->dents += 1;\n    }\n"
+        "    for (Health& health : registry->query<Health>())\n"
+        "      total += std::max(health.points, 0.0f);\n  }\n"
+        "  float total = 0;\n};\n"
+        "float readAll(sfs::Entity e, sfs::Registry* registry)\n{\n"
+        "  Health* health = e.getComponent<Health>();\n"
+        "  if (!sfs::expect(health, e))\n    return 0;\n"
+        "  auto* motion = registry->getComponent<Motion>(e);\n"
+        "  auto shield = e.getComponent<Shield>();\n"
+        "  float total = health->points + (motion ? motion->speed : 0.0f);\n"
+        "  if (shield)\n    total += shield->strength;\n"
+        "  if (Clock* clock = registry->sceneData<Clock>())\n"
+        "    total += static_cast<float>(clock->time);\n"
+        "  auto& armour = *e.getComponent<Armour>();\n"
+        "  return total + static_cast<float>(armour.dents) + "
+        "e.getComponent<Health>()->points;\n}\n";
+    std::string text = source;
+    int applied = 0;
+
+    for (; applied < 30; ++applied)
+    {
+      const auto now = lspTest::analysed(text);
+      const auto* next = lspTest::first(*now, RuleId::MutableRead);
+
+      if (!next)
+        break;
+
+      text = lspTest::applyEdits(text, next->fix);
+    }
+
+    // Every lookup (six) and every term only read (four).
+    CHECK(applied == 10);
+    CHECK(text.find("getComponent<Health>") == std::string::npos);
+    CHECK(text.find("query<const Health, sfs::Any<const Shield, Armour>>") !=
+          std::string::npos);
+    CHECK(text.find("getEntities<const Health, Motion>") != std::string::npos);
+    CHECK(text.find("for (const Health& health : registry->query<const "
+                    "Health>())") != std::string::npos);
+
+    // The code compiles before and after, with the build's own compiler.
+    CHECK(compilesWithEngine("mutableReadBefore.cpp", source));
+    CHECK(compilesWithEngine("mutableReadAfter.cpp", text));
+  }
+
+  TEST("the term lints should read a With group's members as required "
+       "components")
+  {
+    // A With member repeating a plain term goes, whichever comes first, so
+    // the rows keep their bindings.
+    for (const std::string& list :
+         {std::string("A, sfs::With<A>"), std::string("sfs::With<A>, A")})
+    {
+      const auto twice =
+          lspTest::analysed("void f()\n{\n  query<" + list + ">();\n}\n");
+      CHECK(lspTest::count(*twice, RuleId::DuplicateTerm) == 1u);
+      CHECK(fixed(*twice, RuleId::DuplicateTerm)->text ==
+            "void f()\n{\n  query<A>();\n}\n");
+    }
+
+    const auto withs = lspTest::analysed(
+        kQueryHead + "  query<B, With<A>, With<A, C>>();\n}\n");
+    CHECK(lspTest::count(*withs, RuleId::DuplicateTerm) == 1u);
+    CHECK(fixed(*withs, RuleId::DuplicateTerm)->text ==
+          kQueryHead + "  query<B, With<A>, With<C>>();\n}\n");
+
+    const auto nothing = lspTest::analysed(
+        kQueryHead + "  query<With<A>, Excluding<A>>();\n}\n");
+    CHECK(lspTest::count(*nothing, RuleId::MatchesNothing) == 1u);
+
+    const auto always =
+        lspTest::analysed(kQueryHead + "  query<Any<A, B>, With<A>>();\n}\n");
+    CHECK(lspTest::count(*always, RuleId::AnyAlwaysMet) == 1u);
+    CHECK(fixed(*always, RuleId::AnyAlwaysMet)->text ==
+          kQueryHead + "  query<With<A>>();\n}\n");
+
+    // Through an alias: reported where it's named, without a fix.
+    const auto aliased =
+        lspTest::analysed("using Served = sfs::Query<A, sfs::With<A>>;\n"
+                          "void f() { registry->query<Served>(); }\n");
+    CHECK(lspTest::count(*aliased, RuleId::DuplicateTerm) == 1u);
+    CHECK(lspTest::first(*aliased, RuleId::DuplicateTerm)->fix.empty());
+
+    // A game's own With isn't SFS's, and a With group alone is a filter, so
+    // another library's query<...>() with one is read.
+    CHECK(lspTest::analysed("void f() { query<A, With<A>>(); }")
+              ->diagnostics.empty());
+    CHECK(lspTest::count(
+              *lspTest::analysed("void f() { lib.query<A, sfs::With<A>>(); }"),
+              RuleId::DuplicateTerm) == 1u);
+    CHECK(lspTest::analysed(kQueryHead +
+                            "  query<A, With<B>, Any<C, D>, Excluding<E>>();\n"
+                            "}\n")
+              ->diagnostics.empty());
+  }
+
+  TEST("with-in-register should unwrap a With group written where nothing "
+       "binds a row")
+  {
+    const auto doc = lspTest::analysed(
+        "class Mover : public sfs::System\n{\n"
+        "  void create() override\n  {\n"
+        "    registerComponent<sfs::With<Health>>();\n"
+        "    registerComponent<sfs::With<Motion, const Shield>>();\n"
+        "    registerComponent<sfs::Query<Armour, sfs::With<Hit>>>();\n"
+        "    observe<Health, sfs::With<Motion, Shield>>([](const "
+        "sfs::Entity&) {});\n  }\n};\n");
+    CHECK(lspTest::count(*doc, RuleId::WithInRegister) == 4u);
+    const auto* found = lspTest::first(*doc, RuleId::WithInRegister);
+    CHECK(found && found->message ==
+                       "Registering binds no row, so sfs::With<Health> here "
+                       "is just Health. Write the component without the "
+                       "group.");
+    CHECK(found && found->fixTitle == "Write Health without the group");
+    CHECK(fixedAll(doc->text, RuleId::WithInRegister) ==
+          "class Mover : public sfs::System\n{\n"
+          "  void create() override\n  {\n"
+          "    registerComponent<Health>();\n"
+          "    registerComponent<Motion>();\n"
+          "    registerComponent<const Shield>();\n"
+          "    registerComponent<sfs::Query<Armour, Hit>>();\n"
+          "    observe<Health, Motion, Shield>([](const sfs::Entity&) {});\n"
+          "  }\n};\n");
+
+    // Observing says so; spelled as the file spells it.
+    const auto observed = lspTest::analysed(
+        kQueryHead +
+        "  registry->observe<With<A>>([](const Entity&) {});\n}\n");
+    CHECK(lspTest::count(*observed, RuleId::WithInRegister) == 1u);
+    CHECK(lspTest::first(*observed, RuleId::WithInRegister)
+              ->message.starts_with("Observing binds no row, so With<A> "));
+
+    // A With in a named list the system registers and goes through is what
+    // it's for; a query binds rows.
+    for (const std::string code :
+         {"class Mover : public sfs::System\n{\n"
+          "  using Entities = sfs::Query<Health, sfs::With<Motion>>;\n"
+          "  void create() override { registerComponent<Entities>(); "
+          "observe<Entities>([](const sfs::Entity&) {}); }\n"
+          "  void update(double) override\n  {\n"
+          "    for (auto [e, health] : getEntities<Entities>())\n"
+          "      take(e, health);\n  }\n};\n",
+          "void f() { take(registry->query<Health, sfs::With<Motion>>()); }\n",
+          "void f() { registerComponent<With<A>>(); }\n",
+          "template <typename... Ts>\nvoid f() { "
+          "registerComponent<sfs::With<Ts...>>(); }\n"})
+      CHECK(lspTest::count(*lspTest::analysed(code), RuleId::WithInRegister) ==
+            0u);
+
+    // A call that isn't its own statement keeps a group of several.
+    const auto inline_ = lspTest::analysed(
+        "void f() { if (ok) registerComponent<sfs::With<A, B>>(), go(); }\n");
+    CHECK(lspTest::count(*inline_, RuleId::WithInRegister) == 1u);
+    CHECK(lspTest::first(*inline_, RuleId::WithInRegister)->fix.empty());
+  }
+
+  TEST("unused-row-component should require a component the loop never uses "
+       "with With, and drop its binding")
+  {
+    const auto loop = [](const std::string& code)
+    { return lspTest::analysed("void f()\n{\n" + code + "}\n"); };
+    const auto fixedLoop = [&](const std::string& code)
+    {
+      return fixedAll(
+          "void f()\n{\n" + code + "}\n", RuleId::UnusedRowComponent);
+    };
+
+    const auto rows = loop("  for (auto [e, health, transform] : "
+                           "registry->query<Health, Transform>())\n"
+                           "    hurt(e, health);\n");
+    CHECK(lspTest::count(*rows, RuleId::UnusedRowComponent) == 1u);
+    const auto* found = lspTest::first(*rows, RuleId::UnusedRowComponent);
+    CHECK(found && found->message ==
+                       "This loop never uses Transform; it only needs "
+                       "entities to have it. Require it with "
+                       "sfs::With<Transform> and drop the binding.");
+    CHECK(found && found->fixTitle == "Require Transform with sfs::With");
+    // On the name, which fades.
+    CHECK(found && found->range.startRow == 2u &&
+          found->range.startColumn == 24u);
+    CHECK(lspTest::count(*rows, RuleId::MutableRead) == 0u);
+
+    const std::pair<std::string, std::string> forms[] = {
+        // The entity form keeps the rest.
+        {"  for (auto [e, health, transform] : registry->query<Health, "
+         "Transform>())\n    hurt(e, health);\n",
+         "  for (auto [e, health] : registry->query<Health, "
+         "sfs::With<Transform>>())\n    hurt(e, health);\n"},
+        // Into the list's With group; const goes.
+        {"  for (const auto& [e, health, transform] : registry->query<Health, "
+         "sfs::With<Alive>, const Transform>())\n    hurt(e, health);\n",
+         "  for (const auto& [e, health] : registry->query<Health, "
+         "sfs::With<Alive, Transform>>())\n    hurt(e, health);\n"},
+        {"  for (auto [e, transform, health] : registry->query<const "
+         "Transform, sfs::With<Alive >, Health>())\n    hurt(e, health);\n",
+         "  for (auto [e, health] : registry->query<sfs::With<Alive, "
+         "Transform >, Health>())\n    hurt(e, health);\n"},
+        // components(): one required component left binds alone.
+        {"  for (auto [health, transform] : registry->query<Health, "
+         "Transform>().components())\n    heal(health);\n",
+         "  for (Health& health : registry->query<Health, "
+         "sfs::With<Transform>>())\n    heal(health);\n"},
+        {"  for (auto [health, transform] : registry->query<const Health, "
+         "Transform>().components())\n    heal(health);\n",
+         "  for (const Health& health : registry->query<const Health, "
+         "sfs::With<Transform>>())\n    heal(health);\n"},
+        // An Any member left keeps components().
+        {"  for (auto [transform, shield, armour] : registry->query<Transform, "
+         "sfs::Any<Shield, Armour>>().components())\n    guard(shield, "
+         "armour);\n",
+         "  for (auto [shield, armour] : registry->query<sfs::With<Transform>, "
+         "sfs::Any<Shield, Armour>>().components())\n    guard(shield, "
+         "armour);\n"},
+        // Left with the entity: the loop goes through entities.
+        {"  for (auto [e, transform] : registry->query<Transform, "
+         "sfs::Excluding<Dead>>())\n    kill(e);\n",
+         "  for (const sfs::Entity& e : registry->query<sfs::With<Transform>, "
+         "sfs::Excluding<Dead>>())\n    kill(e);\n"},
+        // Several, a pass each, into one group.
+        {"  for (auto [e, a, b, c] : registry->query<A, B, C>())\n"
+         "    use(e, b);\n",
+         "  for (auto [e, b] : registry->query<sfs::With<A, C>, B>())\n"
+         "    use(e, b);\n"},
+        {"  for (auto [a, b, c] : registry->query<A, B, C>().components())\n"
+         "    use(b);\n",
+         "  for (B& b : registry->query<sfs::With<A, C>, B>())\n"
+         "    use(b);\n"}};
+
+    for (const auto& [before, after] : forms)
+    {
+      const std::string text = fixedLoop(before);
+      CHECK(text == "void f()\n{\n" + after + "}\n");
+
+      if (text != "void f()\n{\n" + after + "}\n")
+        std::printf("      got:\n%s\n", text.c_str());
+    }
+
+    // Spelled as the file spells SFS's groups.
+    CHECK(fixedAll(kQueryHead + "  for (auto [e, a, b] : registry->query<A, "
+                                "B>())\n    use(e, a);\n}\n",
+                   RuleId::UnusedRowComponent) ==
+          kQueryHead + "  for (auto [e, a] : registry->query<A, With<B>>())\n"
+                       "    use(e, a);\n}\n");
+    CHECK(fixedAll(kQueryHead + "  for (auto [e, b] : registry->query<B>())\n"
+                                "    use(e);\n}\n",
+                   RuleId::UnusedRowComponent) ==
+          kQueryHead + "  for (const Entity& e : registry->query<With<B>>())\n"
+                       "    use(e);\n}\n");
+    CHECK(fixedAll(kQueryHead +
+                       "  for (auto [e, b] : registry->query<B>())\n"
+                       "    use(e);\n  query<sfs::Excluding<C>>();\n}\n",
+                   RuleId::UnusedRowComponent)
+              .find("for (const sfs::Entity& e : "
+                    "registry->query<sfs::With<B>>())") != std::string::npos);
+    CHECK(fixedAll("namespace sfs\n{\nvoid f()\n{\n  for (auto [e, a, b] : "
+                   "registry->query<A, B>())\n    use(e, a);\n}\n}\n",
+                   RuleId::UnusedRowComponent)
+              .find("[e, a] : registry->query<A, With<B>>()") !=
+          std::string::npos);
+
+    // A system's typed list.
+    CHECK(fixedAll("class Mover : public sfs::System\n{\n"
+                   "  void create() override { registerComponent<Health>(); "
+                   "registerComponent<Motion>(); }\n"
+                   "  void update(double) override\n  {\n"
+                   "    for (auto [e, health, motion] : getEntities<Health, "
+                   "Motion>())\n      hurt(e, health);\n  }\n};\n",
+                   RuleId::UnusedRowComponent)
+              .find("for (auto [e, health] : getEntities<Health, "
+                    "sfs::With<Motion>>())") != std::string::npos);
+
+    // In a Query list written in the loop: reported without a fix.
+    const auto nested = loop("  for (auto [e, a, b] : registry->query<A, "
+                             "sfs::Query<B, sfs::Excluding<C>>>())\n"
+                             "    use(e, a);\n");
+    CHECK(lspTest::count(*nested, RuleId::UnusedRowComponent) == 1u);
+    CHECK(lspTest::first(*nested, RuleId::UnusedRowComponent)->fix.empty());
+
+    // Used in any way, out of sight, or not this rule's: not reported.
+    for (const std::string code :
+         {"  for (auto [e, a, b] : registry->query<A, B>())\n"
+          "    use(e, a, b);\n",
+          "  for (auto [e, a, b] : registry->query<A, B>())\n"
+          "    later([&] { use(e, a.n, b.n); });\n",
+          "  for (auto [e, a, b] : registry->query<A, B>())\n"
+          "    LOG_INFO(e, a, sizeof(b));\n",
+          "  for (auto [e, a, b] : registry->query<A, B>())\n"
+          "  {\n#define READ_B b.n\n    use(e, a, READ_B);\n  }\n",
+          "  for (auto [e, a, b] : registry->query<A, B>())\n"
+          "    use(e, a, e.getComponent<B>());\n",
+          // Any members are pointers, and a different filter.
+          "  for (auto [e, a, b, c] : registry->query<A, sfs::Any<B, C>>())\n"
+          "    use(e, a);\n",
+          // Nothing used at all: unused-row-entity's, or a loop that doesn't
+          // need the row.
+          "  for (auto [e, a] : registry->query<A>())\n    ++count;\n",
+          "  for (auto [a, b] : registry->query<A, B>().components())\n"
+          "    ++count;\n",
+          "  for (A& a : registry->query<A>())\n    ++count;\n",
+          // Through an alias, a list in a variable, a walk.
+          "  for (auto [e, a, b] : registry->query<Served>())\n"
+          "    use(e, a);\n",
+          "  const auto list = registry->query<A, B>();\n"
+          "  for (auto [e, a, b] : list)\n    use(e, a);\n",
+          "  for (auto [e, a, b] : sfs::hierarchy::childrenOf<A, B>(root))\n"
+          "    use(e, a);\n"})
+    {
+      const auto shown = loop("  using Served = sfs::Query<A, B>;\n" + code);
+
+      if (lspTest::count(*shown, RuleId::UnusedRowComponent) != 0u)
+        std::printf("      reported:\n%s\n", code.c_str());
+
+      CHECK(lspTest::count(*shown, RuleId::UnusedRowComponent) == 0u);
+    }
+
+    // In a project, a term it doesn't know as a component may be an alias.
+    Project project;
+    const auto unknown = lspTest::analysed(
+        "void f()\n{\n  for (auto [e, health, unknown] : "
+        "registry->query<Health, Unknown>())\n    use(e);\n}\n",
+        project.root / "scripts/systems/F.cpp",
+        &project.index);
+    CHECK(lspTest::count(*unknown, RuleId::UnusedRowComponent) == 1u);
+  }
+
+  TEST("unused-row-component, unused-row-entity, mutable-read and row-lookup "
+       "should agree on a row, fixed in any order")
+  {
+    const std::string loop = "void f()\n{\n"
+                             "  for (auto [e, health, motion, shield] : "
+                             "registry->query<Health, Motion, Shield>())\n"
+                             "    total += health.points + shield.strength;\n"
+                             "}\n";
+    const std::string done = "void f()\n{\n"
+                             "  for (auto [health, shield] : "
+                             "registry->query<const Health, "
+                             "sfs::With<Motion>, const "
+                             "Shield>().components())\n"
+                             "    total += health.points + shield.strength;\n"
+                             "}\n";
+    const RuleId rules[] = {RuleId::UnusedRowComponent,
+                            RuleId::UnusedRowEntity,
+                            RuleId::MutableRead};
+    int orders = 0;
+
+    for (const RuleId first : rules)
+      for (const RuleId second : rules)
+        for (const RuleId third : rules)
+        {
+          if (first == second || second == third || first == third)
+            continue;
+
+          const std::string text =
+              fixedAll(fixedAll(fixedAll(loop, first), second), third);
+          ++orders;
+          CHECK(text == done);
+
+          if (text != done)
+            std::printf("      got:\n%s\n", text.c_str());
+        }
+
+    CHECK(orders == 6);
+
+    // A With member the loop looks up leaves its group to be bound.
+    CHECK(fixed(*lspTest::analysed("void f()\n{\n  for (const sfs::Entity& e : "
+                                   "registry->query<A, sfs::With<B, C>>())\n"
+                                   "    e.getComponent<B>()->n = 1;\n}\n"),
+                RuleId::RowLookup)
+              ->text == "void f()\n{\n  for (auto [a, b] : registry->query<A, "
+                        "sfs::With<C>, B>().components())\n"
+                        "    b.n = 1;\n}\n");
+  }
+
+  TEST("unused-row-component's and with-in-register's fixes should compile "
+       "against the engine's headers")
+  {
+    const std::string source =
+        "#include \"engine/core/ecs/queryView.h\"\n"
+        "#include \"engine/core/ecs/registry.h\"\n"
+        "struct Health { float points = 0; };\n"
+        "struct Motion { float speed = 0; };\n"
+        "struct Shield { float strength = 0; };\n"
+        "struct Armour { int dents = 0; };\n"
+        "struct Enemy {};\n"
+        "struct Dead {};\n"
+        "class Mover : public sfs::System\n{\n"
+        "  using Entities = sfs::Query<Health, sfs::With<Enemy>>;\n"
+        "  void create() override\n  {\n"
+        "    registerComponent<sfs::With<Health>>();\n"
+        "    registerComponent<sfs::With<Motion, Enemy>>();\n"
+        "    registerComponent<sfs::Query<Shield, sfs::With<Armour>>>();\n"
+        "    observe<Health, sfs::With<Motion>>([](const sfs::Entity&) {});\n"
+        "  }\n"
+        "  void update(double) override\n  {\n"
+        "    for (auto [e, health, motion] : getEntities<Health, Motion>())\n"
+        "      total += health.points + static_cast<float>(e.getId());\n"
+        "    for (auto [health, motion, shield, armour] : "
+        "registry->query<Health, Motion, sfs::Any<Shield, Armour>>()"
+        ".components())\n"
+        "      total += health.points + (shield ? shield->strength : 0.0f) + "
+        "(armour ? 1.0f : 0.0f);\n"
+        "    for (auto [health, enemy] : registry->query<Health, "
+        "Enemy>().components())\n"
+        "      total += health.points;\n"
+        "    for (auto [e, motion] : registry->query<Motion, "
+        "sfs::Excluding<Dead>>())\n"
+        "      total += static_cast<float>(e.getId());\n"
+        "    for (auto [e, health, motion, shield] : registry->query<Health, "
+        "Motion, sfs::With<Enemy>, Shield>())\n"
+        "      total += static_cast<float>(e.getId()) + motion.speed;\n"
+        "  }\n"
+        "  float total = 0;\n};\n";
+    std::string text = source;
+
+    for (const RuleId rule : {RuleId::UnusedRowComponent,
+                              RuleId::WithInRegister,
+                              RuleId::MutableRead})
+      text = fixedAll(text, rule, 30);
+
+    const auto after = lspTest::analysed(text);
+    CHECK(lspTest::count(*after, RuleId::UnusedRowComponent) == 0u);
+    CHECK(lspTest::count(*after, RuleId::WithInRegister) == 0u);
+    CHECK(text.find("registerComponent<Motion>();\n"
+                    "    registerComponent<Enemy>();") != std::string::npos);
+    CHECK(text.find("getEntities<const Health, sfs::With<Motion>>()") !=
+          std::string::npos);
+    CHECK(text.find("for (const Health& health : registry->query<const "
+                    "Health, sfs::With<Enemy>>())") != std::string::npos);
+    CHECK(text.find("for (const sfs::Entity& e : registry->query<"
+                    "sfs::With<Motion>, sfs::Excluding<Dead>>())") !=
+          std::string::npos);
+    CHECK(text.find("registry->query<const Motion, sfs::With<Enemy, Health, "
+                    "Shield>>()") != std::string::npos);
+    CHECK(compilesWithEngine("withBefore.cpp", source));
+    CHECK(compilesWithEngine("withAfter.cpp", text));
+
+    if (text == source)
+      std::printf("      nothing fixed\n");
   }
 
   TEST("filter-in-loop and row-lookup should follow helpers that return a "
@@ -2890,7 +3772,8 @@ int main()
     std::vector<sfs::codegen::TextEdit> all;
 
     for (const auto& d : doc->diagnostics)
-      all.insert(all.end(), d.fix.begin(), d.fix.end());
+      if (d.rule == RuleId::ComponentPointer)
+        all.insert(all.end(), d.fix.begin(), d.fix.end());
 
     const std::string text = lspTest::applyEdits(doc->text, all);
     CHECK(text ==

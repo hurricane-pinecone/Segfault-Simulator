@@ -168,7 +168,8 @@ BloomSettings RenderSystem::effectiveBloom() const
   if (m_style && m_style->bloom)
     return *m_style->bloom;
 
-  const CameraComponent* camera = sceneCamera().getComponent<CameraComponent>();
+  const CameraComponent* camera =
+      sceneCamera().getComponent<const CameraComponent>();
   return camera ? bloomOf(*camera) : m_bloom;
 }
 
@@ -381,12 +382,12 @@ void RenderSystem::render()
     // A 2D game's camera: over its point of the plane, looking straight at
     // it (up the screen: the plane's up), shaken across it.
     if (const Entity camera = sceneCamera();
-        const auto* lens = camera.getComponent<CameraComponent>())
+        const auto* lens = camera.getComponent<const CameraComponent>())
     {
       glm::vec2 point = hierarchy::cachedWorldTransform(camera).position2D();
 
-      if (CameraFollowComponent* cameraFollow =
-              camera.getComponent<CameraFollowComponent>())
+      if (const CameraFollowComponent* cameraFollow =
+              camera.getComponent<const CameraFollowComponent>())
         point +=
             cameraFollow->shakeOffset * glm::vec2(1.0f, m_space2D->ySign());
 
@@ -421,14 +422,15 @@ void RenderSystem::render()
   }
   else if (m_followSceneCamera)
     if (const Entity camera = sceneCamera();
-        const CameraComponent* lens = camera.getComponent<CameraComponent>())
+        const CameraComponent* lens =
+            camera.getComponent<const CameraComponent>())
     {
       viewThrough(*lens, hierarchy::cachedWorldMatrix(camera), m_camera);
 
       // A follow's shake moves the view across itself (as it moves a flat
       // or isometric camera across the ground).
-      if (CameraFollowComponent* cameraFollow =
-              camera.getComponent<CameraFollowComponent>())
+      if (const CameraFollowComponent* cameraFollow =
+              camera.getComponent<const CameraFollowComponent>())
       {
         const glm::vec2 shake = cameraFollow->shakeOffset;
         const glm::vec3 right = m_camera.groundRight();
@@ -539,7 +541,8 @@ void RenderSystem::render()
 
   // Depth of field, like bloom, is the scene camera's; focused where the view
   // is (the editor's orbit target, while it looks around freely).
-  if (const CameraComponent* lens = camera.getComponent<CameraComponent>())
+  if (const CameraComponent* lens =
+          camera.getComponent<const CameraComponent>())
     frame.depthOfField = depthOfFieldOf(*lens);
 
   frame.focusDistance = m_camera.distance;
@@ -776,8 +779,8 @@ std::optional<FeedView> RenderSystem::chooseFeed()
   CameraFeedComponent* chosenFeed = nullptr;
   double mostLate = -1.0;
 
-  for (auto [entity, transform, feed] :
-       registry->query<TransformComponent, CameraFeedComponent>())
+  for (auto [entity, feed] :
+       registry->query<With<TransformComponent>, CameraFeedComponent>())
   {
     if (!feed.picture)
       continue;
@@ -1429,8 +1432,8 @@ void RenderSystem::emitLightning()
   const float lamp =
       m_frameSky.physical ? std::max(m_frameSky.lampScale, 0.1f) : 1.0f;
 
-  for (auto [entity, strike, transform] :
-       registry->query<LightningComponent, TransformComponent>())
+  for (auto [entity, strike] :
+       registry->query<LightningComponent, With<TransformComponent>>())
   {
     if (strike.finished || !strike.shaped)
       continue;
@@ -1523,8 +1526,8 @@ void RenderSystem::gatherEmissionLights()
     return point;
   };
 
-  for (auto [entity, transform, renderer] :
-       registry->query<TransformComponent, MeshRendererComponent>())
+  for (auto [entity, renderer] :
+       registry->query<With<TransformComponent>, MeshRendererComponent>())
   {
     if (!renderer.emitsLight || renderer.tint.a <= 0.0f ||
         renderer.lightStrength <= 0.0f || renderer.lightRange <= 0.0f)
@@ -1643,8 +1646,8 @@ void RenderSystem::gatherPointLights()
   if (!registry)
     return;
 
-  for (auto [entity, local, light] :
-       registry->query<TransformComponent, PointLightComponent>())
+  for (auto [entity, light] :
+       registry->query<With<TransformComponent>, PointLightComponent>())
   {
     if (light.intensity <= 0.0f || light.radius <= 0.0f)
       continue;
@@ -1768,8 +1771,8 @@ void RenderSystem::placeLightning()
   Entity brightestEntity;
   const LightningComponent* brightest = nullptr;
 
-  for (auto [entity, strike, transform] :
-       registry->query<LightningComponent, TransformComponent>())
+  for (auto [entity, strike] :
+       registry->query<LightningComponent, With<TransformComponent>>())
   {
     if (strike.finished || !strike.shaped)
       continue;
@@ -1875,8 +1878,8 @@ void RenderSystem::updateLightning(float seconds)
 
   std::size_t flashing = 0;
 
-  for (auto [entity, strike, transform] :
-       registry->query<LightningComponent, TransformComponent>())
+  for (auto [entity, strike] :
+       registry->query<LightningComponent, With<TransformComponent>>())
   {
     if (strike.finished)
       continue;

@@ -382,8 +382,8 @@ void ParticleEngine::gatherWind()
   if (const Wind* wind = registry->sceneData<const Wind>())
     m_wind = windVelocity(*wind);
 
-  for (const auto& [entity, zone, transform] :
-       registry->query<WindZoneComponent, TransformComponent>())
+  for (const auto& [entity, zone] :
+       registry->query<WindZoneComponent, With<TransformComponent>>())
   {
     if (zone.enabled && zone.radius > 0.0f)
       m_windZones.push_back({hierarchy::worldTransform(entity).position2D(),
@@ -723,8 +723,8 @@ void ParticleEngine::syncComponentEmitters(float dt)
   for (auto& [id, inst] : m_entityEmitters)
     inst.emitting = false;
 
-  for (const auto& [entity, local, emitter] :
-       registry->query<TransformComponent, ParticleEmitterComponent>())
+  for (const auto& [entity, emitter] :
+       registry->query<With<TransformComponent>, ParticleEmitterComponent>())
   {
     const EffectId fx = effectIdOf(emitter.effect);
 

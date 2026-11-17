@@ -48,8 +48,8 @@ void mergeOverride(json& into, const json& patch)
 std::vector<Unused> of(const sfs::Entity& root)
 {
   std::vector<Unused> out;
-  sfs::UnresolvedComponents* unresolvedComponents =
-      root.getComponent<sfs::UnresolvedComponents>();
+  const sfs::UnresolvedComponents* unresolvedComponents =
+      root.getComponent<const sfs::UnresolvedComponents>();
 
   if (!unresolvedComponents)
     return out;
@@ -146,8 +146,8 @@ renamedNodeMoves(const sfs::Entity& root,
                  const std::vector<std::string>& paths)
 {
   std::map<std::string, std::string> moves;
-  sfs::PrefabLinkComponent* prefabLink =
-      node.getComponent<sfs::PrefabLinkComponent>();
+  const sfs::PrefabLinkComponent* prefabLink =
+      node.getComponent<const sfs::PrefabLinkComponent>();
 
   if (!prefabLink || nodes.size() != paths.size())
     return moves;

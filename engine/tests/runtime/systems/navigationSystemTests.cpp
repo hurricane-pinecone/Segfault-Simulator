@@ -395,20 +395,20 @@ int main()
     World world;
     world.solid({12.0f, 0.0f, 1.0f}, {1.0f, 8.0f, 2.0f});
     Entity car = world.car({0.0f, 0.0f}, 0.0f, specs.car);
-    // The graph is built on the scheduler's workers: each frame waits for
-    // them.
+    // Frames till the graph has `edges` edges, however long the scheduler's
+    // workers take to make it.
     const auto graphWith = [&](std::size_t edges)
     {
-      for (int frame = 0; frame < 10; ++frame)
+      for (;;)
       {
         world.step();
         const auto& g = world.navigation.fleet().world().graph;
 
         if (g && g->edges().size() == edges)
           return g;
-      }
 
-      return std::shared_ptr<const nav::CoarseGraph>();
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      }
     };
     const auto plain = graphWith(0);
     CHECK(plain != nullptr);

@@ -15,7 +15,7 @@
 inline std::string entityLabel(const sfs::Entity& entity)
 {
   if (const sfs::NameComponent* named =
-          entity.getComponent<sfs::NameComponent>();
+          entity.getComponent<const sfs::NameComponent>();
       named && !named->name.empty())
     return named->name;
 

@@ -100,12 +100,13 @@ public:
   /**
    * Whether it's a living entity whose components match a query's terms, as
    * Registry::query() reads them: components it must all have, one Any<...>
-   * group it must have one of, Excluding<...> groups it must have none of,
-   * and Query<...> lists of these, e.g. `e.matches<Served>()` for a
-   * `using Served = sfs::Query<...>`. It tests its components now, as
-   * hasComponent() does, so an entity not yet flushed into the query's list
-   * can already match, and a destroyed one still matches until its flush
-   * removes it. One signature test, no allocation.
+   * group it must have one of, With<...> groups it must have all of,
+   * Excluding<...> groups it must have none of, and Query<...> lists of
+   * these, e.g. `e.matches<Served>()` for a `using Served =
+   * sfs::Query<...>`. It tests its components now, as hasComponent() does,
+   * so an entity not yet flushed into the query's list can already match,
+   * and a destroyed one still matches until its flush removes it. One
+   * signature test, no allocation.
    * @return false for a handle that isn't valid
    */
   template <typename... TTerms>

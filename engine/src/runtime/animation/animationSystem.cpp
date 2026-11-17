@@ -42,7 +42,7 @@ constexpr uint32_t REBIND_FRAMES = 30;
 
 JointPose poseOf(const Entity& entity)
 {
-  const TransformComponent* t = entity.getComponent<TransformComponent>();
+  const TransformComponent* t = entity.getComponent<const TransformComponent>();
 
   if (!t)
     return {};
@@ -53,7 +53,8 @@ JointPose poseOf(const Entity& entity)
 // Its RestPoseComponent's pose, or its transform's if it has none.
 JointPose restOf(const Entity& entity)
 {
-  const RestPoseComponent* rest = entity.getComponent<RestPoseComponent>();
+  const RestPoseComponent* rest =
+      entity.getComponent<const RestPoseComponent>();
 
   if (!rest)
     return poseOf(entity);
@@ -281,8 +282,8 @@ void AnimationSystem::bind(const Entity& entity,
     if (m_live && !node.hasComponent<RestPoseComponent>())
       hierarchy::recordRestPose(node);
 
-    MeshRendererComponent* meshRenderer =
-        node.getComponent<MeshRendererComponent>();
+    const MeshRendererComponent* meshRenderer =
+        node.getComponent<const MeshRendererComponent>();
 
     if (!meshRenderer)
       continue;
@@ -380,7 +381,7 @@ float AnimationSystem::length(const Entity& animator,
 {
   const AnimationSet* set = clips(animator);
   const AnimatorComponent* component =
-      animator.getComponent<AnimatorComponent>();
+      animator.getComponent<const AnimatorComponent>();
 
   if (!set || !component)
     return 0.0f;

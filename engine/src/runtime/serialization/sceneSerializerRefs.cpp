@@ -133,7 +133,7 @@ namespace
 // An entity as messages name it.
 std::string describe(const Entity& entity)
 {
-  if (NameComponent* name = entity.getComponent<NameComponent>())
+  if (const NameComponent* name = entity.getComponent<const NameComponent>())
     return "'" + name->name + "'";
 
   return "entity " + std::to_string(entity.getId());
@@ -249,7 +249,7 @@ void checkPart(const SceneSerializer::PendingRef& ref, const Entity& target)
   if (pattern.empty() || !debugFeatures::enabled())
     return;
 
-  const NameComponent* named = target.getComponent<NameComponent>();
+  const NameComponent* named = target.getComponent<const NameComponent>();
   const std::string name = named ? named->name : std::string();
 
   if (matchesPart(name, pattern))
@@ -342,8 +342,8 @@ Entity SceneSerializer::entityAtPath(const Entity& root, std::string_view path)
         {
           const Entity entity = *it;
 
-          if (PrefabLinkComponent* prefabLink =
-                  entity.getComponent<PrefabLinkComponent>();
+          if (const PrefabLinkComponent* prefabLink =
+                  entity.getComponent<const PrefabLinkComponent>();
               prefabLink && prefabLink->id == *id)
           {
             at = entity;
@@ -719,7 +719,8 @@ SceneSerializer::sceneHolderOf(const Entity& target)
 std::optional<uint32_t> SceneSerializer::sceneIdFor(const Entity& holder,
                                                     SaveOp* op)
 {
-  if (SceneIdComponent* sceneId = holder.getComponent<SceneIdComponent>())
+  if (const SceneIdComponent* sceneId =
+          holder.getComponent<const SceneIdComponent>())
     return sceneId->id;
 
   if (!op)
@@ -735,7 +736,7 @@ std::optional<uint32_t> SceneSerializer::sceneIdFor(const Entity& holder,
         op->usedSceneIds.insert(sceneId->id);
 
       if (const UnresolvedComponents* kept =
-              entity.getComponent<UnresolvedComponents>())
+              entity.getComponent<const UnresolvedComponents>())
       {
         keptSceneIds(kept->refs, op->usedSceneIds);
         keptSceneIds(kept->overrides, op->usedSceneIds);

@@ -486,7 +486,8 @@ nav::Box3 NavigationSystem::mountedBox(const glm::mat4& inAgent,
 std::optional<NavigationSystem::Params> NavigationSystem::paramsOf(Tracked& t)
 {
   const Entity& agent = t.entity;
-  const NavAgentComponent* c = registry->getComponent<NavAgentComponent>(agent);
+  const NavAgentComponent* c =
+      registry->getComponent<const NavAgentComponent>(agent);
 
   if (!c)
   {
@@ -514,7 +515,8 @@ std::optional<NavigationSystem::Params> NavigationSystem::paramsOf(Tracked& t)
   {
     // A vehicle moves as its VehicleSpec says, with what it tows and
     // carries and the grip under it.
-    const VehicleComponent* v = registry->getComponent<VehicleComponent>(agent);
+    const VehicleComponent* v =
+        registry->getComponent<const VehicleComponent>(agent);
 
     if (!v)
       return complain("is a vehicle with no VehicleComponent");
@@ -794,7 +796,8 @@ void NavigationSystem::syncAgents()
   {
     Tracked& t = *tracked;
     const Entity& e = t.entity;
-    const NavAgentComponent* c = registry->getComponent<NavAgentComponent>(e);
+    const NavAgentComponent* c =
+        registry->getComponent<const NavAgentComponent>(e);
 
     if (!c)
     {

@@ -156,10 +156,10 @@ ChildRange childrenOf(const Entity& entity);
 
 /**
  * An entity's children that match TTerms (as a query matches them: required
- * components, one Any<...> group, Excluding<...> groups), in id order, as the
- * rows a query gives (queryView.h): `for (auto [child, wheel] :
- * childrenOf<Wheel>(root))`, or `for (Wheel& wheel : ...)` without the
- * entity. Unlike a query it includes children still waiting for their first
+ * components, one Any<...> group, With<...> and Excluding<...> groups), in
+ * id order, as the rows a query gives (queryView.h): `for (auto [child,
+ * wheel] : childrenOf<Wheel>(root))`, or `for (Wheel& wheel : ...)` without
+ * the entity. Unlike a query it includes children still waiting for their first
  * flush, as childrenOf() does. It reads the links as it goes and allocates
  * nothing; per child, one signature test plus the fetches bound.
  * Reparenting the children, or adding or removing the terms' components,

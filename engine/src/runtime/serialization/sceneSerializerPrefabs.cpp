@@ -981,7 +981,8 @@ std::optional<std::string> SceneSerializer::pathInInstance(const Entity& entity,
   if (entity == root)
     return std::string();
 
-  PrefabLinkComponent* prefabLink = entity.getComponent<PrefabLinkComponent>();
+  const PrefabLinkComponent* prefabLink =
+      entity.getComponent<const PrefabLinkComponent>();
 
   if (!prefabLink)
     return std::nullopt;
@@ -1027,7 +1028,7 @@ void walkInstance(
     const std::optional<std::string> path =
         SceneSerializer::pathInInstance(entity, root);
     const auto node = path ? byPath.find(*path) : byPath.end();
-    const auto* instance = entity.getComponent<PrefabInstanceComponent>();
+    const auto* instance = entity.getComponent<const PrefabInstanceComponent>();
     const std::string isInstanceOf = instance ? instance->prefab : "";
 
     if (entity != root &&
@@ -1067,7 +1068,7 @@ byPathOf(const std::vector<SceneSerializer::PrefabNode>& base)
 std::vector<Entity> SceneSerializer::addedTops(const Entity& root) const
 {
   std::vector<Entity> tops;
-  const auto* instance = root.getComponent<PrefabInstanceComponent>();
+  const auto* instance = root.getComponent<const PrefabInstanceComponent>();
 
   if (!expect(instance, root))
     return tops;
@@ -1091,7 +1092,8 @@ json SceneSerializer::instanceEntry(const Entity& root) const
   refs.sceneIds = true;
   json entry = instanceEntry(root, refs);
 
-  if (SceneIdComponent* sceneId = root.getComponent<SceneIdComponent>())
+  if (const SceneIdComponent* sceneId =
+          root.getComponent<const SceneIdComponent>())
     entry[entityRefs::kSceneIdKey] = sceneId->id;
 
   return entry;
@@ -1100,7 +1102,7 @@ json SceneSerializer::instanceEntry(const Entity& root) const
 json SceneSerializer::instanceEntry(const Entity& root,
                                     const RefContext& refs) const
 {
-  const auto* instance = root.getComponent<PrefabInstanceComponent>();
+  const auto* instance = root.getComponent<const PrefabInstanceComponent>();
 
   if (!expect(instance, root))
     return json::object();
@@ -1149,8 +1151,8 @@ json SceneSerializer::instanceEntry(const Entity& root,
 
   // What the loaded entry named that the prefab doesn't have goes back out,
   // each list item in the place it was read from.
-  if (UnresolvedComponents* unresolvedComponents =
-          root.getComponent<UnresolvedComponents>())
+  if (const UnresolvedComponents* unresolvedComponents =
+          root.getComponent<const UnresolvedComponents>())
   {
     const json& unused = unresolvedComponents->overrides;
 
@@ -1215,8 +1217,8 @@ json SceneSerializer::savePrefab(const Entity& root,
 
       // A model node's stable id (from an unpacked model) or an added
       // entity's is kept, but new ids count on from the prefab's own.
-      if (PrefabLinkComponent* prefabLink =
-              entity.getComponent<PrefabLinkComponent>();
+      if (const PrefabLinkComponent* prefabLink =
+              entity.getComponent<const PrefabLinkComponent>();
           prefabLink && prefabLink->id < kAddedNodeIdBit)
         next = std::max(next, prefabLink->id + 1);
 
@@ -1262,7 +1264,7 @@ json SceneSerializer::savePrefab(const Entity& root,
       if (child.hasComponent<MissingPrefabComponent>())
         continue;
 
-      const auto* link = child.getComponent<PrefabLinkComponent>();
+      const auto* link = child.getComponent<const PrefabLinkComponent>();
 
       if (!link)
         fresh.emplace_back(child, holder);
@@ -1276,7 +1278,7 @@ json SceneSerializer::savePrefab(const Entity& root,
 
   for (const Entity& entity : owned)
     if (entity.hasComponent<PrefabInstanceComponent>())
-      if (const auto* link = entity.getComponent<PrefabLinkComponent>();
+      if (const auto* link = entity.getComponent<const PrefabLinkComponent>();
           expect(link, entity))
         inside(entity, link->id);
 

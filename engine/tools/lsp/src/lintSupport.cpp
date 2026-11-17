@@ -477,6 +477,7 @@ void LintFile::resetFile()
   hasCalls.clear();
   aliveCalls.clear();
   lookups.clear();
+  sceneDataCalls.clear();
   loops.clear();
   constructors.clear();
 }
@@ -507,6 +508,7 @@ Wrapper LintFile::wrapperOfText(TSNode at,
   const std::string_view name = trimmed(spelled.substr(0, open));
   const std::string_view last = lastName(name);
   const Wrapper wrapper = last == "Any"         ? Wrapper::Any
+                          : last == "With"      ? Wrapper::With
                           : last == "Excluding" ? Wrapper::Excluding
                           : last == "Query"     ? Wrapper::Query
                                                 : Wrapper::None;

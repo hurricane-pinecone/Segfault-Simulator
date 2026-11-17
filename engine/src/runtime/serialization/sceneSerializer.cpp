@@ -626,7 +626,7 @@ void convertRenderSceneData(const json& value, Scene& scene)
   // the ambient light; a moon above the horizon as a physical sky's, with
   // the sun (a flat sky's moonlight is the game's to put in the directional
   // light now: its colour and strength aren't kept).
-  if (!lighting.empty() && !scene.sceneData<DirectionalLighting>())
+  if (!lighting.empty() && !scene.sceneData<const DirectionalLighting>())
   {
     DirectionalLighting& light = scene.addSceneData<DirectionalLighting>();
     light.direction = vec3Or(lighting, "sunDirection", light.direction);
@@ -635,7 +635,7 @@ void convertRenderSceneData(const json& value, Scene& scene)
     converted = true;
   }
 
-  if (!lighting.empty() && !scene.sceneData<AmbientLighting>())
+  if (!lighting.empty() && !scene.sceneData<const AmbientLighting>())
   {
     AmbientLighting& ambient = scene.addSceneData<AmbientLighting>();
     ambient.intensity = valueOr(lighting, "ambient", ambient.intensity);
@@ -645,7 +645,7 @@ void convertRenderSceneData(const json& value, Scene& scene)
 
   if (const glm::vec3 moon =
           vec3Or(lighting, "moonDirection", glm::vec3(0.0f, 0.0f, -1.0f));
-      moon.z > 0.0f && !scene.sceneData<CelestialBodies>())
+      moon.z > 0.0f && !scene.sceneData<const CelestialBodies>())
   {
     CelestialBodies& bodies = scene.addSceneData<CelestialBodies>();
     bodies.sunDirection = vec3Or(lighting, "sunDirection", bodies.sunDirection);
@@ -655,7 +655,7 @@ void convertRenderSceneData(const json& value, Scene& scene)
   }
 
   if ((lighting.contains("cloudCover") || weather.contains("cloudDarkness")) &&
-      !scene.sceneData<Clouds>())
+      !scene.sceneData<const Clouds>())
   {
     Clouds& clouds = scene.addSceneData<Clouds>();
     clouds.cover = valueOr(lighting, "cloudCover", clouds.cover);
@@ -663,13 +663,14 @@ void convertRenderSceneData(const json& value, Scene& scene)
     converted = true;
   }
 
-  if (weather.contains("rain") && !scene.sceneData<Rain>())
+  if (weather.contains("rain") && !scene.sceneData<const Rain>())
   {
     scene.addSceneData<Rain>().intensity = valueOr(weather, "rain", 0.0f);
     converted = true;
   }
 
-  if ((!wind.empty() || weather.contains("wind")) && !scene.sceneData<Wind>())
+  if ((!wind.empty() || weather.contains("wind")) &&
+      !scene.sceneData<const Wind>())
   {
     Wind& sceneWind = scene.addSceneData<Wind>();
     sceneWind.direction = valueOr(wind, "direction", sceneWind.direction);
@@ -690,7 +691,7 @@ void convertRenderSceneData(const json& value, Scene& scene)
   }
 
   if ((weather.contains("wetness") || weather.contains("puddles")) &&
-      !scene.sceneData<ShaderGlobals>())
+      !scene.sceneData<const ShaderGlobals>())
   {
     ShaderGlobals& globals = scene.addSceneData<ShaderGlobals>();
     setShaderGlobal(globals, "wetness", valueOr(weather, "wetness", 0.0f));
@@ -1302,8 +1303,8 @@ json SceneSerializer::saveSubtree(const Entity& entity,
 {
   json entry;
 
-  if (MissingPrefabComponent* missingPrefab =
-          entity.getComponent<MissingPrefabComponent>())
+  if (const MissingPrefabComponent* missingPrefab =
+          entity.getComponent<const MissingPrefabComponent>())
   {
     // An instance whose prefab didn't load goes back out as it was read,
     // but a copy's isn't the scene's entry, so it takes no scene id.
@@ -1328,7 +1329,8 @@ json SceneSerializer::saveSubtree(const Entity& entity,
       entry[CHILDREN_KEY] = std::move(children);
   }
 
-  const PrefabLinkComponent* link = entity.getComponent<PrefabLinkComponent>();
+  const PrefabLinkComponent* link =
+      entity.getComponent<const PrefabLinkComponent>();
 
   if (ids != SavedIds::None && link)
   {
@@ -1339,7 +1341,8 @@ json SceneSerializer::saveSubtree(const Entity& entity,
       entry["$id"] = id;
   }
 
-  if (const SceneIdComponent* sceneId = entity.getComponent<SceneIdComponent>();
+  if (const SceneIdComponent* sceneId =
+          entity.getComponent<const SceneIdComponent>();
       refs.sceneIds && sceneId)
     entry[entityRefs::kSceneIdKey] = sceneId->id;
 

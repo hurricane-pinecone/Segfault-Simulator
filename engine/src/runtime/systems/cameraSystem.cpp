@@ -111,7 +111,7 @@ void CameraSystem::lateUpdate(double deltaTime)
 
   for (auto [entity, transform, camera, collision] :
        registry->query<TransformComponent,
-                       CameraComponent,
+                       const CameraComponent,
                        CameraCollisionComponent>())
   {
     const float focus = std::max(camera.focusDistance, 0.01f);
@@ -222,8 +222,8 @@ void CameraSystem::gatherBlockers(const CameraCollisionComponent& collision,
            !entity.hasComponent<RigidBody3DComponent>();
   };
 
-  for (auto [entity, transform, box] :
-       registry->query<TransformComponent, BoxCollider3DComponent>())
+  for (auto [entity, box] :
+       registry->query<With<TransformComponent>, BoxCollider3DComponent>())
   {
     if (!counts(collision, box.trigger, box.layer) || !still(entity))
       continue;
@@ -238,8 +238,8 @@ void CameraSystem::gatherBlockers(const CameraCollisionComponent& collision,
     keep(std::move(blocker));
   }
 
-  for (auto [entity, transform, sphere] :
-       registry->query<TransformComponent, SphereCollider3DComponent>())
+  for (auto [entity, sphere] :
+       registry->query<With<TransformComponent>, SphereCollider3DComponent>())
   {
     if (!counts(collision, sphere.trigger, sphere.layer) || !still(entity))
       continue;
@@ -255,8 +255,8 @@ void CameraSystem::gatherBlockers(const CameraCollisionComponent& collision,
     keep(std::move(blocker));
   }
 
-  for (auto [entity, transform, capsule] :
-       registry->query<TransformComponent, CapsuleCollider3DComponent>())
+  for (auto [entity, capsule] :
+       registry->query<With<TransformComponent>, CapsuleCollider3DComponent>())
   {
     if (!counts(collision, capsule.trigger, capsule.layer) || !still(entity))
       continue;

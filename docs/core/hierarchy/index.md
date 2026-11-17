@@ -37,7 +37,7 @@ All are in `sfs::hierarchy`.
 | `rootOf(entity)` | The top of its branch: its root ancestor, or itself for a root |
 | `canParent(child, parent)` | Whether `setParent` would accept it: always for a default-made parent (a root); otherwise the child must be alive and in the parent's registry, and a living parent must not be the child or below it (a destroyed one makes it a root) |
 | `childrenOf(entity)` | The children, in id order, as a range of `Entity` |
-| `childrenOf<Terms...>(entity)` | The children that match the terms (as a query matches them: components, one `Any` group, `Excluding` groups), in id order, as rows that unpack their components like a query's |
+| `childrenOf<Terms...>(entity)` | The children that match the terms (as a query matches them: components, one `Any` group, `With` and `Excluding` groups), in id order, as rows that unpack their components like a query's |
 | `hasChildren(entity)` | Whether it has any |
 | `findChild<Terms...>(entity)` | The first child that matches the terms (`findChild<Tag>(entity)`), or an invalid entity |
 | `findChildren<Terms...>(entity, out)` | Every child that matches the terms, into `out` (cleared first) |

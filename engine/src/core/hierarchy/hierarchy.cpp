@@ -146,7 +146,8 @@ Composed composedOf(const Entity& entity, bool useCaches)
 template <typename WorldOf>
 TransformComponent worldTransformOf(const Entity& entity, WorldOf world)
 {
-  const TransformComponent* local = entity.getComponent<TransformComponent>();
+  const TransformComponent* local =
+      entity.getComponent<const TransformComponent>();
 
   if (!expect(local, entity))
     return {};
@@ -428,7 +429,7 @@ bool checkWorldCache(const Entity& entity,
   if (entity.hasComponent<TransformCheckWarned>())
     return false;
 
-  const NameComponent* named = entity.getComponent<NameComponent>();
+  const NameComponent* named = entity.getComponent<const NameComponent>();
   const std::string name = named ? " '" + named->name + "'" : std::string();
   LOG_WARN("SFS_CHECK_TRANSFORMS: entity " + std::to_string(entity.getId()) +
            name + ": its cached world matrix, " + phase +
@@ -479,7 +480,7 @@ void setWorldTransform(Entity entity, const TransformComponent& world)
 void recordRestPose(Entity entity)
 {
   const TransformComponent* transform =
-      entity.getComponent<TransformComponent>();
+      entity.getComponent<const TransformComponent>();
 
   if (!transform)
     return;

@@ -151,8 +151,11 @@ protected:
    * Adds a term to what an entity needs to be one of this system's entities
    * (getEntities(), onEntityAdded()), as Registry::query() takes them: a
    * component it must have, an Any<...> group it must have one of (one group
-   * per system: a second is logged and ignored), an Excluding<...> group
-   * it must have none of, or a Query<...> list of these, added one by one.
+   * per system: a second is logged and ignored), a With<...> group it must
+   * have all of, an Excluding<...> group it must have none of, or a
+   * Query<...> list of these, added one by one. Registering binds nothing, so
+   * a With group written here is its components registered plainly; it
+   * belongs in a Query list that getEntities<...>() also goes through.
    * Call it in create(). A system with more than a couple of terms names
    * them once, `using Entities = sfs::Query<...>;`, registers
    * registerComponent<Entities>() and goes through getEntities<Entities>().

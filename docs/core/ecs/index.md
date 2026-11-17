@@ -83,9 +83,9 @@ one, joins) the systems that no longer (or now) match it.
 
 `matches<Terms...>()` asks the same of a whole query: whether the entity's
 components match its terms, read exactly as a [query](#queries-lists-of-entities-by-component)
-reads them (`Any<...>`, `Excluding<...>` and named `sfs::Query<...>` lists
-included), as DOTS' `EntityQuery.Matches` does. It tests the components it
-has now, as `hasComponent` does, so an entity not yet flushed into the
+reads them (`Any<...>`, `With<...>`, `Excluding<...>` and named
+`sfs::Query<...>` lists included), as DOTS' `EntityQuery.Matches` does. It
+tests the components it has now, as `hasComponent` does, so an entity not yet flushed into the
 query's list already matches, and a destroyed one still matches until its
 flush removes it. It's one signature test with no allocation, and false for a
 handle that isn't valid:
@@ -292,13 +292,17 @@ yourself.
 `registerComponent<T>()`, called in the system's `create()`, adds `T` to the
 components an entity needs to be one of the system's entities (one called
 after the system was added is logged and ignored). `T` may also be a filter group, as a query takes them (see
-[Any and Excluding](#any-and-excluding)):
+[Any, With and Excluding](#any-with-and-excluding)):
 `registerComponent<sfs::Excluding<Hidden>>()` leaves out hidden entities,
 `registerComponent<sfs::Any<A, B>>()` asks for one of a group (one `Any` group
 per system: a second is logged and ignored), and
 `registerComponent<sfs::Query<...>>()` registers each term of a named list
-(see [Naming a long query](#naming-a-long-query-query)). `getEntities()`
-returns them: the living entities that match its registered terms, in id
+(see [Naming a long query](#naming-a-long-query-query)). Registering binds
+nothing, so a `With` group registers its components as plain terms do: it
+belongs in a named list the system also goes through
+(`using Entities = sfs::Query<Health, sfs::With<Enemy>>;`), and `sfs-lsp`
+flags one written in `registerComponent<...>()` itself (`with-in-register`).
+`getEntities()` returns them: the living entities that match its registered terms, in id
 order. It is a view of the registry's shared query for those terms (see
 [Queries](#queries-lists-of-entities-by-component)), so the system keeps no
 copy, and it is read-only.
@@ -369,6 +373,7 @@ the entities alone, and unpacks as `[entity, components...]`:
 | --- | --- |
 | a component `T` | `T&`, read straight from its slot: every entity in the list has one; `const T` gives `const T&` |
 | `sfs::Any<A, B>` | `A*`, `B*`, null when the entity has none |
+| `sfs::With<...>` | nothing: the entity has them all, but the loop doesn't need them |
 | `sfs::Excluding<...>` | nothing |
 | `sfs::Query<...>` | its terms, in order |
 
@@ -381,17 +386,32 @@ whatever the qualifier: `const auto& [e, a]` still gives a writable `A&` (an
 names the type: `const sfs::Entity&` or `sfs::Entity`. `for (auto e : view)`
 gives a row, not an `Entity`, and `for (auto& e : view)` doesn't compile. A
 row reads only the components it binds, and a binding the body never reads
-costs nothing once optimised, so there's no need for a narrower query just to
-skip one.
+costs nothing once optimised. A component the loop needs only as a filter
+goes in a `With` group: the same entities and the same list as the plain
+term, but nothing to bind, so the unpacking leaves it out:
+
+```cpp
+// Enemies' health: the loop never touches the Enemy tag.
+for (auto [entity, health] : registry->query<Health, sfs::With<Enemy>>())
+  if (health.current <= 0)
+    kill(entity);
+```
+
+`sfs-lsp` flags a binding the loop never uses (`unused-row-component`) and
+moves its term into a `With` group.
 
 A component may be written `const`, in a term or a lookup, and is then the
 same component, read-only: `query<const Position>()` is the same list as
 `query<Position>()` and its rows bind `const Position&`, `Any<const A, B>`
 binds `const A*`, and `getComponent<const Position>()` (and `find`,
 `finder`) gives a `const Position*`. `const` goes on the components
-themselves, inside an `Any`, `Excluding` or `Query` too: `const
-sfs::Query<...>` doesn't compile, and neither does adding or removing a
-`const` component.
+themselves, inside an `Any`, `With`, `Excluding` or `Query` too: `const
+sfs::Query<...>` doesn't compile (a `With` binds nothing, so `const` inside
+one means nothing: `With<const A>` is `With<A>`), and neither does adding or
+removing a `const` component. Code that only reads a component takes it const, so
+taking it mutably says the code changes it; `sfs-lsp` flags a lookup, a
+`sceneData<T>()` or a query term that's only read (`mutable-read`) and
+makes it const.
 
 A loop that doesn't need the entity leaves it out. A row that binds exactly
 one component, a required one, converts to it, and `components()` gives the
@@ -449,11 +469,13 @@ structural change during iteration). Release builds pay nothing per row and
 don't stop, so the same loop behaves differently there: a misuse is undefined.
 Treat that error as a bug to fix, never as a way to end a loop.
 
-#### Any and Excluding
+#### Any, With and Excluding
 
 A query's template arguments are terms. A plain component is one the entity
-must have. `sfs::Any<A, B>` asks for at least one of a group, and
-`sfs::Excluding<C, D>` for none of a group. They mix freely, in any order:
+must have. `sfs::Any<A, B>` asks for at least one of a group,
+`sfs::With<C, D>` for all of a group, as plain terms do, but without binding
+them in a row, and `sfs::Excluding<E, F>` for none of a group. They mix
+freely, in any order:
 
 ```cpp
 // Workers and vehicles, wherever they are.
@@ -462,12 +484,18 @@ registry->query<sfs::TransformComponent, sfs::Any<Worker, sfs::VehicleComponent>
 registry->query<sfs::TransformComponent, sfs::Excluding<Hidden>>();
 // All three: positioned, moving or hurt, and neither an enemy nor hidden.
 registry->query<Position, sfs::Any<Velocity, Health>, sfs::Excluding<Enemy, Hidden>>();
+// The positions of enemies, whose rows bind the Position alone.
+registry->query<Position, sfs::With<Enemy>>();
 ```
 
 - An entity with none of an `Any` group is not listed. A query takes at most
   one `Any` group (a second is a compile error), and an empty group is one too.
-- `Excluding` wins over everything else: `query<A, sfs::Excluding<A>>()` is
-  empty. Several `Excluding` groups add up.
+- `With<A>` is `A` in every way but the row: `query<A, sfs::With<B>>()` is
+  `query<A, B>()`, the same list, its rows unpacking as `[entity, a]`.
+  Several `With` groups add up.
+- `Excluding` wins over everything else: `query<A, sfs::Excluding<A>>()` and
+  `query<sfs::With<A>, sfs::Excluding<A>>()` are empty. Several `Excluding`
+  groups add up.
 - The same terms in another order are the same query and share its list, and
   so do terms that always list the same entities: an `Any` of one component
   is that component (`query<A, sfs::Any<B>>()` is `query<A, B>()`), and an
@@ -522,7 +550,8 @@ class TrafficSystem : public sfs::System
 ```
 
 - It takes what a query takes: components, at most one `Any` group (counting
-  those beside it: a second is a compile error) and `Excluding` groups.
+  those beside it: a second is a compile error), and `With` and `Excluding`
+  groups.
 - It mixes with other terms and with other `Query` lists, in any order:
   `query<Driven, Health>()` is the query with `Health` added, and
   `Query<Driven, sfs::Excluding<Hidden>>` names a narrower one in turn.

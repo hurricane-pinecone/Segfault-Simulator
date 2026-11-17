@@ -1,20 +1,37 @@
 #include "server.h"
 
 #include "analysis.h"
+#include "document.h"
 #include "format.h"
+#include "lspFeatures.h"
+#include "sfs/codegen/model.h"
 #include "sfs/codegen/parser.h"
+#include "sfs/codegen/rules.h"
 #include "sfs/lsp/protocol.h"
 
+#include "nlohmann/json.hpp"
 #include <tree_sitter/api.h>
 
-#include <algorithm>
 #include <cerrno>
+#include <chrono>
 #include <condition_variable>
+#include <cstdint>
 #include <cstdio>
 #include <deque>
+#include <exception>
+#include <filesystem>
+#include <initializer_list>
 #include <iostream>
+#include <memory>
 #include <mutex>
+#include <optional>
+#include <ratio>
+#include <string>
+#include <string_view>
+#include <sys/types.h>
 #include <thread>
+#include <utility>
+#include <vector>
 
 #if defined(_WIN32)
   #include <io.h>

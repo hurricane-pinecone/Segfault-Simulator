@@ -20,8 +20,8 @@ namespace sfs
 // RenderSystem draws through it and CameraSystem moves it.
 inline Entity findActiveCamera(Registry& registry)
 {
-  for (auto [entity, camera, transform] :
-       registry.query<CameraComponent, TransformComponent>())
+  for (auto [entity, camera] :
+       registry.query<const CameraComponent, With<TransformComponent>>())
     if (camera.active)
       return entity;
 

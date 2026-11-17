@@ -1,9 +1,9 @@
 // The entity API rules: has-then-get, is-alive, row-lookup, filter-in-loop,
-// unused-row-entity, row-component-copy, setup-in-constructor and
-// component-pointer. Each looks around a site the walk found (a hasComponent,
-// isAlive or getComponent call, a range-for loop, a constructor) once the walk
-// is done, and fixes what it can rewrite exactly. A fix that can't be made
-// safely is left out and the warning stands.
+// unused-row-entity, row-component-copy, mutable-read, setup-in-constructor
+// and component-pointer. Each looks around a site the walk found (a
+// hasComponent, isAlive, getComponent or sceneData call, a range-for loop, a
+// constructor) once the walk is done, and fixes what it can rewrite exactly. A
+// fix that can't be made safely is left out and the warning stands.
 
 #include "document.h"
 #include "lints.h"
@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -74,6 +75,31 @@ constexpr std::array<std::string_view, 92> KEYWORDS = {
     "volatile",      "wchar_t",     "while",
     "xor",           "xor_eq"};
 
+// The members of std's containers and strings that only read their object,
+// for mutable-read: called on a component's member, they read the component.
+constexpr std::array<std::string_view, 5> READING_MEMBERS = {"contains",
+                                                             "count",
+                                                             "empty",
+                                                             "length",
+                                                             "size"};
+
+// Functions of std and glm that only read their arguments (by value or by
+// const reference), for mutable-read.
+constexpr std::array<std::string_view, 25> READING_FUNCTIONS = {
+    "glm::cross",    "glm::degrees", "glm::distance",  "glm::dot",
+    "glm::length",   "glm::length2", "glm::normalize", "glm::radians",
+    "std::abs",      "std::atan2",   "std::ceil",      "std::clamp",
+    "std::cos",      "std::fabs",    "std::floor",     "std::isfinite",
+    "std::isnan",    "std::lerp",    "std::max",       "std::min",
+    "std::pow",      "std::round",   "std::sin",       "std::sqrt",
+    "std::to_string"};
+
+// SFS's query groups and lists, for how a file spells them.
+constexpr std::array<std::string_view, 4> SFS_GROUPS = {"Any",
+                                                        "With",
+                                                        "Excluding",
+                                                        "Query"};
+
 template <std::size_t N>
 bool listedIn(const std::array<std::string_view, N>& list,
               std::string_view name)
@@ -98,6 +124,21 @@ std::string lowerCamel(std::string_view name)
     out[i] = static_cast<char>(out[i] - 'A' + 'a');
 
   return out;
+}
+
+// Whether `text` has `word` as a whole word: not part of a longer name.
+bool mentionsWord(std::string_view text, std::string_view word)
+{
+  const auto inName = [](char c)
+  { return std::isalnum(static_cast<unsigned char>(c)) || c == '_'; };
+
+  for (std::size_t at = text.find(word); at != std::string_view::npos;
+       at = text.find(word, at + 1))
+    if ((at == 0 || !inName(text[at - 1])) &&
+        (at + word.size() == text.size() || !inName(text[at + word.size()])))
+      return true;
+
+  return false;
 }
 
 // A spelling without a leading `const` (a query term's `const T` is T).
@@ -823,7 +864,8 @@ struct Rules
         return false;
 
       for (const std::string_view term : m_registered)
-        boundTerms(up, owner, term, m_registeredBound, m_excludedScratch);
+        boundTerms(
+            up, owner, term, m_registeredBound, m_excludedScratch, nullptr);
 
       return !m_excludedScratch.empty();
     }
@@ -843,7 +885,8 @@ struct Rules
                  owner,
                  text(namedChild(templateArguments, i)),
                  m_registeredBound,
-                 m_excludedScratch);
+                 m_excludedScratch,
+                 nullptr);
 
     return !m_excludedScratch.empty();
   }
@@ -2293,10 +2336,13 @@ struct Rules
   {
     std::string_view spelling;
     bool any;               // an Any member: bound as a pointer
-    std::string_view group; // its Any group's spelling, for an Any member
+    std::string_view group; // its Any or With group's spelling
     // A term of a typed system list's registration that the list's own terms
-    // leave out: its rows have it, but bind it only if it's added.
+    // leave out, or a With member of its own terms: its rows have it, but
+    // bind it only if it's added (out of its With group).
     bool implied = false;
+    // A With member of the row's own terms, after all the bound ones.
+    bool with = false;
   };
 
   // What a range-for goes through, read as a query's row.
@@ -2321,6 +2367,7 @@ struct Rules
   std::vector<std::string_view> m_registered;
   std::vector<Bound> m_registeredBound;
   std::vector<std::string_view> m_excludedScratch;
+  std::vector<Bound> m_withScratch;
   // filter-in-loop's scratch: a loop body's statements, a condition's
   // operands, the lookups a body opens with and their names, and the
   // lookups the loop needs to go on.
@@ -2332,12 +2379,15 @@ struct Rules
 
   // The components a term binds (required, Any members; Excluding binds
   // nothing, its members going to `excluded`; aliases and Query lists in
-  // order). False when it can't be read.
+  // order). A With group's members go to `with`, as implied, or, without it
+  // (a registration, which binds nothing), to `out` as plain terms. False
+  // when it can't be read.
   bool boundTerms(TSNode at,
                   std::string_view owner,
                   std::string_view term,
                   std::vector<Bound>& out,
                   std::vector<std::string_view>& excluded,
+                  std::vector<Bound>* with,
                   int depth = 0)
   {
     if (depth > 8 || term.ends_with("..."))
@@ -2351,7 +2401,7 @@ struct Rules
       if (const QueryAlias* named = f.alias(owner, trimmed(term)))
       {
         for (const std::string& nested : named->terms)
-          if (!boundTerms(at, owner, nested, out, excluded, depth + 1))
+          if (!boundTerms(at, owner, nested, out, excluded, with, depth + 1))
             return false;
 
         return true;
@@ -2361,13 +2411,21 @@ struct Rules
       return true;
     case Wrapper::Query:
       for (const std::string_view nested : splitTerms(inner))
-        if (!boundTerms(at, owner, nested, out, excluded, depth + 1))
+        if (!boundTerms(at, owner, nested, out, excluded, with, depth + 1))
           return false;
 
       return true;
     case Wrapper::Any:
       for (const std::string_view member : splitTerms(inner))
         out.push_back({member, true, trimmed(term)});
+
+      return true;
+    case Wrapper::With:
+      for (const std::string_view member : splitTerms(inner))
+        if (with)
+          with->push_back({member, false, trimmed(term), true, true});
+        else
+          out.push_back({member, false, {}});
 
       return true;
     case Wrapper::Excluding:
@@ -2381,20 +2439,25 @@ struct Rules
   }
 
   // The template arguments of a query<...>() or getEntities<...>() call as
-  // the row's bound and excluded components.
+  // the row's bound and excluded components, its With members after the
+  // bound ones.
   bool
   boundOf(TSNode templateArguments, TSNode at, std::string_view owner, Row& row)
   {
     const uint32_t count = namedCount(templateArguments);
+    m_withScratch.clear();
 
     for (uint32_t i = 0; i < count; ++i)
       if (!boundTerms(at,
                       owner,
                       text(namedChild(templateArguments, i)),
                       row.bound,
-                      row.excluded))
+                      row.excluded,
+                      &m_withScratch))
         return false;
 
+    row.bound.insert(
+        row.bound.end(), m_withScratch.begin(), m_withScratch.end());
     return true;
   }
 
@@ -2605,7 +2668,9 @@ struct Rules
   // query or a system's list (helperQuery()), or a variable bound to any of
   // them in the same function; or every entity, for the registry's
   // entities(). False for anything else, or terms it can't read.
-  bool rowOf(TSNode loop, Row& row)
+  // `range` stands in for the loop's own when given (the list a
+  // `.components()` range is called on).
+  bool rowOf(TSNode loop, Row& row, TSNode range = {})
   {
     row.bound.clear();
     row.excluded.clear();
@@ -2615,7 +2680,9 @@ struct Rules
     row.everything = false;
     row.walk = false;
     row.unknownTerms = false;
-    TSNode range = field(loop, "right");
+
+    if (ts_node_is_null(range))
+      range = field(loop, "right");
 
     if (kind(range) == Kind::Identifier)
     {
@@ -2687,8 +2754,10 @@ struct Rules
       bool read = registered;
 
       for (const std::string_view term : m_registered)
-        read = read &&
-               boundTerms(range, owner, term, m_registeredBound, row.excluded);
+        read =
+            read &&
+            boundTerms(
+                range, owner, term, m_registeredBound, row.excluded, nullptr);
 
       row.unknownTerms = !read;
 
@@ -2711,7 +2780,7 @@ struct Rules
       return false;
 
     for (const std::string_view term : m_registered)
-      if (!boundTerms(range, owner, term, row.bound, row.excluded))
+      if (!boundTerms(range, owner, term, row.bound, row.excluded, nullptr))
         return false;
 
     row.untyped = true;
@@ -3127,8 +3196,8 @@ struct Rules
   }
 
   // Whether `scope` may read `name` outside the nodes `skipped`: any token
-  // spelled so (in a lambda, a macro's arguments, sizeof or decltype too),
-  // comments and members named alike (`x.name`) aside.
+  // spelled so (in a lambda, a macro's arguments or definition, sizeof or
+  // decltype too), comments and members named alike (`x.name`) aside.
   bool readsName(TSNode scope,
                  std::string_view name,
                  const std::vector<TSNode>& skipped = {}) const
@@ -3142,6 +3211,14 @@ struct Rules
                                skipped.end(),
                                [&](TSNode skip) { return same(node, skip); }))
                  return Next::Skip;
+
+               // A macro defined in the scope is one token: any word of it
+               // spelled so may be a use.
+               if (isType(node, "preproc_arg"))
+               {
+                 found = mentionsWord(text(node), name);
+                 return found ? Next::Stop : Next::Skip;
+               }
 
                if (namedCount(node) > 0 || !ts_node_is_named(node) ||
                    text(node) != name)
@@ -3258,6 +3335,12 @@ struct Rules
                     (bound[i].any && bound[i].group == bound[use.term].group);
     }
 
+    // A With member it binds leaves its group, which must be written in the
+    // list itself.
+    for (std::size_t i = 0; i < bound.size(); ++i)
+      if (bind[i] && bound[i].with && ts_node_is_null(withGroupOf(row, i)))
+        return;
+
     // Names: a reference bound to a lookup (`T& n = v.getComponent<T>()`) in
     // a block or an if's init-statement lends its own, when nothing else in
     // the loop goes by it; the declaration goes.
@@ -3340,6 +3423,11 @@ struct Rules
 
       fix.push_back(replace(name, "getEntities<" + list + ">"));
     }
+    else if (std::any_of(bound.begin(),
+                         bound.end(),
+                         [&](const Bound& each)
+                         { return each.with && bind[&each - bound.data()]; }))
+      fix.push_back(withoutWithMembers(row, bind, list));
     else if (!list.empty())
     {
       const uint32_t close = end(row.terms) - 1;
@@ -3367,6 +3455,74 @@ struct Rules
       if (!gone)
         readThrough(use.call, names[use.term], bound[use.term].any, fix);
     }
+  }
+
+  // The With group, written in the row's own term list, that the With member
+  // bound[index] is in; null when it's written elsewhere (an alias, a Query
+  // list).
+  TSNode withGroupOf(const Row& row, std::size_t index) const
+  {
+    const std::string_view group = row.bound[index].group;
+
+    for (uint32_t i = 0; i < namedCount(row.terms); ++i)
+    {
+      const TSNode term = namedChild(row.terms, i);
+
+      if (group.data() == f.source.data() + start(term))
+        return term;
+    }
+
+    return {};
+  }
+
+  // The edit rewriting a row's term list with the With members it now binds
+  // (`bind`) out of their groups (a group left empty goes) and `added`, the
+  // terms that bind them, at its end.
+  TextEdit withoutWithMembers(const Row& row,
+                              const std::vector<bool>& bind,
+                              std::string_view added)
+  {
+    std::string list;
+
+    for (uint32_t i = 0; i < namedCount(row.terms); ++i)
+    {
+      const TSNode term = namedChild(row.terms, i);
+      const std::string_view written = text(term);
+      std::string_view inner;
+      std::string kept;
+
+      if (f.wrapperOfText(term, written, inner) != Wrapper::With)
+        kept = written;
+      else
+      {
+        std::string members;
+
+        for (const std::string_view member : splitTerms(inner))
+        {
+          const bool leaves = std::any_of(
+              row.bound.begin(),
+              row.bound.end(),
+              [&](const Bound& each)
+              {
+                return each.with && bind[&each - row.bound.data()] &&
+                       each.spelling.data() == member.data();
+              });
+
+          if (!leaves)
+            members += (members.empty() ? "" : ", ") + std::string(member);
+        }
+
+        if (!members.empty())
+          kept = std::string(written.substr(0, written.find('<'))) + "<" +
+                 members + ">";
+      }
+
+      if (!kept.empty())
+        list += (list.empty() ? "" : ", ") + kept;
+    }
+
+    list += (list.empty() ? "" : ", ") + std::string(added);
+    return fileLines().edit(start(row.terms) + 1, end(row.terms) - 1, list);
   }
 
   // -------------------------------------------------------- filter-in-loop
@@ -3923,13 +4079,18 @@ struct Rules
     // loop unpacks its row already. The entity stays only if what's left of
     // the body reads it.
     std::vector<Binding> header;
+    std::vector<Bound> bound;
+
+    for (const Bound& each : row.bound)
+      if (!each.implied)
+        bound.push_back(each);
 
     if (unpacked)
     {
       const TSNode declarator = field(loop, "declarator");
       const uint32_t count = namedCount(declarator);
 
-      if (count != row.bound.size() + 1)
+      if (count != bound.size() + 1)
         return;
 
       if (name.empty())
@@ -3946,15 +4107,14 @@ struct Rules
 
       for (uint32_t i = 1; i < count; ++i)
         header.push_back({std::string(text(namedChild(declarator, i))),
-                          row.bound[i - 1].spelling,
-                          row.bound[i - 1].any});
+                          bound[i - 1].spelling,
+                          bound[i - 1].any});
     }
     else if (!name.empty())
     {
       if (!unpackableEntity(loop, entity))
         return;
 
-      std::vector<Bound> bound = row.bound;
       bound.push_back({type, false, {}});
       const std::vector<bool> bind(bound.size(), true);
       std::vector<bool> lent(bound.size(), false);
@@ -4072,71 +4232,274 @@ struct Rules
       f.report(RuleId::UnusedRowEntity, entity, std::move(message));
   }
 
-  // ---------------------------------------------------- row-component-copy
+  // ------------------------------------------------------------- reading
 
-  // Whether every use of `name` in `scope` only reads it: through members
-  // (`name.a.b`), parentheses or an index, as an operand, a condition, a
-  // returned value or a copy's initialiser. Anything else (an assignment, a
-  // call or argument, `&`, a reference bound to it) may change it.
-  bool onlyRead(TSNode scope, std::string_view name) const
+  /*
+   * Whether every use of `name` in `scope` from the byte `from` on only reads
+   * what it names (readsOnly()): a component or a member of one, or, for
+   * `pointer`, a pointer to one. A name declared again inside counts as a
+   * use, so a redeclaration is taken as a write.
+   */
+  bool readsOnlyName(TSNode scope,
+                     uint32_t from,
+                     std::string_view name,
+                     bool pointer,
+                     int depth) const
   {
     bool read = true;
     walkTree(scope,
              [&](TSNode node)
              {
-               if (kind(node) != Kind::Identifier || text(node) != name)
+               if (end(node) <= from)
+                 return Next::Skip;
+
+               if (start(node) < from || kind(node) != Kind::Identifier ||
+                   text(node) != name ||
+                   kind(parent(node)) == Kind::QualifiedIdentifier)
                  return Next::Descend;
 
-               TSNode top = node;
-
-               for (TSNode up = parent(top);; up = parent(top))
-               {
-                 const Kind k = kind(up);
-
-                 if (!((k == Kind::FieldExpression &&
-                        same(field(up, "argument"), top) &&
-                        text(operatorOf(up)) == ".") ||
-                       k == Kind::ParenthesizedExpression ||
-                       (k == Kind::SubscriptExpression &&
-                        same(field(up, "argument"), top))))
-                   break;
-
-                 top = up;
-               }
-
-               const TSNode up = parent(top);
-
-               switch (kind(up))
-               {
-               case Kind::BinaryExpression:
-                 // `stream >> t.x` writes its right operand.
-                 read = text(field(up, "operator")) != ">>" ||
-                        same(field(up, "left"), top);
-                 break;
-               case Kind::ConditionalExpression:
-                 // A branch may be assigned to: `(c ? t : u).x = 1`.
-                 read = same(field(up, "condition"), top);
-                 break;
-               case Kind::UnaryExpression:
-               case Kind::ConditionClause:
-               case Kind::ReturnStatement:
-               case Kind::SubscriptExpression:
-                 break;
-               case Kind::AssignmentExpression:
-                 read = same(field(up, "right"), top);
-                 break;
-               case Kind::InitDeclarator:
-                 read = same(field(up, "value"), top) &&
-                        kind(field(up, "declarator")) == Kind::Identifier;
-                 break;
-               default:
-                 read = false;
-               }
-
+               read = readsOnly(node, pointer, depth);
                return read ? Next::Descend : Next::Stop;
              });
     return read;
   }
+
+  /*
+   * Whether the code around `node`, an expression that is a component (or,
+   * for `pointer`, a pointer to one), only reads it, so it would compile and
+   * do the same were the component const. Through parentheses, a branch of
+   * `?:`, `->` or `*` on the pointer and `.` on the component and its
+   * members, it's read: tested (the pointer: a condition, `!`, `==`, `!=`,
+   * `&&`, `||`, sfs::expect()), as an operand, a condition, an index, a
+   * value returned by copy or const reference, a copy's initialiser or a
+   * const reference's, the right of an assignment, a range copied or read by
+   * const reference, an argument of a std or glm function that only reads,
+   * a `static_cast` to a value, or a member's `size()`, `empty()`,
+   * `contains()`, `count()` or `length()`. A plain `auto&` bound to it is
+   * read when its own uses are. Anything else (an assignment, `++`, a call
+   * or argument, `&`, a subscript, `->` on a member, a capture by name, a
+   * pointer copied) may change it.
+   */
+  bool readsOnly(TSNode node, bool pointer, int depth) const
+  {
+    TSNode top = node;
+    bool member = false;
+
+    for (TSNode up = parent(top);; up = parent(top))
+    {
+      const Kind k = kind(up);
+
+      if (k == Kind::ParenthesizedExpression ||
+          (k == Kind::ConditionalExpression &&
+           !same(field(up, "condition"), top)))
+      {
+        top = up;
+        continue;
+      }
+
+      if (k == Kind::PointerExpression && pointer &&
+          text(field(up, "operator")) == "*")
+      {
+        top = up;
+        pointer = false;
+        continue;
+      }
+
+      if (k != Kind::FieldExpression || !same(field(up, "argument"), top))
+        break;
+
+      if (text(operatorOf(up)) != (pointer ? "->" : ".") ||
+          kind(field(up, "field")) != Kind::FieldIdentifier)
+        return false;
+
+      // A method called on a member: only one that reads it.
+      const TSNode call = parent(up);
+
+      if (kind(call) == Kind::CallExpression &&
+          same(field(call, "function"), up))
+        return member && listedIn(READING_MEMBERS, text(field(up, "field")));
+
+      top = up;
+      pointer = false;
+      member = true;
+    }
+
+    const TSNode up = parent(top);
+
+    if (pointer)
+      switch (kind(up))
+      {
+      case Kind::ConditionClause:
+        return same(field(up, "value"), top);
+      case Kind::ConditionalExpression:
+        return true;
+      case Kind::UnaryExpression:
+        return isNot(up);
+      case Kind::BinaryExpression:
+      {
+        const std::string_view op = text(field(up, "operator"));
+        return op == "==" || op == "!=" || op == "&&" || op == "||";
+      }
+      case Kind::ArgumentList:
+        return same(namedChild(up, 0), top) && expectArgument(up) &&
+               f.isSfsNameAt(up, text(field(parent(up), "function")), "expect");
+      default:
+        return false;
+      }
+
+    switch (kind(up))
+    {
+    case Kind::BinaryExpression:
+    {
+      // `stream >> x` writes x, and `x << y` may be a stream's.
+      const std::string_view op = text(field(up, "operator"));
+      return op == "<<" ? same(field(up, "right"), top) : op != ">>";
+    }
+    case Kind::UnaryExpression:
+    case Kind::ConditionalExpression:
+    case Kind::ExpressionStatement:
+      return true;
+    case Kind::ConditionClause:
+      return same(field(up, "value"), top);
+    case Kind::ReturnStatement:
+      return returnsCopy(up);
+    case Kind::AssignmentExpression:
+      return same(field(up, "right"), top);
+    case Kind::InitDeclarator:
+    case Kind::Declaration:
+      return same(field(up, "value"), top) && bindsToRead(up, depth);
+    case Kind::ForRangeLoop:
+      return same(field(up, "right"), top) && bindsToRead(up, depth);
+    case Kind::ArgumentList:
+      return readingCall(up);
+    default:
+      return isType(up, "subscript_argument_list");
+    }
+  }
+
+  /*
+   * Whether what a declaration (or a range-for's variable) makes of a value,
+   * `holder` its init declarator, condition declaration or loop, only reads
+   * it: a copy (not into a span), a const reference, or a plain `auto&`
+   * whose own uses only read.
+   */
+  bool bindsToRead(TSNode holder, int depth) const
+  {
+    const bool loop = kind(holder) == Kind::ForRangeLoop;
+    const TSNode declaration =
+        loop || kind(holder) == Kind::Declaration ? holder : parent(holder);
+    const TSNode declarator = field(holder, "declarator");
+    const TSNode type = typeOf(declaration);
+
+    if (kind(declaration) != Kind::Declaration && !loop)
+      return false;
+
+    switch (kind(declarator))
+    {
+    case Kind::Identifier:
+    case Kind::StructuredBindingDeclarator:
+      return text(type).find("span") == std::string_view::npos;
+    case Kind::ReferenceDeclarator:
+      break;
+    default:
+      return false;
+    }
+
+    if (text(declarator).starts_with("&&"))
+      return false;
+
+    if (constType(declaration))
+      return true;
+
+    const TSNode name = namedChild(declarator, 0);
+
+    if (trimmed(text(type)) != "auto" || kind(name) != Kind::Identifier ||
+        depth >= 3)
+      return false;
+
+    return loop ? readsOnlyName(
+                      field(holder, "body"), 0, text(name), false, depth + 1)
+                : readsOnlyName(scopeOf(declaration),
+                                end(declaration),
+                                text(name),
+                                false,
+                                depth + 1);
+  }
+
+  // Whether a call only reads its arguments: a std or glm function that
+  // does, or a `static_cast` to a value.
+  bool readingCall(TSNode arguments) const
+  {
+    const TSNode call = parent(arguments);
+
+    if (kind(call) != Kind::CallExpression)
+      return false;
+
+    const TSNode function = field(call, "function");
+    std::string_view name = text(function);
+
+    if (kind(function) == Kind::TemplateFunction &&
+        text(field(function, "name")) == "static_cast")
+    {
+      const std::string_view type = text(field(function, "arguments"));
+      return type.find('&') == std::string_view::npos &&
+             type.find('*') == std::string_view::npos;
+    }
+
+    if (const std::size_t open = name.find('<'); open != std::string_view::npos)
+      name = name.substr(0, open);
+
+    return listedIn(READING_FUNCTIONS, trimmed(name));
+  }
+
+  // Whether a return statement's value is returned by copy or by const
+  // reference: the function or lambda around it returns a value, not a span
+  // or a pointer, or a const reference; a lambda without a return type
+  // returns a copy.
+  bool returnsCopy(TSNode statement) const
+  {
+    const TSNode function = functionOf(statement);
+    const bool lambda = kind(function) == Kind::LambdaExpression;
+    const TSNode declarator = field(function, "declarator");
+    TSNode trailing{};
+
+    for (uint32_t i = 0; i < namedCount(declarator); ++i)
+      if (isType(namedChild(declarator, i), "trailing_return_type"))
+        trailing = namedChild(declarator, i);
+
+    const std::string_view returned =
+        ts_node_is_null(trailing) ? text(typeOf(function)) : text(trailing);
+
+    if (returned.find("decltype") != std::string_view::npos ||
+        returned.find("span") != std::string_view::npos ||
+        returned.find('*') != std::string_view::npos)
+      return false;
+
+    if (!ts_node_is_null(trailing))
+      return returned.find('&') == std::string_view::npos ||
+             trimmed(text(namedChild(trailing, 0))).starts_with("const ");
+
+    if (lambda)
+      return true;
+
+    if (kind(function) != Kind::FunctionDefinition)
+      return false;
+
+    return kind(declarator) == Kind::FunctionDeclarator ||
+           (kind(declarator) == Kind::ReferenceDeclarator &&
+            !text(declarator).starts_with("&&") && constType(function) &&
+            kind(namedChild(declarator, 0)) == Kind::FunctionDeclarator);
+  }
+
+  // The scope a block-level declaration's name reaches to the end of
+  // (scopeOfStatement()), a `case`'s being its whole switch.
+  TSNode scopeOf(TSNode declaration) const
+  {
+    const TSNode scope = scopeOfStatement(declaration);
+    return isType(scope, "case_statement") ? parent(scope) : scope;
+  }
+
+  // ---------------------------------------------------- row-component-copy
 
   // row-component-copy on a loop over a query's view or a typed walk (rowOf())
   // of one required component whose loop variable copies it (`T t`, the row
@@ -4173,7 +4536,7 @@ struct Rules
     const std::string spelled = tidy(unconst(text(type)));
     const std::string name(text(declarator));
 
-    if (constType(loop) || onlyRead(body, name))
+    if (constType(loop) || readsOnlyName(body, 0, name, false, 0))
     {
       std::vector<TextEdit> fix{
           fileLines().edit(headerStart(loop),
@@ -4194,6 +4557,485 @@ struct Rules
                    ", so changes to the copy don't reach the component. If "
                    "the copy is scratch, keep it; otherwise use " +
                    spelled + "&.");
+  }
+
+  // ---------------------------------------------------------- mutable-read
+
+  // Whether a type's spelling is const (`const T`, `T const`).
+  static bool constSpelled(std::string_view spelled)
+  {
+    spelled = trimmed(spelled);
+    return spelled.starts_with("const ") || spelled.ends_with(" const");
+  }
+
+  /*
+   * mutable-read on a getComponent<T>() or sceneData<T>() call (`call`,
+   * `type` its T) whose pointer is only read: held in one pointer variable
+   * declared by it (`T* p`, `auto* p`, `auto p`, a condition's) whose every
+   * use reads (readsOnly()), or one declared const already; or used where
+   * it's made (`E.getComponent<T>()->x`, a test). The fix takes `const T`,
+   * and a pointer variable's type gains `const`.
+   */
+  void mutableLookup(TSNode call)
+  {
+    TSNode templateArguments;
+    const std::string_view callee = f.calleeName(call, templateArguments);
+    const uint32_t arguments = namedCount(field(call, "arguments"));
+
+    if (namedCount(templateArguments) != 1 ||
+        !(callee == "getComponent" ? arguments <= 1
+                                   : callee == "sceneData" && arguments == 0))
+      return;
+
+    const TSNode type = namedChild(templateArguments, 0);
+
+    if (kind(type) != Kind::TypeDescriptor || constSpelled(text(type)))
+      return;
+
+    std::vector<TextEdit> fix{
+        fileLines().edit(start(type), start(type), "const ")};
+    const TSNode up = parent(call);
+    const bool held =
+        (kind(up) == Kind::InitDeclarator || kind(up) == Kind::Declaration) &&
+        same(field(up, "value"), call);
+
+    if (held ? !heldToRead(up, type, fix) : !readsOnly(call, true, 0))
+      return;
+
+    const std::string spelled = tidy(text(type));
+    f.report(RuleId::MutableRead,
+             call,
+             "This only reads " + spelled + ". Take it as const, " +
+                 std::string(callee) + "<const " + spelled +
+                 ">(), so it's clear the code doesn't change it.",
+             "Take " + spelled + " as const",
+             std::move(fix));
+  }
+
+  /*
+   * For mutableLookup(): whether the one pointer a declaration (`holder`, its
+   * init declarator or a condition's declaration) makes of a lookup of
+   * `type` is only read, its type T, a const T or `auto`. When its type
+   * isn't const already, `fix` gains the edit making it so (`const T*`,
+   * `const auto*`; a plain `auto` deduces it).
+   */
+  bool heldToRead(TSNode holder, TSNode type, std::vector<TextEdit>& fix)
+  {
+    const TSNode declaration =
+        kind(holder) == Kind::Declaration ? holder : parent(holder);
+    const TSNode declarator = field(holder, "declarator");
+    const TSNode declared = typeOf(declaration);
+    const bool placeholder = trimmed(text(declared)) == "auto";
+    const bool pointer = kind(declarator) == Kind::PointerDeclarator;
+    const TSNode name = pointer ? namedChild(declarator, 0) : declarator;
+
+    if (kind(declaration) != Kind::Declaration ||
+        declaratorCount(declaration) != 1 || kind(name) != Kind::Identifier ||
+        (pointer && namedCount(declarator) != 1) ||
+        (!pointer && (!placeholder || kind(declarator) != Kind::Identifier)) ||
+        (!placeholder && !sameType(text(declared), text(type))))
+      return false;
+
+    const TSNode scope = scopeOf(declaration);
+
+    if (ts_node_is_null(scope) || kind(scope) == Kind::TranslationUnit ||
+        kind(scope) == Kind::FieldDeclarationList)
+      return false;
+
+    // A const pointer reads whatever it's passed to, unless cast.
+    if (constType(declaration))
+      return text(scope).find("const_cast") == std::string_view::npos;
+
+    if (!readsOnlyName(scope, end(declaration), text(name), true, 0))
+      return false;
+
+    if (pointer)
+      fix.push_back(
+          fileLines().edit(start(declared), start(declared), "const "));
+
+    return true;
+  }
+
+  /*
+   * Whether a query term written at `at` names a component, not a Query alias
+   * the rules can't see (which can't be made const): in a project, a type its
+   * scripts declare as a component, a class of the file, or an SFS type;
+   * outside one (the engine, which declares no aliases), any term the file's
+   * aliases don't name.
+   */
+  bool componentTerm(TSNode at, std::string_view spelled) const
+  {
+    if (!f.index || !f.index->enabled())
+      return true;
+
+    const std::string_view name = lastName(spelled);
+
+    if (const IndexEntry* entry = f.index->find(name))
+      return entry->kind == codegen::TypeKind::Component;
+
+    return f.fileClass(name) || f.isSfsNameAt(at, spelled, name);
+  }
+
+  // A range-for over a query<Terms>() or getEntities<Terms>() written in the
+  // loop, read by namedRowOf(): its row (m_row) and the names its bound
+  // components get.
+  struct NamedRow
+  {
+    bool components{}; // the range is the list's `.components()`
+    bool lone{};       // `T& t`: the row converted to its one component
+    TSNode entity{};   // the entity's name, unpacked first; null without it
+    std::vector<const Bound*> bound; // m_row's bound components, in order
+    std::vector<TSNode> names;       // the name each is bound to
+  };
+  NamedRow m_named;
+
+  /*
+   * The row of a range-for over a query<Terms>() or a getEntities<Terms>()
+   * written in the loop (`.components()` after it or not), into `named`,
+   * when its bound components are named: in `[e, a, b]` (or `[a, b]` over
+   * `.components()`), or alone as `T& t` or `const T& t`. Not for a system's
+   * untyped list or a walk. It reads the row into m_row.
+   */
+  bool namedRowOf(TSNode loop, NamedRow& named)
+  {
+    TSNode range = field(loop, "right");
+    TSNode templateArguments;
+    named.components = kind(range) == Kind::CallExpression &&
+                       namedCount(field(range, "arguments")) == 0 &&
+                       f.calleeName(range, templateArguments) == "components" &&
+                       ts_node_is_null(templateArguments);
+
+    if (named.components)
+      range = f.receiverOf(range);
+
+    if (kind(range) != Kind::CallExpression ||
+        ts_node_is_null(field(loop, "body")) || !rowOf(loop, m_row, range) ||
+        !m_row.inPlace || m_row.untyped || m_row.walk || m_row.everything ||
+        ts_node_is_null(m_row.terms))
+      return false;
+
+    named.bound.clear();
+
+    for (const Bound& each : m_row.bound)
+      if (!each.implied)
+        named.bound.push_back(&each);
+
+    const std::size_t count = named.bound.size();
+    const TSNode unpacking = unpackingOf(loop);
+    const TSNode declarator = field(loop, "declarator");
+    const uint32_t first = named.components ? 0 : 1;
+    named.names.assign(count, TSNode{});
+    named.entity = TSNode{};
+    named.lone = false;
+
+    if (!ts_node_is_null(unpacking))
+    {
+      if (namedCount(unpacking) != count + first)
+        return false;
+
+      if (!named.components)
+        named.entity = namedChild(unpacking, 0);
+
+      for (std::size_t i = 0; i < count; ++i)
+        named.names[i] =
+            namedChild(unpacking, static_cast<uint32_t>(i) + first);
+
+      return true;
+    }
+
+    if (named.components || count != 1 || named.bound[0]->any ||
+        kind(declarator) != Kind::ReferenceDeclarator ||
+        text(declarator).starts_with("&&") ||
+        !sameType(text(typeOf(loop)), named.bound[0]->spelling))
+      return false;
+
+    named.names[0] = namedChild(declarator, 0);
+    named.lone = true;
+    return true;
+  }
+
+  // The byte where a bound component's term is written in the loop's own
+  // term list (m_row.terms), not through an alias; 0 when it isn't.
+  uint32_t termAt(const Bound& bound) const
+  {
+    const std::string_view spelling = bound.spelling;
+
+    if (spelling.data() < f.source.data() ||
+        spelling.data() >= f.source.data() + f.source.size())
+      return 0;
+
+    const auto at = static_cast<uint32_t>(spelling.data() - f.source.data());
+    return at >= start(m_row.terms) && at < end(m_row.terms) ? at : 0;
+  }
+
+  /*
+   * mutable-read on a loop's named row (namedRowOf()) whose bound required
+   * component, or Any member, the body only reads. Terms named through an
+   * alias aren't seen, nor a required component the body never uses, which
+   * is unused-row-component's. The fix writes the term `const T` (an Any
+   * member inside its group), and a lone `T& t` becomes `const T& t`.
+   */
+  void mutableRow(TSNode loop, const NamedRow& named)
+  {
+    const TSNode body = field(loop, "body");
+
+    for (std::size_t i = 0; i < named.bound.size(); ++i)
+    {
+      const Bound& bound = *named.bound[i];
+      const std::string_view spelling = bound.spelling;
+      const uint32_t at = termAt(bound);
+      const TSNode name = named.names[i];
+
+      if (at == 0 || constSpelled(spelling) || kind(name) != Kind::Identifier ||
+          !componentTerm(loop, spelling) ||
+          (!bound.any && !readsName(body, text(name))))
+        continue;
+
+      const bool read =
+          named.lone && constType(loop)
+              ? text(body).find("const_cast") == std::string_view::npos
+              : readsOnlyName(body, 0, text(name), bound.any, 0);
+
+      if (!read)
+        continue;
+
+      std::vector<TextEdit> fix{fileLines().edit(at, at, "const ")};
+
+      if (named.lone && !constType(loop))
+      {
+        const uint32_t from = start(typeOf(loop));
+        fix.push_back(fileLines().edit(from, from, "const "));
+      }
+
+      const std::string spelled = tidy(spelling);
+      const TSNode term = ts_node_descendant_for_byte_range(
+          m_row.terms, at, at + static_cast<uint32_t>(spelling.size()));
+      f.report(RuleId::MutableRead,
+               term,
+               "This loop only reads " + spelled + ". Take it as const " +
+                   spelled +
+                   " in the query, so it's clear the loop doesn't change it.",
+               "Take " + spelled + " as const",
+               std::move(fix));
+    }
+  }
+
+  // ------------------------------------------------- unused-row-component
+
+  /*
+   * unused-row-component on a loop's named row (namedRowOf()) that binds a
+   * required component, written in the loop's own terms, that the body
+   * never uses: no token spelled as its name (as for unused-row-entity), nor
+   * a lookup of it on the loop's entity, which row-lookup has. The fix moves
+   * the term into the list's With group (wrapping it in one when there's
+   * none) and drops its name: `[e, a]` keeps the rest, a `.components()` row
+   * left with one required component binds it alone (`T& t`), and a row
+   * left with its entity alone goes through entities (`const sfs::Entity&
+   * e`). Not for an Any member, a lone `T& t`, nor a row that would be left
+   * binding nothing the body uses (unused-row-entity's, or a loop that
+   * doesn't need the row). A term in a Query list written there is
+   * reported without a fix.
+   */
+  void unusedRowComponent(TSNode loop, const NamedRow& named)
+  {
+    const TSNode body = field(loop, "body");
+
+    if (named.lone)
+      return;
+
+    const std::string_view entity = text(named.entity);
+    const bool entityUsed =
+        kind(named.entity) == Kind::Identifier && readsName(body, entity);
+    std::vector<bool> used(named.bound.size());
+
+    for (std::size_t i = 0; i < named.bound.size(); ++i)
+      used[i] = kind(named.names[i]) != Kind::Identifier ||
+                readsName(body, text(named.names[i]));
+
+    for (std::size_t i = 0; i < named.bound.size(); ++i)
+    {
+      const Bound& bound = *named.bound[i];
+      const TSNode name = named.names[i];
+      const uint32_t at = termAt(bound);
+      bool keeps = entityUsed;
+
+      for (std::size_t j = 0; j < used.size(); ++j)
+        keeps = keeps || (j != i && used[j]);
+
+      if (bound.any || at == 0 || used[i] || !keeps ||
+          !componentTerm(loop, unconst(bound.spelling)) ||
+          looksUp(body, entity, bound.spelling))
+        continue;
+
+      const std::size_t left = named.bound.size() - 1;
+
+      // The term itself, written in the list or in a Query list there.
+      TSNode term{};
+
+      for (uint32_t j = 0; j < namedCount(m_row.terms); ++j)
+        if (start(namedChild(m_row.terms, j)) == at)
+          term = namedChild(m_row.terms, j);
+
+      const std::string with = withSpelling(loop);
+      const std::string component = tidy(unconst(bound.spelling));
+      const std::string message =
+          "This loop never uses " + component +
+          "; it only needs entities to have it. Require it with " + with + "<" +
+          component + "> and drop the binding.";
+
+      if (ts_node_is_null(term))
+      {
+        f.report(RuleId::UnusedRowComponent, name, message);
+        continue;
+      }
+
+      std::vector<TextEdit> fix;
+      intoWith(term, component, with, fix);
+
+      // The header without the name.
+      const TSNode unpacking = unpackingOf(loop);
+      std::string names;
+
+      for (uint32_t j = 0; j < namedCount(unpacking); ++j)
+        if (!same(namedChild(unpacking, j), name))
+          names += (names.empty() ? "" : ", ") +
+                   std::string(text(namedChild(unpacking, j)));
+
+      const uint32_t from = headerStart(loop);
+      const uint32_t to = end(field(loop, "declarator"));
+
+      if (left == 0)
+      {
+        const std::string handle =
+            with.starts_with("sfs::") ||
+                    !f.isSfsNameAt(loop, "Entity", "Entity")
+                ? "sfs::Entity"
+                : "Entity";
+        fix.push_back(fileLines().edit(
+            from, to, "const " + handle + "& " + std::string(entity)));
+      }
+      else if (named.components && left == 1)
+      {
+        const Bound& kept = *named.bound[1 - i];
+
+        if (kept.any)
+          fix.push_back(replace(unpacking, "[" + names + "]"));
+        else
+        {
+          // The row converts to it, without components().
+          const TSNode right = field(loop, "right");
+          fix.push_back(
+              fileLines().edit(from, to, tidy(kept.spelling) + "& " + names));
+          fix.push_back(fileLines().edit(
+              end(f.receiverOf(right)), end(right), std::string()));
+        }
+      }
+      else
+        fix.push_back(replace(unpacking, "[" + names + "]"));
+
+      f.report(RuleId::UnusedRowComponent,
+               name,
+               message,
+               "Require " + component + " with " + with,
+               std::move(fix));
+    }
+  }
+
+  // The edits moving a term of the loop's list (m_row.terms) into its first
+  // With group, written as `component`, or, when it has none, wrapping it in
+  // one spelled `with`.
+  void intoWith(TSNode term,
+                std::string_view component,
+                std::string_view with,
+                std::vector<TextEdit>& fix)
+  {
+    TSNode group{};
+
+    for (uint32_t i = 0; i < namedCount(m_row.terms) && ts_node_is_null(group);
+         ++i)
+    {
+      std::string_view inner;
+      const TSNode other = namedChild(m_row.terms, i);
+
+      if (f.wrapperOfText(other, text(other), inner) == Wrapper::With &&
+          !inner.empty())
+        group = other;
+    }
+
+    if (ts_node_is_null(group))
+    {
+      fix.push_back(replace(
+          term, std::string(with) + "<" + std::string(component) + ">"));
+      return;
+    }
+
+    // After the group's last member, its own `>` aside.
+    uint32_t last = end(group) - 1;
+
+    while (last > start(group) && isSpace(f.source[last - 1]))
+      --last;
+
+    fix.push_back(fileLines().edit(last, last, ", " + std::string(component)));
+
+    const TSNode next = nextNamed(term);
+    const TSNode previous = prevNamed(term);
+
+    if (!ts_node_is_null(next))
+      fix.push_back(fileLines().edit(start(term), start(next), std::string()));
+    else
+      fix.push_back(fileLines().edit(end(previous), end(term), std::string()));
+  }
+
+  // How a With group is spelled in a fix at `at`: as the loop's list spells
+  // its other SFS groups, else `With` where SFS's is visible and the file
+  // never qualifies a group, else `sfs::With`.
+  std::string withSpelling(TSNode at) const
+  {
+    for (uint32_t i = 0; i < namedCount(m_row.terms); ++i)
+    {
+      const TSNode other = namedChild(m_row.terms, i);
+      const std::string_view written = text(other);
+      std::string_view inner;
+
+      if (f.wrapperOfText(other, written, inner) == Wrapper::None)
+        continue;
+
+      const std::string_view name =
+          trimmed(written.substr(0, written.find('<')));
+      return std::string(name.substr(0, name.size() - lastName(name).size())) +
+             "With";
+    }
+
+    const bool qualifies = std::any_of(
+        SFS_GROUPS.begin(),
+        SFS_GROUPS.end(),
+        [&](std::string_view group)
+        {
+          return f.source.find("sfs::" + std::string(group) + "<") !=
+                 std::string_view::npos;
+        });
+    return !qualifies && f.isSfsNameAt(at, "With", "With") ? "With"
+                                                           : "sfs::With";
+  }
+
+  // Whether `body` looks a component of type `type` up on the loop's entity
+  // `entity` (row-lookup's, which binds it instead).
+  bool looksUp(TSNode body, std::string_view entity, std::string_view type)
+  {
+    if (entity.empty())
+      return false;
+
+    for (const TSNode call : f.lookups)
+    {
+      Lookup lookup;
+
+      if (within(call, body) && lookupOf(call, lookup) &&
+          kind(lookup.entity) == Kind::Identifier &&
+          text(lookup.entity) == entity && sameType(text(lookup.type), type))
+        return true;
+    }
+
+    return false;
   }
 
   // -------------------------------------------------- setup-in-constructor
@@ -5099,6 +5941,7 @@ struct Rules
       hasThenGet(call);
 
     for (const TSNode loop : f.loops)
+    {
       if (rowOf(loop, m_row))
       {
         rowLookup(loop, m_row);
@@ -5107,8 +5950,21 @@ struct Rules
         rowComponentCopy(loop, m_row);
       }
 
+      if (namedRowOf(loop, m_named))
+      {
+        unusedRowComponent(loop, m_named);
+        mutableRow(loop, m_named);
+      }
+    }
+
     for (const TSNode call : f.lookups)
+    {
       componentPointer(call);
+      mutableLookup(call);
+    }
+
+    for (const TSNode call : f.sceneDataCalls)
+      mutableLookup(call);
 
     for (const TSNode constructor : f.constructors)
       setupInConstructor(constructor);

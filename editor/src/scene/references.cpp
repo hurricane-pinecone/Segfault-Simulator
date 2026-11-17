@@ -248,8 +248,8 @@ std::vector<Inbound> inboundTo(sfs::Scene& scene, const sfs::Entity& root)
         Inbound ref{holder, type, &field, item};
         const auto& [through, path] = SceneSerializer::sceneHolderOf(target);
 
-        if (sfs::SceneIdComponent* sceneId =
-                through.getComponent<sfs::SceneIdComponent>())
+        if (const sfs::SceneIdComponent* sceneId =
+                through.getComponent<const sfs::SceneIdComponent>())
         {
           ref.sceneId = sceneId->id;
           ref.path = path;

@@ -621,8 +621,8 @@ sfs::ui::Layer* UiPreviewPanel::layer(EditorContext& context)
     {
       const sfs::Entity& entity = layer->entity();
 
-      if (sfs::ScriptComponent* script =
-              entity.getComponent<sfs::ScriptComponent>();
+      if (const sfs::ScriptComponent* script =
+              entity.getComponent<const sfs::ScriptComponent>();
           script && script->script == m_layerName)
         return layer;
     }

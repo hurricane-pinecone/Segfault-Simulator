@@ -270,6 +270,24 @@ protected:
   }
 };
 
+// Works on positioned enemies, requiring Enemy through a With group (a Query
+// list it registers and goes through), and observes those with a With group
+// alone.
+class WithSystem : public System
+{
+public:
+  using Entities = Query<Position, With<Enemy>>;
+  int observed = 0;
+
+protected:
+  void create() override
+  {
+    registerComponent<Entities>();
+    observe<With<Velocity>, Excluding<Hidden>>([this](const Entity&)
+                                               { ++observed; });
+  }
+};
+
 // Works on entities without Hidden and observes those with it, logging each
 // hook and callback in the order they ran ("shown+", "shown-", "hidden+",
 // "hidden-").
@@ -1508,6 +1526,152 @@ int main()
     CHECK(reg.query<Any<Velocity, Health>, Excluding<Velocity, Health>>()
               .empty());
     CHECK(reg.query<Position, Any<Velocity>>().size() == 1u);
+  }
+
+  TEST("a With group should require its components as plain terms do, share "
+       "their list and bind nothing")
+  {
+    Registry reg;
+    Entity a = reg.createEntity(), b = reg.createEntity(),
+           c = reg.createEntity();
+    a.addComponent<Position>(Position{1.0f, 0.0f});
+    a.addComponent<Enemy>();
+    a.addComponent<Velocity>();
+    b.addComponent<Position>(Position{2.0f, 0.0f});
+    b.addComponent<Enemy>();
+    b.addComponent<Hidden>();
+    c.addComponent<Position>(Position{4.0f, 0.0f});
+    reg.flushEntities();
+    using Ids = std::vector<Entity::EntityId>;
+
+    // The same signature and the same list as the plain terms, in any order;
+    // const inside the group means nothing.
+    CHECK(detail::makeQuerySignature<Position, With<Enemy>>() ==
+          detail::makeQuerySignature<Position, Enemy>());
+    CHECK(&reg.query<Position, With<Enemy>>().entities() ==
+          &reg.query<Position, Enemy>().entities());
+    CHECK(&reg.query<With<Enemy>, Position>().entities() ==
+          &reg.query<Enemy, Position>().entities());
+    CHECK(&reg.query<With<Position, Enemy>>().entities() ==
+          &reg.query<Position, Enemy>().entities());
+    CHECK(&reg.query<With<const Enemy>, Position>().entities() ==
+          &reg.query<Position, Enemy>().entities());
+    CHECK(&reg.query<Position, With<Position>>().entities() ==
+          &reg.query<Position>().entities());
+    CHECK(idsOf(reg.query<Position, With<Enemy>>()) ==
+          Ids({a.getId(), b.getId()}));
+
+    // It binds nothing: the rows unpack the other terms alone, and a row
+    // left with one required component converts to it.
+    static_assert(std::tuple_size_v<QueryRow<Position, With<Enemy>>> == 2);
+    static_assert(std::tuple_size_v<QueryRow<With<Position, Enemy>>> == 1);
+    static_assert(std::tuple_size_v<ComponentRow<Position, With<Enemy>>> == 1);
+    static_assert(
+        std::is_convertible_v<QueryRow<With<Enemy>, Position>, Position&>);
+    static_assert(
+        std::is_convertible_v<QueryRow<const Position, With<Enemy, Velocity>>,
+                              const Position&>);
+    static_assert(!std::is_convertible_v<QueryRow<With<Position>>,
+                                         detail::NoSoleComponent&>);
+    float sum = 0.0f;
+
+    for (auto [entity, position] : reg.query<With<Enemy>, Position>())
+    {
+      static_assert(std::is_same_v<decltype(position), Position&>);
+      CHECK(&position == entity.getComponent<Position>());
+      sum += position.x;
+    }
+
+    CHECK(testing::approx(sum, 3.0f));
+    sum = 0.0f;
+
+    for (auto [position] : reg.query<Position, With<Enemy>>().components())
+      sum += position.x;
+
+    CHECK(testing::approx(sum, 3.0f));
+    sum = 0.0f;
+
+    for (const Position& position : reg.query<Position, With<Enemy>>())
+      sum += position.x;
+
+    CHECK(testing::approx(sum, 3.0f));
+    int rows = 0;
+
+    for (const Entity& entity : reg.query<With<Position, Enemy>>())
+      rows += entity == a || entity == b ? 1 : 100;
+
+    CHECK(rows == 2);
+
+    // Inside a Query list, beside Any and Excluding.
+    using Shown = Query<With<Position>, Excluding<Hidden>>;
+    CHECK(&reg.query<Shown>().entities() ==
+          &reg.query<Position, Excluding<Hidden>>().entities());
+    CHECK(idsOf(reg.query<Shown>()) == Ids({a.getId(), c.getId()}));
+    rows = 0;
+
+    for (auto [entity, velocity, hidden] :
+         reg.query<With<Enemy>, Any<Velocity, Hidden>, Excluding<Health>>())
+    {
+      static_assert(std::is_same_v<decltype(velocity), Velocity*>);
+      rows += entity == a ? (velocity && !hidden ? 1 : 100)
+                          : (entity == b && hidden && !velocity ? 1 : 100);
+    }
+
+    CHECK(rows == 2);
+    CHECK(
+        &reg.query<Position, With<Enemy>, Any<Velocity, Hidden>>().entities() ==
+        &reg.query<Position, Enemy, Any<Velocity, Hidden>>().entities());
+    // An Any sharing a component with a With group is always met.
+    CHECK(&reg.query<With<Enemy>, Any<Enemy, Health>>().entities() ==
+          &reg.query<Enemy>().entities());
+    // Excluding wins over it as over a plain term.
+    CHECK(reg.query<With<Enemy>, Excluding<Enemy>>().empty());
+    CHECK(reg.query<Position, With<Enemy, Velocity>, Excluding<Velocity>>()
+              .empty());
+
+    // matches() reads it as a plain term.
+    CHECK(a.matches<With<Position, Enemy>>());
+    CHECK(!c.matches<Position, With<Enemy>>());
+    CHECK(!b.matches<With<Enemy>, Excluding<Hidden>>());
+
+    // A system registers it as the plain terms, and goes through the list
+    // with or without it.
+    WithSystem& sys = reg.addSystem<WithSystem>();
+    CHECK(sys.getComponentSignature() ==
+          detail::makeQuerySignature<Position, Enemy>());
+    CHECK(&sys.getEntities().entities() ==
+          &reg.query<Position, Enemy>().entities());
+    CHECK(&sys.getEntities<WithSystem::Entities>().entities() ==
+          &sys.getEntities().entities());
+    sum = 0.0f;
+
+    for (auto [entity, position] : sys.getEntities<WithSystem::Entities>())
+      sum += position.x;
+
+    CHECK(testing::approx(sum, 3.0f));
+    CHECK(sys.getEntities<Position, Enemy>().size() == 2u);
+    CHECK(sys.getEntities<With<Enemy>>().size() == 2u);
+    {
+      ErrorLog log;
+      CHECK(sys.getEntities<With<Velocity>>().empty());
+      CHECK(log.errors.size() == 1u);
+    }
+
+    // Its observer follows the With group's entities, already there or new.
+    CHECK(sys.observed == 1); // a
+    Entity d = reg.createEntity();
+    d.addComponent<Velocity>();
+    reg.flushEntities();
+    CHECK(sys.observed == 2);
+    d.addComponent<Hidden>();
+    d.removeComponent<Hidden>();
+    CHECK(sys.observed == 3);
+
+    // implies() reads it as the plain terms.
+    CHECK(signatureOf<Position, Enemy>().implies(signatureOf<With<Enemy>>()));
+    CHECK(signatureOf<With<Position, Enemy>>().implies(
+        signatureOf<Position, Enemy>()));
+    CHECK(!signatureOf<Position>().implies(signatureOf<With<Enemy>>()));
   }
 
   TEST("a loop that adds a component its own query excludes should go "

@@ -11,8 +11,15 @@
 //   a component T            T&, read straight from its slot (the list's
 //                            members all have it); const T& for `const T`
 //   Any<A, B>                A*, B*, null when the entity has none
+//   With<...>                nothing: the entity has them all, but the loop
+//                            doesn't need them
 //   Excluding<...>           nothing
 //   Query<...>               its terms, in order
+//
+// So a component the loop only filters by is written in a With group, and
+// left out of the unpacking:
+//
+//   for (auto [entity, health] : registry->query<Health, With<Enemy>>())
 //
 // A loop that doesn't need the entity goes through the components alone. A
 // row that binds exactly one component, a required one, converts to it:
@@ -101,6 +108,11 @@ template <typename... Ts>
 struct BoundOf<Any<Ts...>>
 {
   using type = TypeList<Optional<Ts>...>;
+};
+template <typename... Ts>
+struct BoundOf<With<Ts...>>
+{
+  using type = TypeList<>;
 };
 template <typename... Ts>
 struct BoundOf<Excluding<Ts...>>

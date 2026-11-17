@@ -30,11 +30,24 @@ template <typename... TComponents>
 struct Excluding;
 
 /**
+ * A query term (Registry::query(), System::registerComponent(),
+ * System::observe()): the entity has all of TComponents, as if they were
+ * written as plain terms, but a query's rows bind none of them. For a
+ * component a loop needs only as a filter: query<Health, With<Transform>>()
+ * lists what query<Health, Transform>() does, the same list, and its rows
+ * unpack as [entity, health]. A const member means nothing here, as nothing
+ * is bound: With<const A> is With<A>.
+ */
+template <typename... TComponents>
+struct With;
+
+/**
  * A list of query terms that stands for those terms written out, so a long
  * list can be named once, e.g. in a system:
  * `using Served = sfs::Query<Health, Enemy, sfs::Excluding<Hidden>>;` and
  * then `registry->query<Served>()`. It takes components, one Any<...> group
- * at most and Excluding<...> groups, and may hold or sit beside other terms,
+ * at most, With<...> and Excluding<...> groups, and may hold or sit beside
+ * other terms,
  * Query lists included: query<Served, Motion>() is query<Health, Enemy,
  * Excluding<Hidden>, Motion>(), the same signature and the same list. It is
  * flattened at compile time and costs nothing at run time.
@@ -122,13 +135,15 @@ namespace detail
 {
 
 /**
- * Whether T is a filter group (Any or Excluding) or a term list (Query)
+ * Whether T is a filter group (Any, With or Excluding) or a term list (Query)
  * rather than a component.
  */
 template <typename T>
 inline constexpr bool isQueryFilter = false;
 template <typename... Ts>
 inline constexpr bool isQueryFilter<Any<Ts...>> = true;
+template <typename... Ts>
+inline constexpr bool isQueryFilter<With<Ts...>> = true;
 template <typename... Ts>
 inline constexpr bool isQueryFilter<Excluding<Ts...>> = true;
 template <typename... Ts>
@@ -157,8 +172,8 @@ struct QueryList
 
 /**
  * How one query term adds itself to a QuerySignature. This one is a
- * component, which the entity must have; the specialisations below, for Any
- * and Excluding groups and Query lists, have the same two members. A
+ * component, which the entity must have; the specialisations below, for Any,
+ * With and Excluding groups and Query lists, have the same two members. A
  * component may be written const (`const Health`): it is the same component,
  * and a query's rows bind it as const.
  */
@@ -166,7 +181,7 @@ template <typename TComponent>
 struct QueryTerm
 {
   static_assert(!isQueryFilter<std::remove_cv_t<TComponent>>,
-                "const goes on the components inside an sfs::Any, "
+                "const goes on the components inside an sfs::Any, sfs::With, "
                 "sfs::Excluding or sfs::Query (sfs::Query<const A, B>), not "
                 "on the group or list");
 
@@ -201,6 +216,23 @@ struct QueryTerm<Any<TComponents...>>
 };
 
 template <typename... TComponents>
+struct QueryTerm<With<TComponents...>>
+{
+  static_assert(sizeof...(TComponents) > 0,
+                "sfs::With<> needs at least one component");
+  static_assert(!(isQueryFilter<std::remove_cv_t<TComponents>> || ...),
+                "sfs::With takes components, not filter groups or "
+                "sfs::Query lists");
+
+  static void addTo(QuerySignature& signature)
+  {
+    (signature.all.set(Component<TComponents>::getId()), ...);
+  }
+
+  static constexpr int anyGroups = 0;
+};
+
+template <typename... TComponents>
 struct QueryTerm<Excluding<TComponents...>>
 {
   static_assert(sizeof...(TComponents) > 0,
@@ -232,8 +264,10 @@ struct QueryTerm<Query<TTerms...>>
 
 /**
  * The signature for a query's terms: components (all of them), at most one
- * Any<...> group and any number of Excluding<...> groups, in any order, any
- * of them inside Query<...> lists.
+ * Any<...> group and any number of With<...> and Excluding<...> groups, in
+ * any order, any of them inside Query<...> lists. A With group's components
+ * go into `all` as plain terms do, so query<A, With<B>>() and query<A, B>()
+ * have one signature.
  * @return the signature, in canonical form
  */
 template <typename... TTerms>

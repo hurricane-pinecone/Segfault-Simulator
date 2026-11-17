@@ -76,8 +76,8 @@ void SpriteModule::computeCommands(const RenderContext& context)
 
   std::unordered_map<uint32_t, std::size_t> byMaterial; // into m_commands
 
-  for (auto [entity, sprite, local] :
-       m_registry->query<SpriteComponent, TransformComponent>())
+  for (auto [entity, sprite] :
+       m_registry->query<SpriteComponent, With<TransformComponent>>())
   {
     if (sprite.image.empty())
       continue;
@@ -119,7 +119,8 @@ void SpriteModule::computeCommands(const RenderContext& context)
       const float angle = transform.yaw() * space.ySign();
       const glm::vec3 x(std::cos(angle), std::sin(angle), 0.0f);
       const glm::vec3 y(-x.y, x.x, 0.0f);
-      const auto* renderLayer = entity.getComponent<RenderLayerComponent>();
+      const auto* renderLayer =
+          entity.getComponent<const RenderLayerComponent>();
       const int layer = renderLayer ? renderLayer->layer : 0;
       const glm::vec3 origin =
           space.place(transform.position2D(), transform.position.z, layer);
