@@ -1,0 +1,6 @@
+# Commits git blame skips (git config blame.ignoreRevsFile .git-blame-ignore-revs;
+# GitHub reads this file by name). Whole-tree formatting only, or mostly.
+
+# Formatting sweep: sfs-lsp --format and the constexpr-name fixes, include what
+# you use, include grouping and bracket convention.
+16ae36f7db756b23bd80082fd139d9ff7411c124
