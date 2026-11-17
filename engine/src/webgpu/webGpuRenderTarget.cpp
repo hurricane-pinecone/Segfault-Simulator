@@ -3,9 +3,9 @@
 #include "engine/webgpu/webGpuContext.h"
 
 #include <glm/glm/ext/vector_int2.hpp>
+#include <webgpu/webgpu.h>
 
 #include <cstdint>
-#include <webgpu.h>
 
 namespace sfs
 {

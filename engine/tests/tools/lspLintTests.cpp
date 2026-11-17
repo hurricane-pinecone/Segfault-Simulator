@@ -1078,10 +1078,10 @@ int main()
     const std::filesystem::path output = root / "out.txt";
     const auto start = std::chrono::steady_clock::now();
     // Warnings only: it exits with 0.
-    CHECK(std::system(("\"" SFS_LSP_PATH "\" --check --root \"" +
-                       root.string() + "\" \"" + (root / "scripts").string() +
-                       "\" > \"" + output.string() + "\"")
-                          .c_str()) == 0);
+    CHECK(testing::runCommand(("\"" SFS_LSP_PATH "\" --check --root \"" +
+                               root.string() + "\" \"" +
+                               (root / "scripts").string() + "\" > \"" +
+                               output.string() + "\"")) == 0);
     const double seconds =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - start)
             .count();
@@ -1631,19 +1631,21 @@ int main()
     const std::string command = "\"" SFS_LSP_PATH "\" --check \"" +
                                 (project.root / "scripts").string() +
                                 "\" > \"" + output.string() + "\"";
-    CHECK(std::system(command.c_str()) == 0);
+    CHECK(testing::runCommand(command) == 0);
     std::ifstream in(output);
     std::stringstream printed;
     printed << in.rdbuf();
-    const std::string scripts = (project.root / "scripts").string();
+    // sfs-lsp prints each file's normal path, in the platform's separators.
+    const auto printedPath = [&](const char* file)
+    { return (project.root / file).lexically_normal().string(); };
     const std::string golden =
-        scripts +
-        "/systems/HealthSystem.cpp:3:3: warning: Systems should not read other "
+        printedPath("scripts/systems/HealthSystem.cpp") +
+        ":3:3: warning: Systems should not read other "
         "systems. Have HealthSystem read the state SpawnSystem writes on "
         "components, and send what one tells the other as an event. "
         "[system-reads-system]\n" +
-        scripts +
-        "/utils/Helpers.h:1:1: warning: No class or struct in this header is "
+        printedPath("scripts/utils/Helpers.h") +
+        ":1:1: warning: No class or struct in this header is "
         "named after the file, Helpers. Name the script type Helpers, or mark "
         "a helper header with sfs-ignore-file(no-script-type). "
         "[no-script-type]\n";
@@ -3107,7 +3109,7 @@ int main()
         "component-pointer --root \"" +
         project.root.string() + "\" \"" + (project.root / "scripts").string() +
         "\" > \"" + output.string() + "\"";
-    CHECK(std::system(command.c_str()) == 0);
+    CHECK(testing::runCommand(command) == 0);
     const auto read = [](const std::filesystem::path& path)
     {
       std::ifstream in(path);
@@ -3128,20 +3130,23 @@ int main()
           "    if (Trail* trail = e.getComponent<Trail>())\n"
           "      trail->n += 1;\n    if (target.isAlive())\n"
           "      mover.target = target;\n  }\n}\n");
-    const std::string scripts = (project.root / "scripts/systems/").string();
-    CHECK(read(output) ==
-          scripts +
-              "MoverSystem.cpp:5:3: fixed [setup-in-constructor] Move "
-              "the set-up to create()\n" +
-              scripts +
-              "MoverSystem.cpp:14:9: fixed [has-then-get] Look "
-              "Trail up once\n" +
-              scripts +
-              "MoverSystem.cpp:12:20: fixed [row-lookup] Unpack the "
-              "row\n");
+    // sfs-lsp prints the file's normal path, in the platform's separators.
+    const std::string moverSource =
+        (project.root / "scripts/systems/MoverSystem.cpp")
+            .lexically_normal()
+            .string();
+    CHECK(read(output) == moverSource +
+                              ":5:3: fixed [setup-in-constructor] Move "
+                              "the set-up to create()\n" +
+                              moverSource +
+                              ":14:9: fixed [has-then-get] Look "
+                              "Trail up once\n" +
+                              moverSource +
+                              ":12:20: fixed [row-lookup] Unpack the "
+                              "row\n");
     // A second run finds nothing to change.
     const std::string before = read(source);
-    CHECK(std::system(command.c_str()) == 0);
+    CHECK(testing::runCommand(command) == 0);
     CHECK(read(source) == before);
     CHECK(read(output).empty());
   }
@@ -3161,8 +3166,8 @@ int main()
                             project.root.string() + "\" ";
     // The path is the root's, not the working folder's. The fixtures have
     // errors, so it exits with 1.
-    CHECK(std::system(
-              (run + "scripts > \"" + output.string() + "\"").c_str()) != 0);
+    CHECK(testing::runCommand(
+              (run + "scripts > \"" + output.string() + "\"")) != 0);
     std::ifstream in(output);
     std::stringstream printed;
     printed << in.rdbuf();
@@ -3185,8 +3190,8 @@ int main()
 
     // Paths with no C++ files under them are an error, not a clean run.
     const std::filesystem::path errors = project.root / "errors.txt";
-    CHECK(std::system(
-              (run + "nowhere 2> \"" + errors.string() + "\"").c_str()) != 0);
+    CHECK(testing::runCommand(
+              (run + "nowhere 2> \"" + errors.string() + "\"")) != 0);
     std::ifstream errorsIn(errors);
     std::stringstream complaint;
     complaint << errorsIn.rdbuf();

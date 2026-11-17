@@ -1,0 +1,6 @@
+# Text files are checked out with LF on every platform, Windows too: the engine's
+# tools and tests read sources and docs byte for byte.
+* text=auto eol=lf
+
+# Vendored code keeps the line endings it came with.
+engine/lib/** -text

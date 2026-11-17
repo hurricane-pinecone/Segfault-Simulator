@@ -53,6 +53,23 @@ inline constexpr bool SANITIZED = false;
 inline constexpr bool SANITIZED = false;
 #endif
 
+/**
+ * Runs a command line as std::system does. On Windows, cmd.exe drops the first
+ * and last quote of a line that starts with one, so there the whole line gets a
+ * pair of its own.
+ *
+ * @param command the command line, its program and paths quoted
+ * @return std::system's result
+ */
+inline int runCommand(const std::string& command)
+{
+#if defined(_WIN32)
+  return std::system(("\"" + command + "\"").c_str());
+#else
+  return std::system(command.c_str());
+#endif
+}
+
 struct Stats
 {
   int passed = 0;

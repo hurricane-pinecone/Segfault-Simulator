@@ -14,10 +14,11 @@
 
 // No ImGui on the web: a web build is a game, not a tool.
 #ifndef ENGINE_WEB
+  #include "webgpu/imgui/imguiViewportRenderer.h"
+
   #include <imgui.h>
   #include <imgui/backends/imgui_impl_sdl2.h>
   #include <imgui/backends/imgui_impl_wgpu.h>
-  #include <webgpu/imgui/imguiViewportRenderer.h>
 #endif
 
 namespace sfs

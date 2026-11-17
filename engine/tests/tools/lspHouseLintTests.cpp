@@ -679,17 +679,16 @@ int main()
     const std::filesystem::path output = tree.root / "out.txt";
     const std::string run = "\"" SFS_LSP_PATH "\" ";
     // Warnings alone exit with 0.
-    CHECK(std::system((run + "--check \"" + source.string() + "\" > \"" +
-                       output.string() + "\"")
-                          .c_str()) == 0);
+    CHECK(testing::runCommand((run + "--check \"" + source.string() +
+                               "\" > \"" + output.string() + "\"")) == 0);
     const std::string checked = readText(output);
     CHECK(checked.find("[constexpr-name]") != std::string::npos);
     CHECK(checked.find("[nested-ternary]") != std::string::npos);
     CHECK(checked.find("[else-after-return]") != std::string::npos);
 
-    CHECK(std::system((run + "--fix constexpr-name,else-after-return \"" +
-                       source.string() + "\" > \"" + output.string() + "\"")
-                          .c_str()) == 0);
+    CHECK(testing::runCommand(
+              (run + "--fix constexpr-name,else-after-return \"" +
+               source.string() + "\" > \"" + output.string() + "\"")) == 0);
     CHECK(sameText(readText(source),
                    "constexpr int MAX = 3;\n" + std::string(NESTED) +
                        "int f(int a)\n{\n  if (a)\n    return MAX;\n\n"
@@ -703,9 +702,9 @@ int main()
     // Unknown keys are warned about on stderr, and the check goes on.
     lspTest::writeFile(tree.root / ".sfs-lint", "include: house\nsize: 3\n");
     const std::filesystem::path errors = tree.root / "errors.txt";
-    CHECK(std::system((run + "--check \"" + source.string() + "\" > \"" +
-                       output.string() + "\" 2> \"" + errors.string() + "\"")
-                          .c_str()) == 0);
+    CHECK(testing::runCommand((run + "--check \"" + source.string() +
+                               "\" > \"" + output.string() + "\" 2> \"" +
+                               errors.string() + "\"")) == 0);
     CHECK(readText(errors).find(".sfs-lint:2: unknown key 'size'") !=
           std::string::npos);
     CHECK(readText(output).find("[nested-ternary]") != std::string::npos);

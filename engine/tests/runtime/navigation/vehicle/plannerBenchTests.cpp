@@ -250,6 +250,14 @@ struct Before
 const Before kBefore[] = {
 #include "plannerBenchBefore.inc"
 };
+
+// kBefore was recorded with GCC. Another compiler's maths library rounds
+// differently, so its search can settle on a slightly longer way.
+#if defined(_MSC_VER)
+constexpr float SECONDS_SLACK = 1.05f;
+#else
+constexpr float SECONDS_SLACK = 1.001f;
+#endif
 } // namespace
 
 int main()
@@ -317,7 +325,7 @@ int main()
       if (!found)
         continue;
 
-      CHECK(secs <= b.seconds * 1.001f + 1e-3f);
+      CHECK(secs <= b.seconds * SECONDS_SLACK + 1e-3f);
       CHECK(cusps <= b.cusps);
       CHECK(back <= b.backing + 0.05f);
 

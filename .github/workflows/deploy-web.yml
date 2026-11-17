@@ -490,12 +490,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p site
-          id="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=web-game&per_page=20" \
-            --jq '[.artifacts[] | select(.expired | not)] | sort_by(.created_at) | last | .id // empty')"
+          latest="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=web-game&per_page=20" \
+            --jq '[.artifacts[] | select(.expired | not)] | sort_by(.created_at) | last
+                  | "\(.id // "") \(.workflow_run.head_sha // "")"')"
+          read -r id sha <<< "$latest"
           if [ -z "$id" ]; then
             echo "::warning::No web build to publish yet: the site has only the docs."
             echo '<meta http-equiv="refresh" content="0; url=docs/">' > site/index.html
             exit 0
+          fi
+          # The build job is skipped when a test job fails: the site then keeps
+          # an older game, which should be said.
+          if [ "$sha" != "$GITHUB_SHA" ]; then
+            echo "::warning::The game wasn't built from this commit: publishing the one built from ${sha:0:7}."
           fi
           gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > web-game.zip
           unzip -q web-game.zip -d site

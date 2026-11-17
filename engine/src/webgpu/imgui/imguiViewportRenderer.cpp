@@ -1,3 +1,5 @@
+#include "webgpu/imgui/imguiViewportRenderer.h"
+
 #include "engine/core/logger/logger.h"
 #include "engine/webgpu/webGpuContext.h"
 
@@ -6,10 +8,9 @@
 #include <sdl2webgpu.h>
 #include <SDL_stdinc.h>
 #include <SDL_video.h>
-#include <webgpu/imgui/imguiViewportRenderer.h>
+#include <webgpu/webgpu.h>
 
 #include <cstdint>
-#include <webgpu.h>
 
 namespace sfs::imguiViewports
 {

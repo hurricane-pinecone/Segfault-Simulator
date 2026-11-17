@@ -50,14 +50,23 @@ std::size_t sceneDataId()
       moduleTypeId<std::remove_cv_t<T>, &sceneDataTypeId>());
 }
 
+// Whether sfs-codegen made the traits that tell marked types apart. A build
+// without it (engine-core alone) has none, so it can't check the marking.
+#if __has_include("engine/generated/engineEventTraits.gen.h")
+inline constexpr bool SCENE_DATA_TRAITS_MADE = true;
+#else
+inline constexpr bool SCENE_DATA_TRAITS_MADE = false;
+#endif
+
 /**
  * Fails to compile, naming a type used as scene data that isn't marked
- * (RequireSceneData<Type>), or passes for one that is.
+ * (RequireSceneData<Type>), or passes for one that is. Passes for any type in a
+ * build without sfs-codegen.
  */
 template <typename T>
 struct RequireSceneData
 {
-  static_assert(kSceneData<T>,
+  static_assert(!SCENE_DATA_TRAITS_MADE || kSceneData<T>,
                 "sceneData<T>(), addSceneData<T>() and removeSceneData<T>() "
                 "take a type marked [[sfs::scene_data]] (struct "
                 "[[sfs::scene_data]] Scoreboard {...}): data the scene holds "

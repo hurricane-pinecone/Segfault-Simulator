@@ -27,7 +27,7 @@ IncludeCategories:
   - Regex: '^<windows\.h>$'
     Priority: 3
     SortPriority: 5
-  - Regex: '^[<"](SDL|clipper2/|glm/|imgui|imguizmo/|nlohmann/|tracy/|FastNoiseLite|Jolt/|cgltf|lua\.h|lua\.hpp|lauxlib\.h|lualib\.h|sdl2webgpu|tree_sitter/|webgpu/|doctest|stb_)'
+  - Regex: '^[<"](SDL|clipper2/|glm/|imgui|imguizmo/|nlohmann/|tracy/|FastNoiseLite|Jolt/|cgltf|lua\.h|lua\.hpp|lauxlib\.h|lualib\.h|sdl2webgpu|tree_sitter/|webgpu/(webgpu|wgpu)\.h|doctest|stb_)'
     Priority: 2
     SortPriority: 4
   - Regex: '^<([^/]*|sys/.*|emscripten/.*)>$'

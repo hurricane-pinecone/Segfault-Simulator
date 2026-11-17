@@ -148,6 +148,8 @@ it. The standard engine approach is the baseline; do better where the data allow
   (wider builds freeze WSL). Only one build at a time.
 - Format the C++ files you change with `sfs-lsp --format` (clang-format 17.0.6, then the house passes), and only
   those; never md, yml, wgsl or CMake. The pre-commit hook fixes and formats what's committed.
+- WebGPU's headers are `<webgpu/webgpu.h>` and `<webgpu/wgpu.h>`. The native build's include path also offers
+  `<webgpu.h>` (clangd may suggest it), which the web build doesn't have.
 - Screenshots: only the game's or editor's own windows, never the desktop.
 - Comments: plain, human-readable sentences, and only where the logic is complicated or not obvious. Don't narrate
   what the code does, keep history, or add parenthetical asides. Every public and util function gets a proper

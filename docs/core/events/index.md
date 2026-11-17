@@ -563,4 +563,4 @@ In development builds:
 | `respond(entity, s)`, `progress(entity, p)`, `fail(entity, f)`, `open(entity)` | `EventConsumer` of a request type | Answers every open request about an entity later, by entity. |
 | `setMaxKept(n)` | `Events` | The most events a type keeps. |
 
-How events work inside the engine: [Events internals](../../../engine/docs/core/events/index.md).
+How events work inside the engine: [Events internals](https://github.com/hurricane-pinecone/Segfault-Simulator/blob/master/engine/docs/core/events/index.md).

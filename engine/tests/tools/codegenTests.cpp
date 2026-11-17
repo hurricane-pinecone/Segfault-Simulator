@@ -1135,12 +1135,23 @@ struct [[sfs::event_request(sfs::EngineResponse)]] AskEngine { int g = 0; };
                          traits.find("template <>\nstruct "
                                      "EventTraits<::AskEngine>")) +
                "} // namespace sfs::detail\n";
+    // The build's own compiler checks the syntax: cl.exe takes its own flags
+    // and prints its errors to stdout.
+#if defined(_MSC_VER)
+    const std::string command =
+        "\"" SFS_CXX_COMPILER
+        "\" /nologo /std:c++latest /Zs /EHsc /I\"" SFS_ENGINE_INCLUDE_DIR
+        "\" /FI\"" +
+        (dir / "traits.h").string() + "\" \"" + (dir / "Asks.cpp").string() +
+        "\" > \"" + (dir / "errors.txt").string() + "\"";
+#else
     const std::string command =
         "\"" SFS_CXX_COMPILER "\" -std=c++23 -fsyntax-only "
         "-Wno-attributes -I\"" SFS_ENGINE_INCLUDE_DIR "\" -include \"" +
         (dir / "traits.h").string() + "\" \"" + (dir / "Asks.cpp").string() +
         "\" 2> \"" + (dir / "errors.txt").string() + "\"";
-    const int status = std::system(command.c_str());
+#endif
+    const int status = testing::runCommand(command);
     CHECK(status == 0);
 
     if (status != 0)
@@ -2280,7 +2291,7 @@ struct [[sfs::event_request(sfs::EngineResponse)]] AskEngine { int g = 0; };
                                   "\" --module m --function f --output \"" +
                                   (dir / "out.cpp").string() + "\" " + headers +
                                   " 2> \"" + (dir / "err.txt").string() + "\"";
-      return std::system(command.c_str());
+      return testing::runCommand(command);
     };
     CHECK(run("\"" + (dir / "Quiet.h").string() + "\" \"" +
               (dir / "Loud.h").string() + "\"") == 0);

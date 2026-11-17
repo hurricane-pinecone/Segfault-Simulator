@@ -314,4 +314,4 @@ systems.
 | `runServices()` | Registry | Runs those with something new (headless hosts). |
 
 How services work inside the engine:
-[Services internals](../../../engine/docs/core/services/index.md).
+[Services internals](https://github.com/hurricane-pinecone/Segfault-Simulator/blob/master/engine/docs/core/services/index.md).
