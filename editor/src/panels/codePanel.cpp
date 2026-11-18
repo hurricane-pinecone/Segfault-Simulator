@@ -83,7 +83,8 @@ constexpr NamedKey CHORD_KEYS[] = {
 CodePanel::Settings* g_settings = nullptr;
 
 // The folder beside the editor executable that holds what it ships: its
-// Neovim config ("nvim") and fonts ("fonts").
+// Neovim config ("nvim"), fonts ("fonts") and tools ("tools": Neovim, ripgrep
+// and clangd).
 std::filesystem::path shippedFolder(const char* name)
 {
   const char* base = SDL_GetBasePath();
@@ -449,6 +450,7 @@ bool CodePanel::ensureStarted(const EditorContext& context)
   options.mode = m_settings.mode;
   options.engineConfig = shippedFolder("nvim");
   options.icons = m_codeFont.icons;
+  options.tools = shippedFolder("tools");
   options.workingDirectory = context.project ? context.project->root()
                                              : std::filesystem::current_path();
   m_projectRoot =

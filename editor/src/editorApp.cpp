@@ -1323,55 +1323,14 @@ void EditorApp::drawStatusBar()
       ImGui::SameLine(0.0f, 24.0f);
 
     centre(lineHeight);
-    ImGui::TextUnformatted(tasks[i].label.c_str());
-    ImGui::SameLine();
-    // A negative fraction animates (ImGui's "busy" bar) while the amount is
-    // unknown.
-    const float fraction = tasks[i].fraction < 0.0f
-                               ? -static_cast<float>(ImGui::GetTime())
-                               : tasks[i].fraction;
-    ImGui::PushStyleColor(
-        ImGuiCol_PlotHistogram, ImGui::ColorConvertU32ToFloat4(theme::kAccent));
-    centre(lineHeight);
-    ImGui::ProgressBar(fraction, ImVec2(140.0f, lineHeight), "");
-    ImGui::PopStyleColor();
+    ImGui::PushID(static_cast<int>(i));
 
-    if (tasks[i].stop)
-    {
-      // An x in the bar's right end stops it.
-      const ImVec2 barMin = ImGui::GetItemRectMin(),
-                   barMax = ImGui::GetItemRectMax();
-      const float side = barMax.y - barMin.y;
-      const ImVec2 at(barMax.x - side, barMin.y);
-      ImGui::SetCursorScreenPos(at);
-      ImGui::PushID(static_cast<int>(i));
+    if (widgets::progress(tasks[i].label.c_str(),
+                          tasks[i].fraction,
+                          static_cast<bool>(tasks[i].stop)))
+      tasks[i].stop();
 
-      if (ImGui::InvisibleButton("stop", ImVec2(side, side)))
-        tasks[i].stop();
-
-      const bool hovered = ImGui::IsItemHovered();
-      ImGui::SetItemTooltip("Stop");
-      ImGui::PopID();
-
-      ImDrawList* draw = ImGui::GetWindowDrawList();
-      const ImVec2 middle(at.x + side * 0.5f, at.y + side * 0.5f);
-
-      if (hovered)
-        draw->AddCircleFilled(
-            middle, side * 0.5f, ImGui::GetColorU32(ImGuiCol_ButtonHovered));
-
-      const float arm = side * 0.2f;
-      const ImU32 colour =
-          ImGui::GetColorU32(hovered ? ImGuiCol_Text : ImGuiCol_TextDisabled);
-      draw->AddLine(ImVec2(middle.x - arm, middle.y - arm),
-                    ImVec2(middle.x + arm, middle.y + arm),
-                    colour,
-                    1.5f);
-      draw->AddLine(ImVec2(middle.x - arm, middle.y + arm),
-                    ImVec2(middle.x + arm, middle.y - arm),
-                    colour,
-                    1.5f);
-    }
+    ImGui::PopID();
   }
 
   // The open project's folder, on the right.

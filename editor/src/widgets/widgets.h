@@ -113,6 +113,19 @@ bool itemReleasedWithoutDrag(ImGuiMouseButton button = ImGuiMouseButton_Left);
 float splitter(const char* id, ImVec2 size);
 
 /**
+ * The editor's progress bar for work going on: `label`, then a bar in the
+ * accent colour, one text line high and a fixed width, on the label's line.
+ * Every panel and the status bar show work this way, so all bars match.
+ *
+ * @param label what's going on ("Building scripts", "Loading models 3/10")
+ * @param fraction how far, 0 to 1; negative while the amount is unknown (the
+ *        bar sweeps)
+ * @param stoppable whether an x at the bar's right end offers to stop it
+ * @return true the frame the x is clicked
+ */
+bool progress(const char* label, float fraction, bool stoppable = false);
+
+/**
  * Run an editing widget on a copy of `value`, recording the edit for undo.
  * The scene is snapshotted when the interaction starts and before the copy is
  * written back, so even a widget that changes the value on its first frame

@@ -37,6 +37,26 @@ public:
     std::filesystem::path engineConfig; // folder holding the engine's init.lua
     std::filesystem::path workingDirectory;
     bool icons = false; // the UI's font draws Nerd Font icons (g:sfs_icons)
+    /**
+     * The tools the editor ships (nvim/, ripgrep/, clangd/), used when Neovim
+     * runs on the editor's own machine. Without them Neovim and its tools come
+     * from PATH, as they always do in WSL.
+     */
+    std::filesystem::path tools;
+  };
+
+  /** How start() runs Neovim. */
+  struct LaunchCommand
+  {
+    /** The command line, wrapped to run on the build machine. */
+    std::vector<std::string> args;
+    /** Whether it runs the shipped Neovim (LaunchOptions::tools). */
+    bool bundled = false;
+    /**
+     * Variables set in Neovim's environment over the editor's own. Run in WSL,
+     * they are on the command line instead (`env NAME=value nvim`).
+     */
+    ChildProcess::Environment environment;
   };
 
   explicit NvimClient(const BuildEnvironment& environment);
@@ -53,6 +73,16 @@ public:
 
   /** Keys in Neovim's notation, e.g. "i", "<C-s>", "<lt>". */
   void input(const std::string& keys);
+
+  /**
+   * The command start() runs. On the editor's machine it is the shipped
+   * Neovim, when LaunchOptions::tools has it, with the shipped tools first on
+   * PATH; otherwise (or in WSL) `nvim` from PATH.
+   *
+   * @param options how Neovim is to start
+   * @return the command line, and the environment it runs with
+   */
+  LaunchCommand launchCommand(const LaunchOptions& options) const;
 
   /** A mouse event, as nvim_input_mouse takes it. */
   void mouse(const char* button,

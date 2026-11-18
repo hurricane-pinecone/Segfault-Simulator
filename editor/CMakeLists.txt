@@ -116,6 +116,10 @@ else()
     set(SFS_EDITOR_WSL_DISTRO "")
 endif()
 
+# The Code panel's Neovim, ripgrep and clangd ship in tools/ next to the
+# executable (SFS_EDITOR_BUNDLE_TOOLS; see tools/VENDORED.md).
+include("${CMAKE_CURRENT_SOURCE_DIR}/tools/editorTools.cmake")
+
 if(SFS_CODEGEN_EXECUTABLE)
     set(SFS_EDITOR_CODEGEN "${SFS_CODEGEN_EXECUTABLE}")
 else()

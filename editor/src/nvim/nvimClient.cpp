@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <deque>
+#include <filesystem>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -29,6 +30,15 @@ constexpr int64_t NOTIFICATION = 2;
 
 // How long a quitting Neovim gets before it's killed.
 constexpr auto QUIT_TIMEOUT = std::chrono::seconds(2);
+
+// Windows names executables with ".exe" and separates PATH's folders with ';'.
+constexpr bool WINDOWS = std::filesystem::path::preferred_separator == '\\';
+constexpr const char* EXECUTABLE_SUFFIX = WINDOWS ? ".exe" : "";
+constexpr char PATH_SEPARATOR = WINDOWS ? ';' : ':';
+
+// The shipped tools' folders in LaunchOptions::tools that hold executables, as
+// editor/tools/editorTools.cmake extracts the release archives.
+constexpr const char* TOOL_FOLDERS[] = {"nvim/bin", "ripgrep", "clangd/bin"};
 
 // A string as a Vim script single-quoted literal.
 std::string vimString(const std::string& text)
@@ -117,6 +127,110 @@ void NvimClient::input(const std::string& keys)
 {
   if (!keys.empty())
     request("nvim_input", {str(keys)});
+}
+
+NvimClient::LaunchCommand
+NvimClient::launchCommand(const LaunchOptions& options) const
+{
+  const char* mode = options.mode == ConfigMode::Engine ? "engine"
+                     : options.mode == ConfigMode::User ? "user"
+                                                        : "auto";
+  // Settings for the engine's init.lua, set before any config runs.
+  const std::string globals =
+      "let g:sfs_editor = 1 | let g:sfs_nvim_mode = " + vimString(mode) +
+      " | let g:sfs_project_root = " +
+      vimString(m_environment.toBuildPath(options.workingDirectory)) +
+      " | let g:sfs_icons = " + (options.icons ? "1" : "0");
+
+  // SFS_LSP names the sfs-lsp matching this engine, for any config to start
+  // beside clangd. The engine config gets its own config/data folders, so the
+  // user's plugins (~/.config/nvim/plugin, lazy.nvim's data) never leak into
+  // it.
+  ChildProcess::Environment environment;
+
+  if (!m_environment.lsp().empty())
+    environment.emplace_back("SFS_LSP", m_environment.lsp());
+
+  if (options.mode == ConfigMode::Engine)
+    environment.emplace_back("NVIM_APPNAME", "sfs-editor");
+
+  LaunchCommand command;
+  std::string nvim = "nvim";
+  const bool native =
+      m_environment.runner() == BuildEnvironment::Runner::Native;
+
+  if (native && !options.tools.empty())
+  {
+    const std::filesystem::path shipped =
+        options.tools / "nvim" / "bin" /
+        (std::string("nvim") + EXECUTABLE_SUFFIX);
+
+    if (std::filesystem::is_regular_file(shipped))
+    {
+      nvim = shipped.string();
+      command.bundled = true;
+      // Set, not found from the executable, so a VIMRUNTIME the editor
+      // inherited (started from another Neovim's terminal) can't replace it.
+      environment.emplace_back(
+          "VIMRUNTIME",
+          (options.tools / "nvim" / "share" / "nvim" / "runtime")
+              .make_preferred()
+              .string());
+    }
+
+    std::string path;
+
+    for (const char* folder : TOOL_FOLDERS)
+    {
+      std::filesystem::path tool = options.tools / folder;
+
+      if (std::filesystem::is_directory(tool))
+        path += tool.make_preferred().string() + PATH_SEPARATOR;
+    }
+
+    if (!path.empty())
+    {
+      const char* inherited = std::getenv("PATH");
+
+      if (inherited && *inherited)
+        path += inherited;
+      else
+        path.pop_back();
+
+      environment.emplace_back("PATH", std::move(path));
+    }
+  }
+
+  std::vector<std::string> args;
+
+  if (native)
+    command.environment = std::move(environment);
+  else
+  {
+    args.push_back("env");
+
+    for (const auto& [name, value] : environment)
+      args.push_back(name + "=" + value);
+  }
+
+  args.insert(args.end(), {nvim, "--embed", "--cmd", globals});
+
+  if (options.mode != ConfigMode::User)
+    args.insert(
+        args.end(),
+        {"-u", m_environment.toBuildPath(options.engineConfig / "init.lua")});
+  else
+    // Your own config still tells the editor about saves (the build, the UI
+    // Preview); the engine's init.lua does the same.
+    args.insert(
+        args.end(),
+        {"--cmd",
+         "lua dofile([[" +
+             m_environment.toBuildPath(options.engineConfig / "sfs_hooks.lua") +
+             "]])"});
+
+  command.args = m_environment.command(std::move(args));
+  return command;
 }
 
 void NvimClient::mouse(const char* button,
@@ -243,46 +357,23 @@ bool NvimClient::start(const LaunchOptions& options, int columns, int rows)
     m_incoming.clear();
   }
 
-  const char* mode = options.mode == ConfigMode::Engine ? "engine"
-                     : options.mode == ConfigMode::User ? "user"
-                                                        : "auto";
-  // Settings for the engine's init.lua, set before any config runs.
-  const std::string globals =
-      "let g:sfs_editor = 1 | let g:sfs_nvim_mode = " + vimString(mode) +
-      " | let g:sfs_project_root = " +
-      vimString(m_environment.toBuildPath(options.workingDirectory)) +
-      " | let g:sfs_icons = " + (options.icons ? "1" : "0");
+  const LaunchCommand command = launchCommand(options);
 
-  // SFS_LSP names the sfs-lsp matching this engine, for any config to start
-  // beside clangd. The engine config gets its own config/data folders, so the
-  // user's plugins (~/.config/nvim/plugin, lazy.nvim's data) never leak into
-  // it.
-  std::vector<std::string> args = {"env"};
-
-  if (!m_environment.lsp().empty())
-    args.push_back("SFS_LSP=" + m_environment.lsp());
-
-  if (options.mode == ConfigMode::Engine)
-    args.push_back("NVIM_APPNAME=sfs-editor");
-
-  args.insert(args.end(), {"nvim", "--embed", "--cmd", globals});
-
-  if (options.mode != ConfigMode::User)
-    args.insert(
-        args.end(),
-        {"-u", m_environment.toBuildPath(options.engineConfig / "init.lua")});
-  else
-    // Your own config still tells the editor about saves (the build, the UI
-    // Preview); the engine's init.lua does the same.
-    args.insert(
-        args.end(),
-        {"--cmd",
-         "lua dofile([[" +
-             m_environment.toBuildPath(options.engineConfig / "sfs_hooks.lua") +
-             "]])"});
+  if (!command.bundled &&
+      m_environment.runner() == BuildEnvironment::Runner::Native &&
+      !options.tools.empty())
+  {
+    if (std::filesystem::exists(options.tools))
+      LOG_WARN("nvim: the editor's Neovim is missing from " +
+               options.tools.string() + "; using nvim from PATH");
+    else
+      LOG_INFO("nvim: this editor ships no tools; using Neovim, ripgrep and "
+               "clangd from PATH");
+  }
 
   m_process = std::make_unique<ChildProcess>();
   ChildProcess::Options processOptions;
+  processOptions.environment = command.environment;
   processOptions.pipeStdin = true;
   processOptions.onStderr = [](std::string_view chunk)
   {
@@ -298,7 +389,7 @@ bool NvimClient::start(const LaunchOptions& options, int columns, int rows)
   };
 
   if (!m_process->start(
-          m_environment.command(args),
+          command.args,
           [this](std::string_view chunk) { receive(chunk); },
           std::move(processOptions)))
   {

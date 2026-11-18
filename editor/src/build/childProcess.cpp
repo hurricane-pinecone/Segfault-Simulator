@@ -2,15 +2,70 @@
 
 #include "engine/core/logger/logger.h"
 
+#include <algorithm>
+#include <cctype>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+
 #if defined(_WIN32)
   #define WIN32_LEAN_AND_MEAN
   #include <windows.h>
+  #include <cstring>
 #else
   #include <csignal>
   #include <fcntl.h>
   #include <sys/wait.h>
   #include <unistd.h>
+
+extern char** environ;
 #endif
+
+namespace
+{
+// The name in an environment entry ("NAME=value"). Windows keeps each drive's
+// working directory in an entry that starts with '=' ("=C:=C:\Games"), so the
+// '=' that ends the name is looked for past the first character.
+std::string_view entryName(std::string_view entry)
+{
+  return entry.substr(0, entry.find('=', 1));
+}
+
+// Whether two variable names are the same variable (Windows ignores case).
+bool sameName(std::string_view a, std::string_view b)
+{
+#if defined(_WIN32)
+  return a.size() == b.size() &&
+         std::equal(a.begin(),
+                    a.end(),
+                    b.begin(),
+                    [](char x, char y)
+                    {
+                      return std::toupper(static_cast<unsigned char>(x)) ==
+                             std::toupper(static_cast<unsigned char>(y));
+                    });
+#else
+  return a == b;
+#endif
+}
+
+// `entries` ("NAME=value") with `overrides` set over them.
+std::vector<std::string>
+withOverrides(std::vector<std::string> entries,
+              const ChildProcess::Environment& overrides)
+{
+  for (const auto& [name, value] : overrides)
+  {
+    std::erase_if(entries,
+                  [&](const std::string& entry)
+                  { return sameName(entryName(entry), name); });
+    entries.push_back(name + "=" + value);
+  }
+
+  return entries;
+}
+} // namespace
 
 bool ChildProcess::start(const std::vector<std::string>& args,
                          OutputHandler onStdout)
@@ -96,6 +151,47 @@ bool makePipe(HANDLE& read, HANDLE& write, bool childWrites)
   return true;
 }
 
+// The editor's environment with `overrides` set, as an environment block for
+// CreateProcess: "NAME=value" entries sorted by name (ignoring case), each
+// ending in a null, and an empty one at the end.
+std::string environmentBlock(const ChildProcess::Environment& overrides)
+{
+  std::vector<std::string> entries;
+
+  if (char* strings = GetEnvironmentStringsA())
+  {
+    for (const char* entry = strings; *entry; entry += std::strlen(entry) + 1)
+      entries.emplace_back(entry);
+
+    FreeEnvironmentStringsA(strings);
+  }
+
+  entries = withOverrides(std::move(entries), overrides);
+  std::sort(entries.begin(),
+            entries.end(),
+            [](const std::string& a, const std::string& b)
+            {
+              return std::lexicographical_compare(
+                  a.begin(),
+                  a.end(),
+                  b.begin(),
+                  b.end(),
+                  [](char x, char y)
+                  {
+                    return std::toupper(static_cast<unsigned char>(x)) <
+                           std::toupper(static_cast<unsigned char>(y));
+                  });
+            });
+
+  std::string block;
+
+  for (const std::string& entry : entries)
+    block.append(entry).push_back('\0');
+
+  block.push_back('\0');
+  return block;
+}
+
 void readUntilClosed(HANDLE pipe, const ChildProcess::OutputHandler& onOutput)
 {
   char buffer[8192];
@@ -150,17 +246,23 @@ bool ChildProcess::start(const std::vector<std::string>& args,
         job, JobObjectExtendedLimitInformation, &limits, sizeof(limits));
   }
 
+  std::string environment;
+
+  if (!options.environment.empty())
+    environment = environmentBlock(options.environment);
+
   PROCESS_INFORMATION info = {};
-  const BOOL created = CreateProcessA(nullptr,
-                                      commandLine.data(),
-                                      nullptr,
-                                      nullptr,
-                                      TRUE,
-                                      CREATE_NO_WINDOW | CREATE_SUSPENDED,
-                                      nullptr,
-                                      nullptr,
-                                      &startup,
-                                      &info);
+  const BOOL created =
+      CreateProcessA(nullptr,
+                     commandLine.data(),
+                     nullptr,
+                     nullptr,
+                     TRUE,
+                     CREATE_NO_WINDOW | CREATE_SUSPENDED,
+                     environment.empty() ? nullptr : environment.data(),
+                     nullptr,
+                     &startup,
+                     &info);
 
   if (created)
   {
@@ -346,6 +448,26 @@ bool ChildProcess::start(const std::vector<std::string>& args,
 
   argv.push_back(nullptr);
 
+  // Made before forking: the child only points environ at it.
+  std::vector<std::string> environment;
+  std::vector<char*> envp;
+
+  if (!options.environment.empty())
+  {
+    std::vector<std::string> current;
+
+    for (char** entry = environ; *entry; ++entry)
+      current.emplace_back(*entry);
+
+    environment = withOverrides(std::move(current), options.environment);
+    envp.reserve(environment.size() + 1);
+
+    for (std::string& entry : environment)
+      envp.push_back(entry.data());
+
+    envp.push_back(nullptr);
+  }
+
   const pid_t pid = fork();
 
   if (pid == 0)
@@ -360,6 +482,9 @@ bool ChildProcess::start(const std::vector<std::string>& args,
     for (const int fd : {out[0], out[1], err[0], err[1], in[0], in[1]})
       if (fd >= 0)
         close(fd);
+
+    if (!envp.empty())
+      environ = envp.data();
 
     execvp(argv[0], argv.data());
     _exit(127); // exec failed

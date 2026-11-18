@@ -3,6 +3,7 @@
 #include "nvim/nvimClient.h"
 #include "nvim/nvimScreen.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -11,12 +12,21 @@
 #include <string>
 #include <system_error>
 #include <thread>
+#include <vector>
 
-// Drives a real `nvim --embed` through the client, with the engine's config.
-// Skipped (passing) when Neovim isn't installed.
+// Checks the command the client starts Neovim with, then drives a real
+// `nvim --embed` through it, with the engine's config: the editor's own Neovim
+// and tools when this build ships them (SFS_EDITOR_BUNDLE_TOOLS), otherwise
+// the ones on PATH. The live checks are skipped (passing) when there's no
+// Neovim, and on Windows.
 
 namespace
 {
+// Windows names executables with ".exe" and separates PATH's folders with ';'.
+constexpr bool WINDOWS = std::filesystem::path::preferred_separator == '\\';
+constexpr const char* EXECUTABLE_SUFFIX = WINDOWS ? ".exe" : "";
+constexpr char PATH_SEPARATOR = WINDOWS ? ';' : ':';
+
 std::string rowText(const NvimScreen& screen, int row)
 {
   std::string text;
@@ -34,6 +44,31 @@ bool screenContains(const NvimScreen& screen, const std::string& text)
       return true;
 
   return false;
+}
+
+// The value a launch command sets for `name`; empty if it sets none.
+std::string variable(const NvimClient::LaunchCommand& command,
+                     const std::string& name)
+{
+  for (const auto& [key, value] : command.environment)
+    if (key == name)
+      return value;
+
+  return {};
+}
+
+bool contains(const std::vector<std::string>& args, const std::string& arg)
+{
+  return std::find(args.begin(), args.end(), arg) != args.end();
+}
+
+void touch(const std::filesystem::path& file)
+{
+  std::filesystem::create_directories(file.parent_path());
+  std::FILE* out = std::fopen(file.string().c_str(), "w");
+
+  if (out)
+    std::fclose(out);
 }
 
 // Polls until `done`, however long it takes; false if nvim stops first.
@@ -56,12 +91,6 @@ bool waitFor(NvimClient& nvim, const std::function<bool()>& done)
 
 int main()
 {
-  if (std::system("nvim --version > /dev/null 2>&1") != 0)
-  {
-    std::puts("nvim not installed; skipping");
-    return 0;
-  }
-
   const std::filesystem::path work =
       std::filesystem::temp_directory_path() / "sfs-nvim-client-test";
   std::filesystem::remove_all(work);
@@ -73,6 +102,83 @@ int main()
   options.mode = NvimClient::ConfigMode::Engine;
   options.engineConfig = SFS_TEST_NVIM_CONFIG;
   options.workingDirectory = work;
+
+  // Tests build only where the editor runs its tools itself (not through WSL).
+  TEST("with shipped tools, the editor's own Neovim should start, with its "
+       "runtime and the tools first on PATH")
+  {
+    const std::filesystem::path tools = work / "shipped-tools";
+    const std::filesystem::path shippedNvim =
+        tools / "nvim" / "bin" / (std::string("nvim") + EXECUTABLE_SUFFIX);
+    touch(shippedNvim);
+    std::filesystem::create_directories(tools / "nvim/share/nvim/runtime");
+    touch(tools / "ripgrep" / (std::string("rg") + EXECUTABLE_SUFFIX));
+    touch(tools / "clangd" / "bin" /
+          (std::string("clangd") + EXECUTABLE_SUFFIX));
+
+    NvimClient::LaunchOptions shipped = options;
+    shipped.tools = tools;
+    const NvimClient::LaunchCommand command = nvim.launchCommand(shipped);
+
+    CHECK(command.bundled);
+    CHECK(!command.args.empty() && command.args[0] == shippedNvim.string());
+    CHECK(contains(command.args, "--embed"));
+    CHECK(contains(command.args, (options.engineConfig / "init.lua").string()));
+    CHECK(!contains(command.args, "env"));
+
+    const auto folder = [&](const char* name)
+    { return (tools / name).make_preferred().string(); };
+    const std::string first = folder("nvim/bin") + PATH_SEPARATOR +
+                              folder("ripgrep") + PATH_SEPARATOR +
+                              folder("clangd/bin");
+    const std::string path = variable(command, "PATH");
+    CHECK(path.starts_with(first));
+    const char* inherited = std::getenv("PATH");
+
+    if (inherited && *inherited)
+      CHECK(path == first + PATH_SEPARATOR + inherited);
+
+    CHECK(variable(command, "VIMRUNTIME") ==
+          (tools / "nvim/share/nvim/runtime").make_preferred().string());
+    CHECK(variable(command, "NVIM_APPNAME") == "sfs-editor");
+    CHECK(variable(command, "SFS_LSP") == environment.lsp());
+  }
+
+  TEST("without shipped tools, Neovim and its tools should come from PATH")
+  {
+    NvimClient::LaunchOptions missing = options;
+    missing.tools = work / "no-tools";
+    const NvimClient::LaunchCommand command = nvim.launchCommand(missing);
+
+    CHECK(!command.bundled);
+    CHECK(!command.args.empty() && command.args[0] == "nvim");
+    CHECK(variable(command, "PATH").empty());
+    CHECK(variable(command, "VIMRUNTIME").empty());
+    CHECK(variable(command, "NVIM_APPNAME") == "sfs-editor");
+
+    missing.tools.clear();
+    CHECK(nvim.launchCommand(missing).args[0] == "nvim");
+  }
+
+#if defined(_WIN32)
+  std::puts("the live Neovim checks run on Linux and macOS; skipping them");
+  std::filesystem::remove_all(work);
+  return testing::report("nvimClientTests");
+#else
+  options.tools = SFS_TEST_EDITOR_TOOLS;
+  const NvimClient::LaunchCommand launch = nvim.launchCommand(options);
+  const std::string nvimProgram = launch.args.empty() ? "" : launch.args[0];
+
+  if (testing::runCommand("'" + nvimProgram + "' --version > /dev/null 2>&1") !=
+      0)
+  {
+    std::puts("nvim not installed; skipping the live checks");
+    std::filesystem::remove_all(work);
+    return testing::report("nvimClientTests");
+  }
+
+  std::puts(launch.bundled ? "driving the editor's own Neovim"
+                           : "driving Neovim from PATH");
 
   TEST("Neovim should start and draw its first screen")
   {
@@ -270,6 +376,52 @@ int main()
     lsp.stop();
   }
 
+  if (launch.bundled)
+  {
+    TEST("the editor's own Neovim should find its runtime and the shipped "
+         "ripgrep and clangd")
+    {
+      NvimClient tools(environment);
+      CHECK(tools.start(options, 200, 12));
+      const std::string folder =
+          std::filesystem::path(SFS_TEST_EDITOR_TOOLS).string();
+      // Each check echoes a marker of its own, so an earlier one's answer
+      // still on screen can't pass it.
+      int checks = 0;
+      const auto shows = [&](const std::string& expression)
+      {
+        const std::string marker = "check" + std::to_string(++checks) + "=";
+        const std::string command =
+            ":echo '" + marker + "' . (" + expression + ")<CR>";
+
+        for (int attempt = 0; attempt < 50 && tools.running(); ++attempt)
+        {
+          tools.input(command);
+
+          for (int i = 0; i < 10; ++i)
+          {
+            tools.poll();
+
+            if (screenContains(tools.screen(), marker + "1"))
+              return true;
+
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+          }
+        }
+
+        return false;
+      };
+      const std::string inTools = " =~# '^" + folder + "/'";
+      CHECK(shows("v:progpath" + inTools));
+      CHECK(shows("$VIMRUNTIME" + inTools));
+      CHECK(shows("exepath('rg')" + inTools));
+      CHECK(shows("exepath('clangd')" + inTools));
+      CHECK(shows("exists(':GrugFar') == 2"));
+      tools.stop();
+    }
+  }
+
   std::filesystem::remove_all(work);
   return testing::report("nvimClientTests");
+#endif
 }

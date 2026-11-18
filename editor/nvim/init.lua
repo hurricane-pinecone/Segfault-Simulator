@@ -1,7 +1,7 @@
 -- SfsEditor's Neovim config: what the editor's Code panel starts Neovim with
 -- when you don't have a config of your own (or choose "Engine config").
 -- Small: no plugin manager. Besides what ships with Neovim (0.11+), clangd
--- when it is installed and sfs-lsp (the engine's checks of SFS code), it loads
+-- and sfs-lsp (the engine's checks of SFS code), it loads
 -- modules of mini.nvim that ship beside it (pack/sfs/opt/mini.nvim, mini.nvim
 -- v0.18.0, MIT): mini.clue (the keys that can follow a prefix, as you type
 -- it), mini.pick (finding files and text), mini.files (a file explorer),
@@ -9,6 +9,10 @@
 -- (which makes the "sfs" colour scheme in colors/sfs.lua, the editor's own
 -- colours); and grug-far.nvim (pack/sfs/opt/grug-far.nvim, 1.6.80, MIT): find
 -- and replace across files, with ripgrep.
+--
+-- Executables come from PATH. A native editor starts its own Neovim with the
+-- clangd and ripgrep it ships first on PATH; a Windows editor cross-built from
+-- WSL starts Neovim in WSL, where they must be installed.
 --
 -- The editor sets, before this runs:
 --   g:sfs_editor                1 (also visible to your own config)
@@ -285,14 +289,33 @@ grug.setup({
     helpTitle = " \u{f059}  ",
   },
 })
+-- grug-far can't search without ripgrep: say so rather than open an empty
+-- buffer with its own error.
+local function has_ripgrep()
+  if vim.fn.executable("rg") == 1 then
+    return true
+  end
+  vim.notify(
+    "Search and replace needs ripgrep (rg), which isn't on PATH. The editor ships it; "
+      .. "when Neovim runs in WSL, install it there (e.g. sudo apt install ripgrep).",
+    vim.log.levels.ERROR
+  )
+  return false
+end
 map("n", "<leader>sr", function()
-  grug.open({ prefills = { paths = scripts() } })
+  if has_ripgrep() then
+    grug.open({ prefills = { paths = scripts() } })
+  end
 end, { desc = "Search and replace (scripts)" })
 map("x", "<leader>sr", function()
-  grug.with_visual_selection({ prefills = { paths = scripts() } })
+  if has_ripgrep() then
+    grug.with_visual_selection({ prefills = { paths = scripts() } })
+  end
 end, { desc = "Search and replace the selection (scripts)" })
 map("n", "<leader>sb", function()
-  grug.open({ prefills = { paths = vim.fn.expand("%") } })
+  if has_ripgrep() then
+    grug.open({ prefills = { paths = vim.fn.expand("%") } })
+  end
 end, { desc = "Search and replace (this file)" })
 
 -- What can follow a prefix (Space, g, z, [, ], marks, registers, Ctrl-w),

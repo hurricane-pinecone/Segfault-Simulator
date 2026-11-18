@@ -327,4 +327,57 @@ void showTab(const std::string& window)
     found->DockNode->TabBar->NextSelectedTabId = found->TabId;
 }
 
+bool progress(const char* label, float fraction, bool stoppable)
+{
+  constexpr float BAR_WIDTH = 140.0f;
+  const float height = ImGui::GetTextLineHeight();
+  ImGui::TextUnformatted(label);
+  ImGui::SameLine();
+  // A negative fraction sweeps (ImGui's "busy" bar) while the amount is
+  // unknown.
+  const float shown =
+      fraction < 0.0f ? -static_cast<float>(ImGui::GetTime()) : fraction;
+  ImGui::PushStyleColor(
+      ImGuiCol_PlotHistogram, ImGui::ColorConvertU32ToFloat4(theme::kAccent));
+  ImGui::ProgressBar(shown, ImVec2(BAR_WIDTH, height), "");
+  ImGui::PopStyleColor();
+
+  if (!stoppable)
+    return false;
+
+  // An x in the bar's right end stops it.
+  const ImVec2 barMin = ImGui::GetItemRectMin();
+  const ImVec2 barMax = ImGui::GetItemRectMax();
+  const float side = barMax.y - barMin.y;
+  const ImVec2 at(barMax.x - side, barMin.y);
+  const ImVec2 after = ImGui::GetCursorScreenPos();
+  ImGui::SetCursorScreenPos(at);
+  ImGui::PushID(label);
+  const bool stop = ImGui::InvisibleButton("stop", ImVec2(side, side));
+  const bool hovered = ImGui::IsItemHovered();
+  ImGui::SetItemTooltip("Stop");
+  ImGui::PopID();
+  ImGui::SetCursorScreenPos(after);
+
+  ImDrawList* draw = ImGui::GetWindowDrawList();
+  const ImVec2 middle(at.x + side * 0.5f, at.y + side * 0.5f);
+
+  if (hovered)
+    draw->AddCircleFilled(
+        middle, side * 0.5f, ImGui::GetColorU32(ImGuiCol_ButtonHovered));
+
+  const float arm = side * 0.2f;
+  const ImU32 colour =
+      ImGui::GetColorU32(hovered ? ImGuiCol_Text : ImGuiCol_TextDisabled);
+  draw->AddLine(ImVec2(middle.x - arm, middle.y - arm),
+                ImVec2(middle.x + arm, middle.y + arm),
+                colour,
+                1.5f);
+  draw->AddLine(ImVec2(middle.x - arm, middle.y + arm),
+                ImVec2(middle.x + arm, middle.y - arm),
+                colour,
+                1.5f);
+  return stop;
+}
+
 } // namespace widgets

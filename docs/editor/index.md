@@ -519,8 +519,27 @@ scripts, and scripts double-clicked in **Assets**, open in it. While it has
 focus it gets the whole keyboard, editor shortcuts included: Ctrl+S saves the
 file, not the scene.
 
-Neovim (0.11 or later) runs where the game module builds. For a Windows editor
-cross-built from WSL, that is Neovim in WSL, with your WSL setup.
+Nothing needs installing: the editor ships Neovim and the tools its config
+uses in `tools/` beside the executable, with each one's licence:
+
+| Tool | Version | What for |
+| --- | --- | --- |
+| [Neovim](https://neovim.io) | 0.12.6 | The panel itself |
+| [ripgrep](https://github.com/BurntSushi/ripgrep) | 15.2.0 | Live search in the file picker, and find and replace across files |
+| [clangd](https://clangd.llvm.org) | 23.1.0 | C++ language server: go to definition, completion, diagnostics, rename |
+
+The panel starts the shipped Neovim with the shipped tools first on its
+`PATH`, so your own config finds them too (anything else on your `PATH` stays
+visible after them). Release builds ship them; turn it off with
+`-DSFS_EDITOR_BUNDLE_TOOLS=OFF` (to build offline, say), and debug builds leave
+it off by default: the panel then uses `nvim`, `rg` and `clangd` from your
+`PATH`, and logs that it does. `editor/tools/VENDORED.md` lists the pinned
+releases and their hashes, and how to update them.
+
+A Windows editor cross-built from WSL (the engine's own development setup)
+runs Neovim where the game module builds instead: in WSL, with your WSL setup.
+There Neovim 0.11 or later, ripgrep and clangd come from WSL's `PATH`, and
+nothing is shipped.
 
 The toolbar picks the configuration (applied on **Restart**):
 
@@ -532,7 +551,7 @@ The toolbar picks the configuration (applied on **Restart**):
 
 The engine's config is `editor/nvim/init.lua`, shipped next to the editor
 executable. It is small: no plugin manager, 2-space indents, and
-C++ support through Neovim's built-in LSP client when `clangd` is installed.
+C++ support through Neovim's built-in LSP client with `clangd`.
 That gives go to definition (`gd`), hover (`K`), completion, diagnostics
 (`Space d` shows the one under the cursor), rename (`grn`, or `Space c r`: the
 symbol everywhere clangd knows it) and code actions (`gra`, or `Space c a`);
@@ -546,7 +565,7 @@ It brings a few modules of [mini.nvim](https://github.com/nvim-mini/mini.nvim)
 
 | Module | What it does | Keys |
 | --- | --- | --- |
-| mini.pick | Finds files and searches text in the project's `scripts/` folder (live search with ripgrep, when installed) | `Space Space` / `Space f f` find files, `Space /` / `Space s g` search, `Space ,` / `Space f b` open buffers, `Space s h` help, `Space s R` the last picker again |
+| mini.pick | Finds files and searches text in the project's `scripts/` folder (live search with ripgrep; without it, it asks for the pattern first) | `Space Space` / `Space f f` find files, `Space /` / `Space s g` search, `Space ,` / `Space f b` open buffers, `Space s h` help, `Space s R` the last picker again |
 | mini.files | A file explorer: columns of folders, with a preview; edit the listing to create, rename or delete, then `=` to apply | `Space e`, at the current file; `Enter` or `l` opens, `h` goes out, `q` closes |
 | mini.clue | After a short pause on a prefix (`Space`, `g`, `z`, `[`, `]`, marks, registers, `Ctrl+W`), shows the keys that can follow | |
 | mini.icons | File-type icons in the pickers and the explorer, when the panel's font draws them | |
@@ -555,8 +574,8 @@ It brings a few modules of [mini.nvim](https://github.com/nvim-mini/mini.nvim)
 And [grug-far.nvim](https://github.com/MagicDuck/grug-far.nvim) (1.6.80, MIT),
 also shipped beside it, for find and replace across files: a buffer with the
 search, the replacement, a files filter and flags, every match previewed with
-its change, applied all at once or one by one. It searches with ripgrep, which
-must be installed. `Space s r` opens it on the project's `scripts/` folder (in
+its change, applied all at once or one by one. It searches with ripgrep (in
+WSL, install it there: without it, `Space s r` says so). `Space s r` opens it on the project's `scripts/` folder (in
 visual mode, searching for the selection), `Space s b` on the current file.
 For a C++ symbol, prefer `Space c r`: it renames only that symbol, not the
 same text elsewhere.

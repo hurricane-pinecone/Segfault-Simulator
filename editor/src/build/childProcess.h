@@ -19,10 +19,18 @@
 class ChildProcess
 {
 public:
+  /** Environment variables, as (name, value) pairs. */
+  using Environment = std::vector<std::pair<std::string, std::string>>;
+
   using OutputHandler = std::function<void(std::string_view chunk)>;
 
   struct Options
   {
+    /**
+     * Variables set in the process's environment, on top of the editor's own
+     * (replacing those of the same name).
+     */
+    Environment environment;
     // Receives stderr separately; when empty, stderr is merged into stdout.
     OutputHandler onStderr;
     // Give the process a stdin pipe that write() feeds.

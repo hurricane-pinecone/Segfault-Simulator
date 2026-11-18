@@ -888,23 +888,23 @@ void ArchitecturePanel::drawOverlays(const ImVec2& origin, const ImVec2& size)
   if (m_generator.running())
   {
     const arch::Progress progress = m_generator.progress();
-    const float width = 300.0f;
-    const float height = ImGui::GetFrameHeightWithSpacing() * 2.0f +
-                         ImGui::GetStyle().WindowPadding.y * 2.0f;
+    const float height =
+        ImGui::GetTextLineHeight() + ImGui::GetStyle().WindowPadding.y * 2.0f;
     ImGui::SetCursorScreenPos(
         ImVec2(origin.x + MARGIN, origin.y + size.y - height - MARGIN));
 
-    if (ImGui::BeginChild("Progress", ImVec2(width, 0.0f), overlay))
+    if (ImGui::BeginChild("Progress",
+                          ImVec2(0.0f, 0.0f),
+                          overlay | ImGuiChildFlags_AutoResizeX))
     {
-      ImGui::Text("%s the scripts: %d / %d",
-                  phaseLabel(progress.phase),
-                  progress.done,
-                  progress.total);
-      const float fraction = progress.total > 0
-                                 ? static_cast<float>(progress.done) /
-                                       static_cast<float>(progress.total)
-                                 : 0.0f;
-      ImGui::ProgressBar(fraction, ImVec2(-1.0f, 0.0f), "");
+      const std::string label =
+          std::string(phaseLabel(progress.phase)) + " the scripts " +
+          std::to_string(progress.done) + "/" + std::to_string(progress.total);
+      widgets::progress(label.c_str(),
+                        progress.total > 0
+                            ? static_cast<float>(progress.done) /
+                                  static_cast<float>(progress.total)
+                            : -1.0f);
     }
 
     ImGui::EndChild();

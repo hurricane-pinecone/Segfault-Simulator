@@ -3,11 +3,13 @@
 #include "build/childProcess.h"
 
 #include <chrono>
+#include <cstdlib>
 #include <fstream>
 #include <signal.h>
 #include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace
@@ -62,6 +64,31 @@ int main()
       std::this_thread::sleep_for(std::chrono::milliseconds(5));
 
     CHECK(process.exitCode() == 3);
+  }
+
+  TEST("a process should get the variables it's given, over the editor's own")
+  {
+    ::setenv("SFS_CHILD_TEST_KEPT", "kept", 1);
+    ::setenv("SFS_CHILD_TEST_REPLACED", "old", 1);
+
+    std::string output;
+    ChildProcess process;
+    ChildProcess::Options options;
+    options.environment = {
+        {"SFS_CHILD_TEST_REPLACED", "new"}, {"SFS_CHILD_TEST_ADDED", "added"}};
+    CHECK(process.start(
+        {"sh",
+         "-c",
+         "echo \"$SFS_CHILD_TEST_KEPT $SFS_CHILD_TEST_REPLACED "
+         "$SFS_CHILD_TEST_ADDED\""},
+        [&](std::string_view chunk) { output += chunk; },
+        std::move(options)));
+
+    while (process.running())
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+
+    CHECK(output == "kept new added\n");
+    CHECK(std::string(std::getenv("SFS_CHILD_TEST_REPLACED")) == "old");
   }
 
   TEST("a native build environment should run commands as they are, stopped by "

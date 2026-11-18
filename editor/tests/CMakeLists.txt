@@ -30,8 +30,13 @@ add_editor_test(nvimClientTests nvimClientTests.cpp
     "${EDITOR_SRC_DIR}/build/buildEnvironment.cpp")
 target_include_directories(nvimClientTests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/../generated")
 target_compile_definitions(nvimClientTests PRIVATE
-    SFS_TEST_NVIM_CONFIG="${CMAKE_CURRENT_SOURCE_DIR}/../nvim")
+    SFS_TEST_NVIM_CONFIG="${CMAKE_CURRENT_SOURCE_DIR}/../nvim"
+    SFS_TEST_EDITOR_TOOLS="$<TARGET_FILE_DIR:SfsEditor>/tools")
 target_link_libraries(nvimClientTests PRIVATE sfs::engine-core)
+# With SFS_EDITOR_BUNDLE_TOOLS, the live checks drive the editor's own Neovim.
+if(TARGET SfsEditorTools)
+    add_dependencies(nvimClientTests SfsEditorTools)
+endif()
 # The engine config starts the built sfs-lsp (SFS_EDITOR_LSP) in its tests.
 if(TARGET sfs-lsp)
     add_dependencies(nvimClientTests sfs-lsp)
