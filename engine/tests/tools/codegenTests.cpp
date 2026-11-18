@@ -1889,7 +1889,7 @@ struct [[sfs::event_request(sfs::EngineResponse)]] AskEngine { int g = 0; };
        "and ignorable")
   {
     // After stale-saved-name, in this order, before bad-ignore.
-    const std::array<std::string_view, 16> names = {
+    const std::array<std::string_view, 18> names = {
         "has-then-get",
         "is-alive",
         "row-lookup",
@@ -1905,7 +1905,9 @@ struct [[sfs::event_request(sfs::EngineResponse)]] AskEngine { int g = 0; };
         "response-sent-twice",
         "service-reaches-registry",
         "service-update-method",
-        "engine-internal"};
+        "engine-internal",
+        "system-lookup",
+        "keeps-facility"};
     std::size_t at = static_cast<std::size_t>(RuleId::StaleSavedName);
 
     for (const std::string_view name : names)

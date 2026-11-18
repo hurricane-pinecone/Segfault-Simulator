@@ -1369,6 +1369,13 @@ float Fleet::speed(AgentId id) const
   return it == m_agents.end() ? 0.0f : it->second->speed();
 }
 
+float Fleet::speedCap(AgentId id) const
+{
+  const auto it = m_agents.find(id);
+  return it == m_agents.end() ? std::numeric_limits<float>::infinity()
+                              : it->second->speedCap;
+}
+
 bool Fleet::standing(const Agent& a) const { return !a.hasPath() || a.done; }
 
 std::shared_ptr<Fleet::Job>

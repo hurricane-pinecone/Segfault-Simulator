@@ -16,7 +16,7 @@ It's the standard textbook stack, so nothing in it is specific to one game:
    for a long trip (`PlanRequest::corridorFrom`: a trip longer than that keeps
    its search within `corridorWidth` of the graph's way; a game's own edges,
    its worn tracks, are cheaper to route along:
-   `NavigationSystem::setCoarseEdges()`, put on the graph on the scheduler by
+   `navigation().setCoarseEdges()`, put on the graph on the scheduler by
    `CoarseGraph::withEdges()`, which shares the clearance grid and prices
    again only the cells round the edges that came or went); along roads, a game's own **lane graph** does
    ([lane graphs](lanes.md): a graph search over the lanes, hybrid A\* only
@@ -98,8 +98,13 @@ It's the standard textbook stack, so nothing in it is specific to one game:
 List it after `PhysicsSystem3D` among the scene's systems (Scene Settings →
 Systems → **Add System** → *Engine:* NavigationSystem, or
 `"systems": ["PhysicsSystem3D", "NavigationSystem", ...]` in the scene file).
-Like physics it only exists while the scene plays; ask for it with
-`scene().tryGetSystem<sfs::NavigationSystem>()`.
+Like physics it only exists while the scene plays. Game code uses it through
+its [facility](../facilities/index.md), `navigation()`, on every system,
+service, game object and scene: orders for its agents, what they're doing, and
+the world they plan in. Orders take effect at once and read back in the same
+step (`navigation().path(agent)` is the path just set). Without the system the
+facility's commands do nothing and its queries give empty answers, with one
+warning a run (`navigation().available()` tells).
 
 ## An agent
 
@@ -150,7 +155,7 @@ what it depends on changes:
 | each of them | x `effort` |
 
 The rig (`nav::vehicle::Rig`) comes from the game's
-`setRigProvider(fn(entity) -> Rig)`, asked every update: the mass it moves
+`navigation().setRigProvider(fn(entity) -> Rig)`, asked every update: the mass it moves
 besides its own (what it tows and carries: a truck towing a full trailer
 speeds up and stops more slowly), the grip under it (friction coefficient:
 tyres x surface), and its wheelbase and fixed axle as measured from its
@@ -183,11 +188,27 @@ struct TruckSpec : sfs::VehicleSpec
 };
 ```
 
-Hitching is live state, not authored data: `hitch(agent, {towed,
-hitchBehind, drawbar, axle, forwardLimit, reverseLimit})` and
-`unhitch(agent)` set the agent's `NavAgentComponent::hitch` (a hidden field,
-a `NavHitch`, alongside `speedCap` and `active`: `setSpeedCap()`,
-`setActive()`), so it goes with the entity. `drawbar` runs
+Live state, not authored data, is written on the agent's `NavAgentComponent`
+(hidden fields), so it goes with the entity:
+
+| Field | Written to |
+| --- | --- |
+| `hitch` | hitch (`NavHitch{towed, hitchBehind, drawbar, axle, forwardLimit, reverseLimit, rigid, mount}`) or unhitch (`reset()`) |
+| `speedCap` | drive no faster than this (m/s; 0 stands it, braking; infinity: no cap): a working pace, a held pace |
+| `active` | leave it out (`false`: carried by something else, switched off; not planned, moved or claimed, and not solid to the others) or take it back |
+
+The system reads them at its update, and the speed cap again before every
+order that plans (`setPath`, `requestGoal`, `planAhead`, `planNow`), so a cap
+written just before one counts:
+
+```cpp
+auto* agent = truck.getComponent<sfs::NavAgentComponent>();
+agent->hitch = sfs::NavHitch{trailer, 1.0f, 4.0f};
+agent->speedCap = 2.0f; // m/s, a working pace
+navigation().requestGoal(truck, {{{40.0f, 12.0f}, 1.57f}});
+```
+
+`drawbar` runs
 from the hitch to the towed thing's axle (where it pivots) and `axle` says
 how far that axle is ahead of the towed entity's origin (negative: behind);
 its colliders are its box, measured from the axle. The system plans the rig
@@ -196,24 +217,24 @@ paths were planned with: along a path, the path's own angle on the hitch at
 the point it's at (the follower places the agent on its path); by hand,
 `hitchStep()` from where it was. A game that draws or collides the towed
 thing reads that angle (`Fleet::hitch()`) rather than swinging its own
-copy. While nothing moves the agent, the system takes the angle the towed
-thing was left at (`Fleet::setHitch()`).
+copy (`navigation().hitchAngle(agent)`). While nothing moves the agent, the
+system takes the angle the towed thing was left at (`Fleet::setHitch()`).
 
 A mounted part (`rigid = true`: a front blade, a forklift's mast) joins
 the agent's own boxes. Each of its colliders is measured by
-`NavigationSystem::mountedBox()`: its corners bounded in the agent's own
+`nav::mountedBox()`: its corners bounded in the agent's own
 frame, level (x from the reference point, heights up from the agent's
 origin), so the box is its true size whatever the body's pitch or roll when
 it's measured. The tilt is never baked into a size: every check stands the
-boxes on the ground per pose with `nav::stanceOf()`. `Hitch::mount` is the
+boxes on the ground per pose with `nav::stanceOf()`. `NavHitch::mount` is the
 part's pose in the agent's frame as its mount holds it in the state it's
 driven in (a blade raised for travel, lowered working): the game sets it
 from its authored mount and hitches again when the state changes (without
 one, the part is measured where it's held now relative to the agent). The
 box is planned exactly where the part is held: no allowance is added for
 the body bouncing. A game's own planners measure mounted tools with
-the same function and the same mount. Call `refresh(agent)` after moving a
-mounted part.
+the same function and the same mount. Call `navigation().refresh(agent)`
+after moving a mounted part.
 
 The system writes the agent's transform (and its trailer's) while it drives.
 Don't move it yourself meanwhile; move it while it stands and it plans from
@@ -222,8 +243,7 @@ there next time.
 ## Sending it somewhere
 
 ```cpp
-auto* nav = scene().tryGetSystem<sfs::NavigationSystem>();
-nav->requestGoal(truck, {{{40.0f, 12.0f}, 1.57f}}); // position, heading
+navigation().requestGoal(truck, {{{40.0f, 12.0f}, 1.57f}}); // position, heading
 ```
 
 `requestGoals` takes several goals (it goes to the quickest) and an optional
@@ -243,15 +263,17 @@ speed profile and follower need nothing new (a cusp, then backing to a stand).
 ```cpp
 sfs::nav::AgentGoal spot{{{-8.2f, 32.0f}, 3.14159f}, 0.0f};
 spot.arriveGear = -1; // reversed in, its trailer straight behind
-nav->requestGoal(semi, spot);
+navigation().requestGoal(semi, spot);
 ```
 
 The system tells how its agents are getting on with
 `sfs::nav::AgentEvent` (`engine/runtime/navigation/agentEvent.h`), an
 [event](../../core/events/index.md) about one agent, sent with its entity as
 it happens during the system's update. Its `what` is the fleet's
-`nav::Fleet::Event`: its `kind`, the `request` it's about, the `other` agent
-and the `blockers`. A system that wants it makes a consumer in `create()`:
+`nav::Fleet::Event`: its `kind`, the `request` it's about and the
+`blockers`; its `other` is the other agent's entity (invalid when it names
+none), to ask the navigation about (`navigation().pose(news.other)`). A
+system that wants it makes a consumer in `create()`:
 
 ```cpp
 class TaxiSystem : public sfs::System
@@ -281,8 +303,12 @@ one before it the next.
 | `Yielding`, `Resumed` | it began standing for `other`'s reservation or zone, and went on |
 | `NeedsPlan` | a game's path can't go on as it was (it went to a wait spot, or a static obstacle is on it): plan it again from where it stands |
 
-`state(entity)` says what it's doing now (Idle, Planning, Moving, Yielding,
-Arrived, Blocked).
+`navigation().state(entity)` says what it's doing now (Idle, Planning,
+Moving, Yielding, Arrived, Blocked); `pose`, `speed`, `along`, `curvature`,
+`path`, `spec`, `counters`, `footprint`, `schedule` (what traffic has it do
+this frame) and `solid` read the rest, by entity. What points into the engine
+(`path`, `spec`) is valid for this step only: compare or read it now, never
+keep it.
 
 **No "no way" from a time limit.** Searches are budgeted in nodes, never the
 clock, so the answer is the same on a fast or a busy machine. Out of budget the
@@ -385,7 +411,7 @@ per meeting:
    handed back that comes back the same (end, heading, length) for the same
    obstacle isn't handed back again: planned again, it would come back the
    same; the agent stands short of it, logged once, till it moves. One whose game
-   is planning its next path (`NavigationSystem::setPlanning()`) is about
+   is planning its next path (`navigation().setPlanning()`) is about
    to move, so it's never a solid meanwhile: two machines side by side,
    each planning its way off with the other a solid in its plan, would
    search on for ever.
@@ -533,15 +559,15 @@ system, so the player's vehicle moves by exactly the physics the AI's paths
 are driven by:
 
 ```cpp
-nav.takeWheel(truck);                   // its goal or path dropped
-nav::Controls c;
+navigation().takeWheel(truck);          // its goal or path dropped
+sfs::nav::Controls c;
 c.throttle = 1.0f;                      // 0..1
 c.brake = 0.0f;                         // 0..1
 c.steer = 0.5f;                         // -1..1 of full lock, + left
 c.gear = 1;                             // 1 forward, -1 backing up
-nav.setControls(truck, c);              // each frame
-nav.setSpeedCap(truck, workingPace);    // still holds
-nav.handBack(truck);                    // stands where it is
+navigation().setControls(truck, c);     // each frame
+agent->speedCap = workingPace;          // NavAgentComponent's: still holds
+navigation().handBack(truck);           // stands where it is
 ```
 
 Each update the system moves it by the last controls given, by its kind's own
@@ -572,8 +598,8 @@ and `handDriven()` are the same without entities (tests, tools).
 
 `settings()` offers **Draw paths** (green forward, orange backing, the goal in
 blue), **Draw claims** (each agent's next seconds; yellow while it stands for a higher reservation or a zone, or goes to a wait spot) and
-**Draw blocked ways** (red: the agent and what blocks it). They draw into
-`RenderSystem::debugLines()` and, like every debug feature, only while
+**Draw blocked ways** (red: the agent and what blocks it). They draw with
+`debugDraw()` and, like every debug feature, only while
 `debugFeatures::enabled()`: in the editor, Debug builds and development
 exports, never in a release export.
 

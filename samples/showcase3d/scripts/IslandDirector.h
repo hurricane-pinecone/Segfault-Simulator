@@ -222,8 +222,7 @@ private:
 
   sfs::ParticleModule* particles()
   {
-    auto* render = scene().tryGetSystem<sfs::RenderSystem>();
-    return render ? render->module<sfs::ParticleModule>() : nullptr;
+    return graphics().module<sfs::ParticleModule>();
   }
 
   void registerEffects();

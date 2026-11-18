@@ -2,6 +2,7 @@
 
 #include "engine/core/components/contactReportComponent.h"
 #include "engine/core/ecs/entity.h"
+#include "engine/core/ecs/facilityAccess.h"
 #include "engine/core/ecs/hierarchyLinks.h"
 #include "engine/core/ecs/registry.h"
 #include "engine/core/events/events.h"
@@ -63,6 +64,7 @@ public:
       : m_assetStore(backends.assetStore), m_renderer(backends.renderer),
         m_id(id), m_name(name)
   {
+    m_registry.m_assetStore = &m_assetStore;
     addSystem<TransformSystem>();
   }
 
@@ -110,12 +112,21 @@ public:
   GameObject& adoptObject(std::unique_ptr<GameObject> object,
                           const Entity& entity);
 
+  /** The engine's animation clips (facility::Animation). */
+  inline facility::Animation animation();
+
+  /** The scene's asset loading (facility::Assets). */
+  inline facility::Assets assets();
+
   AssetStore& assetStore() const { return m_assetStore; }
 
   // Create a GameObject bound to an existing entity (e.g. one placed in the
   // editor): the object's entity() is already set when its onCreate runs.
   template <typename TObject>
   TObject& attachObject(const Entity& entity);
+
+  /** The scene's cameras (facility::Cameras). */
+  inline facility::Cameras cameras();
 
   /** Destroys all the scene's scene data, at once. */
   void clearSceneData() { m_registry.clearSceneData(); }
@@ -124,6 +135,9 @@ public:
 
   template <typename TObject, typename... TArgs>
   TObject& createObject(TArgs&&... args);
+
+  /** Debug drawing, in development builds only (facility::DebugDraw). */
+  inline facility::DebugDraw debugDraw();
 
   // Invoked inside the debug ImGui frame (debug builds only) so a scene can add
   // game-specific debug controls.
@@ -212,6 +226,9 @@ public:
   template <typename TSystem>
   TSystem& getSystem() const;
 
+  /** The scene's rendering (facility::Graphics). */
+  inline facility::Graphics graphics();
+
   template <typename TSystem>
   bool hasSystem() const;
 
@@ -226,7 +243,14 @@ public:
   const std::vector<Entity>& holdersOf(const reflect::TypeInfo& type);
 
   SceneId id() const;
+
+  /** The scene's meshes (facility::Meshes). */
+  inline facility::Meshes meshes();
+
   const std::string& name() const;
+
+  /** The scene's navigation (facility::Navigation). */
+  inline facility::Navigation navigation();
 
   // Tell the game objects on both entities that a physics contact began or
   // ended (their onCollision/onTrigger Enter/Exit). Called by the scene's
@@ -236,6 +260,12 @@ public:
 
   /** Whether the game is paused (Registry::paused()). */
   bool paused() const { return m_registry.paused(); }
+
+  /** The scene's 3D physics (facility::Physics3D). */
+  inline facility::Physics3D physics();
+
+  /** Prefab copies made as the game runs (facility::Prefabs). */
+  inline facility::Prefabs prefabs();
 
   /**
    * Every living entity, parents before children, roots and siblings in id
@@ -333,7 +363,8 @@ public:
   Game* tryGame() const { return m_game; }
 
   // Null when the system isn't registered (for getSystem that's a fatal
-  // error).
+  // error). Lookups are for hosts and tools: game code uses the facilities
+  // (physics(), navigation(), ...), never a lookup.
   template <typename TSystem>
   TSystem* tryGetSystem() const;
 

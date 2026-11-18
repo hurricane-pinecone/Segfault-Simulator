@@ -9,6 +9,7 @@
 #include "engine/core/hierarchy/hierarchy.h"
 #include "engine/core/rendering/camera.h"
 #include "engine/runtime/assetStore/assetStore.h"
+#include "engine/runtime/facilities/physics3D.h"
 #include "engine/runtime/game/gameObject.h"
 #include "engine/runtime/rendering/standardScene.h"
 #include "engine/runtime/sceneManager/scene.h"
@@ -500,9 +501,9 @@ int main()
     SceneManager manager;
     manager.setSceneBackends(&backends);
     StandardScene& scene = *manager.createScene<StandardScene>();
-    CHECK(scene.physicsSystem() == nullptr);
+    CHECK(!scene.physics().available());
     startScripts(scene, {{"PhysicsSystem3D"}});
-    CHECK(scene.physicsSystem() != nullptr);
+    CHECK(scene.physics().available());
   }
 
   TEST("game objects on a StandardScene should hear about their collisions and "

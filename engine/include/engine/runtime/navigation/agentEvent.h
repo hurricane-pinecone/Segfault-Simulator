@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/core/ecs/entity.h"
 #include "engine/runtime/navigation/fleet.h"
 
 namespace sfs::nav
@@ -16,10 +17,16 @@ namespace sfs::nav
 struct [[sfs::event_entity_news]] AgentEvent
 {
   /**
-   * What happened: its kind, the request it's about, the other agent and
-   * what blocks it (Fleet::Event).
+   * What happened: its kind, the request it's about and what blocks it
+   * (Fleet::Event). Its `other` is the fleet's id: read `other` below.
    */
   Fleet::Event what;
+  /**
+   * The other agent it's about (whose way it gives way to, whose stop it
+   * waits for), to ask the navigation about (navigation().pose(other));
+   * invalid when it names none.
+   */
+  Entity other;
 };
 
 } // namespace sfs::nav

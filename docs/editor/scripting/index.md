@@ -231,11 +231,8 @@ thing in both. `inView()` says whether the cursor is over the view. To find what
 the mouse is over, cast a ray through it:
 
 ```cpp
-#include "engine/runtime/rendering/picking.h"
-
-auto& render = scene().getSystem<sfs::RenderSystem>();
-const sfs::Ray ray = render.screenRay(input.mouse().getPosition());
-if (const auto hit = sfs::pickEntity(scene(), render.meshes(), ray))
+const sfs::Ray ray = cameras().screenRay(input.mouse().getPosition());
+if (const auto hit = meshes().pickEntity(ray))
   select(hit->entity);
 ```
 
@@ -243,9 +240,10 @@ if (const auto hit = sfs::pickEntity(scene(), render.meshes(), ray))
 the player is looking at. `pickEntity` hits a mesh where the ray meets its
 triangles, so it already follows what the player sees; to hit by physics
 shape instead (a collider bigger or smaller than the mesh), use
-`PhysicsSystem3D::raycast` with the same ray; see
+`physics().raycast` with the same ray; see
 [3D physics](../../runtime/physics-3d/index.md), which also covers collision
-callbacks.
+callbacks. `cameras()`, `meshes()` and `physics()` are the engine's
+[facilities](../../runtime/facilities/index.md).
 
 ## Play, Stop and Build
 

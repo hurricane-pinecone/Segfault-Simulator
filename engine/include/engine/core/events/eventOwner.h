@@ -20,7 +20,9 @@ struct EventQueueLink;
 class EventUser
 {
 public:
-  virtual ~EventUser() = default;
+  // Defined out of line, so its vtable and type info live once, in the
+  // engine, rather than in every module.
+  virtual ~EventUser();
 };
 
 /** A consumer an owner made: its queue's link and its slot there. */

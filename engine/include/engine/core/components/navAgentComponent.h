@@ -15,8 +15,8 @@ namespace sfs
 
 /**
  * Makes the entity an AI agent that NavigationSystem plans for and moves:
- * send it somewhere with NavigationSystem::requestGoal() and it finds the
- * way round the scene's colliders, drives it and gives way to others. Its
+ * send it somewhere with navigation().requestGoal() and it finds the way
+ * round the scene's colliders, drives it and gives way to others. Its
  * boxes are its own BoxCollider3DComponents (on it and the entities below
  * it): one truth, the colliders. Give it a kinematic RigidBody3DComponent
  * so the physics sees it move.
@@ -39,10 +39,10 @@ namespace sfs
  */
 /**
  * A towed thing on an agent's hitch (a trailer, a towed tool on its
- * drawbar): the game hitches and unhitches (NavigationSystem::hitch()), the
- * system then plans and drives the rig and writes the towed entity's
- * transform. Angles are degrees its drawbar may swing going forward /
- * backing up.
+ * drawbar): the game hitches and unhitches by writing
+ * NavAgentComponent::hitch, and the navigation then plans and drives the rig
+ * and writes the towed entity's transform. Angles are degrees its drawbar may
+ * swing going forward / backing up.
  */
 struct NavHitch
 {
@@ -56,7 +56,7 @@ struct NavHitch
   float forwardLimit = 83.0f, reverseLimit = 35.0f;
   // Mounted (on a rear or front mount): it moves with the agent, its
   // colliders part of the agent's boxes, never swinging (the hitch numbers
-  // unused), measured by NavigationSystem::mountedBox().
+  // unused), measured by nav::mountedBox().
   bool rigid = false;
   // A mounted part's pose (its root's) in the agent's own frame (the
   // agent entity's origin and axes, level: no body pitch or roll), as its
@@ -75,12 +75,19 @@ struct NavAgentComponent
   uint32_t layers = 0xFFFFFFFFu;
   int priority = 0;
 
-  // Live state, set by the game through NavigationSystem (hitch(),
-  // setSpeedCap(), setActive()): what it tows; the fastest it may drive
-  // (m/s; 0 stands it; infinity: no cap); whether it's an agent now (false:
-  // carried by something else, switched off: not planned, moved or claimed).
+  // Live state the game writes here, read by the navigation at its update.
+  /** What it tows (none: nothing); changing it re-measures its boxes. */
   [[sfs::hide]] std::optional<NavHitch> hitch;
+  /**
+   * The fastest it may drive, the game's live limit (a working pace, a held
+   * pace): m/s; 0 stands it, braking; infinity: no cap. Also read by every
+   * order that plans, so a cap written just before one counts.
+   */
   [[sfs::hide]] float speedCap = std::numeric_limits<float>::infinity();
+  /**
+   * Whether it's an agent now. False: carried by something else, switched
+   * off; not planned, moved or claimed, and not solid to the others.
+   */
   [[sfs::hide]] bool active = true;
   // As NavigationSystem last gave it to its fleet: its reference point (its
   // frame's axle), what it towed and the layers it collided with (any

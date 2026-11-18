@@ -39,7 +39,6 @@ protected:
   {
     m_hero = scene.findEntity("Hero");
     m_heroModel = scene.findEntity("Hero/Model");
-    m_physics = scene.tryGetSystem<sfs::PhysicsSystem3D>();
     // Start behind the hero.
     m_yaw = heroFacing();
     m_pitch = restingPitch;
@@ -93,17 +92,13 @@ protected:
 
     // Back off as far as asked, but not through the ground or a wall.
     float reach = distance;
+    const glm::vec3 back = desiredEye(1.0f) - m_focus;
+    sfs::Ray ray;
+    ray.origin = m_focus + glm::vec3(0.0f, 0.0f, 0.6f); // clear of the hero
+    ray.direction = glm::normalize(back);
 
-    if (m_physics)
-    {
-      const glm::vec3 back = desiredEye(1.0f) - m_focus;
-      sfs::Ray ray;
-      ray.origin = m_focus + glm::vec3(0.0f, 0.0f, 0.6f); // clear of the hero
-      ray.direction = glm::normalize(back);
-
-      if (const auto hit = m_physics->raycast(ray, distance))
-        reach = std::max(hit->distance - 0.35f, 1.2f);
-    }
+    if (const auto hit = physics().raycast(ray, distance))
+      reach = std::max(hit->distance - 0.35f, 1.2f);
 
     const glm::vec3 wanted = desiredEye(reach);
     m_eye += (wanted - m_eye) * ease;
@@ -170,7 +165,6 @@ private:
 
   sfs::Entity m_hero;
   sfs::Entity m_heroModel;
-  sfs::PhysicsSystem3D* m_physics = nullptr;
   float m_yaw = 0.0f;
   float m_pitch = 0.4f;
   bool m_dragging = false;

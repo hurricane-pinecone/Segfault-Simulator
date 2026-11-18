@@ -17,10 +17,13 @@ list its game systems go in:
 - **In the scene file:** `"systems": ["PhysicsSystem3D", ...]`.
 
 Like a game system, it's created when the scene plays, and only then: in the
-editor it doesn't exist while you edit. Code that may run in a scene without
-physics should ask with `StandardScene::physicsSystem()` or
-`scene().tryGetSystem<sfs::PhysicsSystem3D>()`, which return null when it's
-off. `getSystem` stops the game with an error when the system is missing.
+editor it doesn't exist while you edit.
+
+Game code uses it through its [facility](../facilities/index.md), `physics()`,
+on every system, service, game object and scene: raycasts, snapshots, a body's
+motion and pushes. In a scene without physics the facility's commands do
+nothing and its queries give empty answers, with one warning a run; code that
+does something else then asks `physics().available()`.
 
 The collider and rigid body components are plain data, so a game can also leave
 `PhysicsSystem3D` out and write its own System that reads them.
@@ -60,7 +63,7 @@ too; see [Collisions and triggers](#collisions-and-triggers)). A body flattens
 (`fitColliders` sizes it by its colliders).
 
 The world is Z-up, in metres. Gravity defaults to (0, 0, −9.81);
-`physics.setGravity` changes it.
+`physics().setGravity()` changes it.
 
 ### Fitting colliders to meshes
 
@@ -110,7 +113,7 @@ copy keeps your size, like any other prefab change. To check them, turn on
 ## Moving bodies from code
 
 - **Dynamic bodies** move by physics. Push them with
-  `physics.addImpulse(entity, impulse)` (a sudden push, e.g. a jump),
+  `physics().addImpulse(entity, impulse)` (a sudden push, e.g. a jump),
   `addForce` (a steady push; call it every frame) or `setVelocity`.
   Setting the transform teleports the body.
 - **Kinematic and static bodies** move by their transform. A kinematic body
@@ -198,17 +201,15 @@ for (const sfs::Contact3D& c : report.deepened)
     LOG_WARN("hit hard");
 ```
 
-`physics.contactsBegun()`, `contactsEnded()` and `contactsDeepened()` list
-every contact in the scene, for tools and tests. A game system reads its own
-through a report instead of reading the physics system.
+`PhysicsSystem3D::contactsBegun()`, `contactsEnded()` and `contactsDeepened()`
+list every contact in the scene, for tools and tests. A game system reads its
+own through a report.
 
 ## Raycasts
 
 ```cpp
-auto& render = scene().getSystem<sfs::RenderSystem>();
-auto& physics = scene().getSystem<sfs::PhysicsSystem3D>();
-const sfs::Ray ray = render.screenRay(input.mouse().getPosition());
-if (const auto hit = physics.raycast(ray, 200.0f))
+const sfs::Ray ray = cameras().screenRay(input.mouse().getPosition());
+if (const auto hit = physics().raycast(ray, 200.0f))
   placeBuilding(hit->point, hit->normal);
 ```
 
@@ -221,12 +222,12 @@ see the bodies as of the last physics update, so only while the scene plays.
 A raycast asks the live simulation, on the main thread. Something that tries
 many poses instead, such as a vehicle planner checking thousands of spots for
 where a shape would fit, wants its own frozen copy it can query from worker
-threads while the game goes on. `physics.snapshot()` makes one, a
+threads while the game goes on. `physics().snapshot()` makes one, a
 `CollisionWorld3D`, from every static body and every kinematic one where it is
 right now:
 
 ```cpp
-const auto world = physics.snapshot(); // every solid body that doesn't move by force
+const auto world = physics().snapshot(); // every solid body that doesn't move by force
 
 const sfs::CollisionShape3D box{sfs::CollisionShape3D::Kind::Box, size};
 const sfs::CollisionWorld3D::Probe probe(std::span(&box, 1)); // built once, tried at many poses
@@ -236,12 +237,13 @@ if (!world->overlaps(probe, position, sfs::yawRotation(heading)))
 ```
 
 - A `CollisionWorld3D` never changes once built, so any number of threads may
-  query it at once.
+  query it at once. It's shared and outlives the physics: hand it to workers,
+  never the facility.
 - `snapshot(include)` copies only the bodies whose entity `include` accepts (a
   vehicle leaving out its own parts), or every one with no filter given. Each
   body's id is its entity's `Entity::getId()`, and its layer the lowest of its
   (non-trigger) colliders' `layer`.
-- `physics.revision()` goes up whenever a body is added, removed or rebuilt,
+- `physics().revision()` goes up whenever a body is added, removed or rebuilt,
   or a static one moves. A snapshot stays correct for querying while it
   hasn't changed; take a new one once it has.
 - A `Probe` holds the shapes to try, built once (the costly part) and reused

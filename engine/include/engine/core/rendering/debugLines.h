@@ -24,9 +24,9 @@ struct DebugLineVertex
  * plain list of segments in world space, each end a DebugLineVertex. The
  * renderer draws them all in one pass, depth tested, in their own colours,
  * however many there are (see IRenderer::drawLines). A RenderSystem keeps
- * one a frame (RenderSystem::debugLines()): game code adds to it as it
- * updates, the frame draws it and empties it. A debug feature: drawn only
- * while debugFeatures::enabled().
+ * one a frame: game code adds to it as it updates, through its debugDraw()
+ * facility (facility::DebugDraw), and the frame draws it and empties it. A
+ * debug feature: drawn only while debugFeatures::enabled().
  *
  * The shapes are placed by `placed`, a rigid matrix (turn and move, no
  * scale): scale the sizes instead, as the physics does.

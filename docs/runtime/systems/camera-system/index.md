@@ -131,13 +131,15 @@ keeps its own clearance over it, and the lift goes on top.
 
 ## Querying the active camera
 
-`CameraSystem::activeCamera()` (or `findActiveCamera(registry)`) returns the
-scene's first active camera entity (`CameraComponent` +
-`TransformComponent`, in id order), or an invalid entity when there's none.
-It's the camera the render system draws through.
+The cameras [facility](../../facilities/index.md), `cameras()`, answers which
+camera is active: `cameras().active()` is the scene's first active camera
+entity (`CameraComponent` + `TransformComponent`, in id order), or an invalid
+entity when there's none. It's the camera the render system draws through.
+`cameras().rendered()` is the `Camera` as last drawn, and
+`cameras().screenRay(pixel)` the ray through a pixel of the view.
 
 ```cpp
-const sfs::Entity camera = getSystem<sfs::CameraSystem>().activeCamera();
+const sfs::Entity camera = cameras().active();
 if (const auto* lens = camera.getComponent<sfs::CameraComponent>())
 {
   const glm::vec2 centre =

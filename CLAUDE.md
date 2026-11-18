@@ -53,12 +53,17 @@ it. The standard engine approach is the baseline; do better where the data allow
   requesters are made in `create()` and kept as members. What must outlast the moment is state, written by its owner.
   Work that can't be done now goes to a job (WorkerPool, PlanScheduler), never an event queue. Gameplay never depends on
   system order: a consumer earlier in the order hears an event a step later.
+- The engine's facilities (`physics()`, `navigation()`, `graphics()`, ... on System, Service, GameObject and Scene:
+  docs/runtime/facilities) are its API, called directly, as Unity's `Physics.Raycast` is; the event rule is for what
+  game systems and services tell each other. Game code reaches engine features through the facilities, never a system
+  lookup; engine systems use them too.
 - A **Service** (`sfs::Service`) is logic that runs only when its events bring it something, at the start of each step
   before the systems: it has no update, never queries or iterates the registry, and works on the entities its events
-  hand it (and what those lead to through entity fields, parent and children) and the scene's data, its own included; it
-  may create and destroy entities. It makes its consumers (each with a handler) and requesters in `create()` and keeps
-  them as members; slow work goes to a job it owns, which answers through the Responder it copied. Work over lists of
-  entities, or that needs time to pass, is a System.
+  hand it (and what those lead to through entity fields, parent and children) and the scene's data, its own included;
+  it may create and destroy entities, and use the engine's facilities in its handlers (a raycast, a path order, a
+  spawn), reading but never changing an entity a facility query returns. It makes its consumers (each with a handler)
+  and requesters in `create()` and keeps them as members; slow work goes to a job it owns, which answers through the
+  Responder it copied. Work over lists of entities, or that needs time to pass, is a System.
 - The registry is the engine's, its systems' and render modules': an `sfs::Entity`, a GameObject or a Service doesn't
   lead to it. Code that searches takes the list it searches (a query view) from its system or scene. Game code never
   uses `sfs::detail`.
@@ -115,7 +120,7 @@ it. The standard engine approach is the baseline; do better where the data allow
 
 - Everything debug (debug drawing, debug env vars, runtime toggles) goes through `debugFeatures.h`. It works in the
   editor, Debug builds and development exports only, and is compiled out or forced off in release exports.
-- Draw with `RenderSystem::debugLines()`. Colliders: Scene Settings > Debug > Draw Colliders / `SFS_DRAW_COLLIDERS`.
+- Draw with `debugDraw()`. Colliders: Scene Settings > Debug > Draw Colliders / `SFS_DRAW_COLLIDERS`.
 
 ### Collision
 

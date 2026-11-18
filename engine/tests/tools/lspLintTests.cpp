@@ -232,6 +232,9 @@ std::vector<std::pair<std::string, std::string>> everyRuleFixtures()
       {"systems/HealthSystem.cpp",
        "void HealthSystem::update(double) { "
        "registry->getSystem<SpawnSystem>(); }\n"},
+      {"t/Keeper.h",
+       "class Keeper : public sfs::System\n{\n"
+       "  sfs::facility::Physics3D m_physics;\n};\n"},
       {"t/Squad.h",
        "class Squad : public sfs::Service\n{\n"
        "  void create() override {}\n  void update(double);\n"
@@ -415,11 +418,10 @@ int main()
     CHECK(codegen.type.has_value());
   }
 
-  TEST("system-reads-system should flag the project's systems, in systems only")
+  TEST("system-lookup should flag every system lookup in a project's code, "
+       "and nothing outside one")
   {
     Project project;
-    CHECK(project.index.isSystem("SpawnSystem"));
-    CHECK(!project.index.isSystem("Health"));
     const std::string source =
         "class HealthSystem : public sfs::System { void update(double) "
         "override; };\n"
@@ -427,26 +429,102 @@ int main()
         "registry->getSystem<SpawnSystem>();\n"
         "  auto* render = registry->tryGetSystem<sfs::RenderSystem>();\n  "
         "registry->hasSystem<HealthSystem>();\n}\n"
-        "void freeFunction(sfs::Registry* registry) { "
-        "registry->getSystem<SpawnSystem>(); }\n";
+        "class Squad : public sfs::Service { void create() override { "
+        "auto* s = tryGetSystem<SpawnSystem>(); } };\n"
+        "class Door : public sfs::GameObject { void onUpdate(double) override "
+        "{ scene().getSystem<SpawnSystem>(); } };\n"
+        "class Level : public sfs::Scene { void onInit() override { "
+        "forEachSystem([](sfs::System&) {}); } };\n"
+        "void freeFunction(sfs::Scene& scene) { "
+        "scene.tryGetSystem<SpawnSystem>(); }\n"
+        "void physicsOnly() { auto p = sfs::facility::Physics3D{}; "
+        "getSystems(); }\n"
+        "class Arena : public sfs::StandardScene { void onInit() override { "
+        "auto& render = renderSystem(); } };\n"
+        "void tally(Inventory& inventory) { inventory.hasSystem(); }\n";
     const auto doc =
         lspTest::analysed(source,
                           project.root / "scripts/systems/HealthSystem.cpp",
                           &project.index);
-    CHECK(lspTest::count(*doc, RuleId::SystemReadsSystem) == 1u);
-    const auto* found = lspTest::first(*doc, RuleId::SystemReadsSystem);
-    CHECK(found && found->range.startRow == 3u);
-    // An out-of-line method of a system the index knows, with no class in the
-    // file.
-    const auto split =
-        lspTest::analysed("void HealthSystem::lateUpdate() { "
-                          "registry->getSystem<game::SpawnSystem>(); }\n",
-                          project.root / "scripts/systems/HealthUpdate.cpp",
+    // (A game's own inventory.hasSystem() isn't a lookup: no registry or
+    // scene receives it.)
+    CHECK(lspTest::count(*doc, RuleId::SystemLookup) == 8u);
+    const auto* found = lspTest::first(*doc, RuleId::SystemLookup);
+    CHECK(found && found->range.startRow == 3u &&
+          found->message ==
+              "Game code should not look systems up, as this getSystem() "
+              "does. Use the engine's facilities (physics(), navigation(), "
+              "graphics(), ...) for engine features; read game state from "
+              "components and scene data, and send what one part tells "
+              "another as an event.");
+    // A util's lookup is flagged as anyone's.
+    const auto util =
+        lspTest::analysed("inline void reach(sfs::Registry& registry) { "
+                          "registry.tryGetSystem<SpawnSystem>(); }\n",
+                          project.root / "scripts/utils/Reach.h",
                           &project.index);
-    CHECK(lspTest::count(*split, RuleId::SystemReadsSystem) == 1u);
-    // Without an index (no project), the lint is off.
-    CHECK(lspTest::count(
-              *lspTest::analysed(source), RuleId::SystemReadsSystem) == 0u);
+    CHECK(lspTest::count(*util, RuleId::SystemLookup) == 1u);
+    // The SFS tree isn't a project: no index, no lint.
+    CHECK(lspTest::count(*lspTest::analysed(source, "engine/src/health.cpp"),
+                         RuleId::SystemLookup) == 0u);
+    // The retired rule reports nothing.
+    CHECK(lspTest::count(*doc, RuleId::SystemReadsSystem) == 0u);
+  }
+
+  TEST("keeps-facility should flag a facility kept in a member, and not one "
+       "in a local, a parameter or a plain struct")
+  {
+    const auto doc = lspTest::analysed(
+        "class Mover : public sfs::System\n{\n"
+        "  sfs::facility::Physics3D m_physics;\n"
+        "  void update(double) override { const sfs::facility::Physics3D p "
+        "= physics(); }\n};\n"
+        "class Squad : public sfs::Service\n{\n"
+        "  std::optional<sfs::facility::Navigation> m_navigation;\n"
+        "  void create() override {}\n};\n"
+        "class Door : public sfs::GameObject\n{\n"
+        "  sfs::facility::Meshes m_meshes;\n"
+        "  void use(sfs::facility::Meshes meshes);\n};\n"
+        "class Level : public sfs::StandardScene\n{\n"
+        "  sfs::facility::Graphics m_graphics;\n};\n"
+        "struct [[sfs::component]] Crane\n{\n"
+        "  sfs::facility::Prefabs prefabs;\n};\n"
+        "struct World\n{\n  sfs::facility::Physics3D physics;\n};\n"
+        "class Hand : public sfs::System\n{\n"
+        "  static sfs::facility::Cameras s_cameras;\n"
+        "  myfacility::Thing m_thing;\n};\n");
+    // (s_cameras is the fifth: a static one outlives every scene.)
+    CHECK(lspTest::count(*doc, RuleId::KeepsFacility) == 6u);
+    const auto* first = lspTest::first(*doc, RuleId::KeepsFacility);
+    CHECK(first && first->range.startRow == 2u &&
+          first->message ==
+              "A facility is valid for the step that got it, so Mover should "
+              "not keep one. Get it where you use it, and hand workers its "
+              "snapshots.");
+    // Spelled without sfs:: where SFS's names are visible.
+    const auto visible = lspTest::analysed(
+        "using namespace sfs;\nclass Mover : public System { "
+        "facility::DebugDraw m_draw; };\n"
+        "namespace other { struct facility { struct X {}; }; "
+        "class Bin : public sfs::System { other::facility::X m_x; }; }\n"
+        "namespace facility { struct Barn {}; }\n"
+        "class Farm : public System { facility::Barn m_barn; };\n");
+    CHECK(lspTest::count(*visible, RuleId::KeepsFacility) == 1u);
+    // A UI layer is a game object.
+    const auto layer = lspTest::analysed(
+        "class Hud : public sfs::ui::Layer { sfs::facility::Graphics m_g; };\n"
+        "class Bar : public Hud { sfs::facility::Cameras m_c; };\n");
+    CHECK(lspTest::count(*layer, RuleId::KeepsFacility) == 2u);
+    // Names brought in by using-declarations, using-directives and aliases.
+    const auto brought = lspTest::analysed(
+        "using sfs::facility::Navigation;\n"
+        "using Draw = sfs::facility::DebugDraw;\n"
+        "typedef sfs::facility::Meshes MeshAccess;\n"
+        "class A : public sfs::System { Navigation m_n; Draw m_d; "
+        "MeshAccess m_m; };\n"
+        "namespace ns { using namespace sfs::facility; "
+        "class B : public sfs::Service { std::optional<Physics3D> m_p; }; }\n");
+    CHECK(lspTest::count(*brought, RuleId::KeepsFacility) == 4u);
   }
 
   TEST("per-entity-map should flag maps keyed by entity in systems")
@@ -1677,10 +1755,11 @@ int main()
     { return (project.root / file).lexically_normal().string(); };
     const std::string golden =
         printedPath("scripts/systems/HealthSystem.cpp") +
-        ":3:3: warning: Systems should not read other "
-        "systems. Have HealthSystem read the state SpawnSystem writes on "
-        "components, and send what one tells the other as an event. "
-        "[system-reads-system]\n" +
+        ":3:3: warning: Game code should not look systems up, as this "
+        "getSystem() does. Use the engine's facilities (physics(), "
+        "navigation(), graphics(), ...) for engine features; read game state "
+        "from components and scene data, and send what one part tells "
+        "another as an event. [system-lookup]\n" +
         printedPath("scripts/utils/Helpers.h") +
         ":1:1: warning: No class or struct in this header is "
         "named after the file, Helpers. Name the script type Helpers, or mark "

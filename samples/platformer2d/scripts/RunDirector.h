@@ -71,7 +71,7 @@ public:
 
     const glm::vec2 at = transform->position2D();
     bump(value->value);
-    particles().spawnBurst("spark", at);
+    burst("spark", at);
     scene().destroyEntity(orb);
   }
 
@@ -84,7 +84,7 @@ public:
 
     const glm::vec2 at = transform->position2D();
     bump(50);
-    particles().spawnBurst("boom", at);
+    burst("boom", at);
     shake(0.55f, 0.25f);
     m_hitStop = 0.07f;
     scene().destroyEntity(drone);
@@ -92,14 +92,11 @@ public:
 
   void bounce(glm::vec2 at)
   {
-    particles().spawnBurst("ring", at);
+    burst("ring", at);
     shake(0.2f, 0.12f);
   }
 
-  void puff(const std::string& effect, glm::vec2 at)
-  {
-    particles().spawnBurst(effect, at);
-  }
+  void puff(const std::string& effect, glm::vec2 at) { burst(effect, at); }
 
   void shake(float strength, float seconds)
   {
@@ -116,8 +113,8 @@ public:
     m_over = true;
     m_overClock = 0.0f;
     s_best = std::max(s_best, m_score);
-    particles().spawnBurst("shatter", at);
-    particles().spawnBurst("boom", at);
+    burst("shatter", at);
+    burst("boom", at);
     shake(1.0f, 0.6f);
     m_hitStop = 0.12f;
   }
@@ -175,11 +172,16 @@ protected:
   }
 
 private:
-  sfs::ParticleModule& particles()
+  // A burst of an effect, where the scene draws particles.
+  void burst(const std::string& effect, glm::vec2 at)
   {
-    return *scene()
-                .getSystem<sfs::RenderSystem>()
-                .module<sfs::ParticleModule>();
+    if (sfs::ParticleModule* fx = particles())
+      fx->spawnBurst(effect, at);
+  }
+
+  sfs::ParticleModule* particles()
+  {
+    return graphics().module<sfs::ParticleModule>();
   }
 
   glm::vec2 runnerAt() const
@@ -508,7 +510,12 @@ inline void RunDirector::onCreate(sfs::Scene& scene)
 
 inline void RunDirector::registerEffects()
 {
-  sfs::ParticleModule& fx = particles();
+  sfs::ParticleModule* module = particles();
+
+  if (!module)
+    return;
+
+  sfs::ParticleModule& fx = *module;
   fx.setMaxParticles(6000);
 
   sfs::ParticleEffectDesc dust; // feet on the ground

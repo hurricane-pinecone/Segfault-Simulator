@@ -24,6 +24,7 @@
 #include "engine/runtime/rendering/modules/renderModule.h"
 #include "engine/runtime/rendering/modules/renderModuleHost.h"
 #include "engine/runtime/rendering/renderContext.h"
+#include "engine/runtime/rendering/renderStats.h"
 #include "engine/runtime/rendering/renderTexture.h"
 #include "engine/runtime/rendering/space2D.h"
 
@@ -52,21 +53,6 @@ struct LightningComponent;
 
 class IRenderer;
 
-/** What the last frame drew, for HUDs and profiling. */
-struct RenderStats
-{
-  std::size_t drawCalls = 0;
-  std::size_t instances = 0;
-  std::size_t shadowInstances = 0;
-  std::size_t pointLights = 0; // all of them, emission's included
-  std::size_t emissionLights = 0;
-  std::size_t shadowedLights = 0;       // point lights casting shadows
-  std::size_t lightShadowInstances = 0; // casters for them
-  std::size_t grassFields = 0;
-  std::size_t colliders = 0;  // drawn as debug lines (drawColliders)
-  std::size_t debugLines = 0; // every debug line, colliders' included
-};
-
 /**
  * The render system, for every style of game: owns the scene's camera and
  * meshes, hosts the render modules (sprites, particles, decals, voxels,
@@ -84,6 +70,10 @@ struct RenderStats
  * commands, sorts them, and submits them to the renderer. Features are modules
  * (registration is the enable); MeshModule draws MeshRendererComponent
  * entities.
+ *
+ * Game code uses it through the facilities (docs/runtime/facilities):
+ * graphics() for its modules, stats and textures, meshes() for its meshes,
+ * cameras() for its camera and screen rays, debugDraw() for its debug lines.
  */
 class RenderSystem : public System, public RenderModuleHost<RenderContext>
 {

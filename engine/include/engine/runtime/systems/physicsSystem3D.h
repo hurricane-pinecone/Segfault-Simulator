@@ -5,6 +5,7 @@
 #include "engine/core/ecs/system.h"
 #include "engine/core/rendering/camera.h"
 #include "engine/runtime/systems/collisionWorld3D.h"
+#include "engine/runtime/systems/raycastHit3D.h"
 
 #include <glm/glm/ext/vector_float3.hpp>
 
@@ -18,15 +19,6 @@ namespace sfs
 {
 
 class Scene;
-
-/** Where a raycast hit a physics body. */
-struct RaycastHit3D
-{
-  Entity entity;
-  glm::vec3 point{0.0f};
-  glm::vec3 normal{0.0f, 0.0f, 1.0f};
-  float distance = 0.0f;
-};
 
 /**
  * 3D physics for a Z-up world (built on Jolt Physics). Every entity with a
@@ -53,6 +45,9 @@ struct RaycastHit3D
  * also fills every ContactReportComponent with the contacts of the colliders
  * it reports (its entity's and its descendants'), after clearing it: that is
  * how a game system reads contacts. The getters are for tools and tests.
+ *
+ * Game code uses it through its physics() facility (facility::Physics3D:
+ * raycasts, forces, velocities, snapshots), never by looking it up.
  *
  * A scene lists it by name ("PhysicsSystem3D") to have physics. The editor
  * keeps it disabled while editing, so nothing falls until Play.
@@ -95,8 +90,8 @@ public:
   const UpdateStats& lastUpdateStats() const;
   /**
    * The nearest body the ray hits within `maxDistance` (triggers are ignored),
-   * as of the last update. Pair with RenderSystem::screenRay to find what
-   * the mouse is over.
+   * as of the last update. Pair with a screen ray (cameras().screenRay()) to
+   * find what the mouse is over.
    */
   std::optional<RaycastHit3D> raycast(const Ray& ray,
                                       float maxDistance = 1000.0f) const;

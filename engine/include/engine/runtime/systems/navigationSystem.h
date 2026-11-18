@@ -14,7 +14,6 @@
 #include "engine/runtime/navigation/space.h"
 #include "engine/runtime/navigation/vehicle/vehicleKind.h"
 
-#include <glm/glm/ext/matrix_float4x4.hpp>
 #include <glm/glm/ext/vector_float2.hpp>
 #include <glm/glm/ext/vector_float3.hpp>
 
@@ -57,17 +56,19 @@ namespace sfs
  * from each kind's registry (the vehicle's nav::vehicle::searches(),
  * "hybridAStar" built in), picked by the component's fields.
  *
- * Debug views (paths, claims, what blocks a way) are drawn into
- * RenderSystem::debugLines() while debugFeatures::enabled(), switched on in
- * settings(). A scene lists it by name ("NavigationSystem") after
- * "PhysicsSystem3D".
+ * What the game keeps on an agent's NavAgentComponent it writes there: what
+ * it tows (hitch), how fast it may go (speedCap) and whether it's an agent
+ * now (active). The system reads them at its update and before every order
+ * that plans. Game code gives orders and reads agents through its
+ * navigation() facility (facility::Navigation), never by looking it up.
+ *
+ * Debug views (paths, claims, what blocks a way) are drawn with debugDraw()
+ * while debugFeatures::enabled(), switched on in settings(). A scene lists it
+ * by name ("NavigationSystem") after "PhysicsSystem3D".
  */
 class NavigationSystem : public System
 {
 public:
-  /** A towed thing on an agent's hitch (NavAgentComponent::hitch). */
-  using Hitch = NavHitch;
-
   NavigationSystem() = default;
   NavigationSystem(const NavigationSystem&) = delete;
   ~NavigationSystem() override;
@@ -86,29 +87,15 @@ public:
   const nav::Fleet& fleet() const { return *m_fleet; }
   void handBack(const Entity& agent);
   bool handDriven(const Entity& agent) const;
-  /** Put on / take off its NavAgentComponent::hitch. */
-  void hitch(const Entity& agent, const Hitch& hitch);
   std::shared_ptr<const nav::LaneGraph>
   laneGraph(const std::string& name) const;
-  /**
-   * THE measure of a mounted part's box as planned (one function: the
-   * agent's boxes here, Traffic's, and a game's own planners alike): the box
-   * lo..hi of a collider whose frame is `inAgent` in the agent's own frame
-   * (level, its origin the reference point: x along it, heights up from the
-   * agent's origin), bounded there, exactly where it's held (its bottom
-   * never below 0). Its true size: no tilt is ever baked in (the ground's
-   * tilt is put on per checked pose by nav::stanceOf()).
-   */
-  static nav::Box3 mountedBox(const glm::mat4& inAgent,
-                              const glm::vec3& lo,
-                              const glm::vec3& hi);
   /** Plan an agent's next way ahead (nav::Fleet::planAhead()). */
   bool planAhead(const Entity& agent, nav::PlanAsk ask);
   /**
    * Plan now on this thread: only for a check that truly needs its answer
    * this frame; anything else goes through scheduler().
    */
-  nav::AgentPlan planNow(const Entity& agent, nav::PlanAsk ask) const;
+  nav::AgentPlan planNow(const Entity& agent, nav::PlanAsk ask);
   /** Read an agent's colliders and fields again (after changing them). */
   void refresh(const Entity& agent);
   /** Send an agent somewhere: a new request (the last one counts), its id. */
@@ -122,12 +109,6 @@ public:
    * coarse graph, a game's own) runs on its one pool.
    */
   nav::PlanScheduler& scheduler() { return *m_scheduler; }
-  /**
-   * Leave an agent out (false) or take it back: one carried by something
-   * else, switched off. Out, it isn't planned, moved or claimed and isn't
-   * solid to the others.
-   */
-  void setActive(const Entity& agent, bool active);
   /**
    * The game's own edges on the coarse graph (its worn tracks: cheaper to
    * route along, so long trips' corridors take them), replacing the last
@@ -167,11 +148,6 @@ public:
   void setRigProvider(std::function<nav::vehicle::Rig(const Entity&)> rig);
   /** Plan in this instead of the physics' colliders (no PhysicsSystem3D). */
   void setSpace(std::shared_ptr<const nav::Space> space);
-  /**
-   * Drive it no faster than this (m/s; 0 stands it, braking): the game's
-   * live limit (a working pace, a held pace). Infinity: none.
-   */
-  void setSpeedCap(const Entity& agent, float cap);
   std::vector<ModuleSetting> settings() override;
   /**
    * The same, shared: for a game's job handles that may outlive this system
@@ -192,7 +168,6 @@ public:
    * or its kind can't be driven by hand.
    */
   bool takeWheel(const Entity& agent);
-  void unhitch(const Entity& agent);
 
 protected:
   void create() override;
@@ -201,17 +176,15 @@ protected:
 
 private:
   // An agent as it stands (a view of its NavAgentComponent, made when it's
-  // looked at, never kept): whether it's in the fleet, and the plan
-  // parameters it has there (or is about to be given).
+  // looked at, never kept): whether it's in the fleet.
   struct Tracked
   {
     Entity entity;
     glm::vec3& axle;
-    std::optional<Hitch>& hitch;
+    std::optional<NavHitch>& hitch;
     uint32_t& layers;
     std::string& complaint;
     bool inFleet = false;
-    nav::AgentSpec params;
   };
   struct Params;
   struct TrackedEntry
@@ -220,19 +193,24 @@ private:
     std::optional<Tracked> t;
   };
 
-  // Its NavAgentComponent (null: not one of its agents).
-  NavAgentComponent* agentOf(const Entity& agent);
   std::shared_ptr<const nav::CostLayer> combinedCost() const;
   void draw();
+  // Calls fn(id, Tracked&) for every agent, from a list of them made first
+  // (so fn may change the fleet), in a buffer kept between calls.
+  template <typename TFn>
+  void forEachTracked(TFn&& fn) const;
   // What it plans by besides its boxes (none: it can't be an agent, an
   // error logged once).
   std::optional<Params> paramsOf(Tracked& agent);
   bool partOfAgent(const Entity& entity) const;
-  // With its boxes (and its trailer's), from its colliders.
-  nav::AgentSpec specOf(const Tracked& agent) const;
+  // `params` with its boxes (and its trailer's), from its colliders.
+  nav::AgentSpec specOf(const Tracked& agent,
+                        const nav::AgentSpec& params) const;
   void syncAgents();
+  // Every agent's speed cap, from its component to the fleet (what an order
+  // that plans reads, written by the game since the last update).
+  void syncSpeedCaps();
   void syncWorld();
-  std::vector<TrackedEntry> tracked() const;
   std::optional<Tracked> trackedById(Entity::EntityId id) const;
   // An agent (none: not one), and every agent, with its id.
   std::optional<Tracked> trackedOf(const Entity& agent) const;
@@ -256,6 +234,10 @@ private:
   uint64_t m_revision = ~0ull;
   bool m_worldDirty = true;
   bool m_drawPaths = false, m_drawClaims = false, m_drawBlocked = true;
+  // forEachTracked()'s list, reused; and whether a walk over it is under way
+  // (one inside it, from a game's callback, makes its own).
+  mutable std::vector<TrackedEntry> m_tracked;
+  mutable bool m_walkingTracked = false;
 };
 
 } // namespace sfs

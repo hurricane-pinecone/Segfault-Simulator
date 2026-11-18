@@ -274,7 +274,7 @@ constexpr std::array<RuleInfo, static_cast<std::size_t>(Count)> RULES = {{
      L,
      false,
      false,
-     false,
+     true,
      "Systems should not read other systems. Read the state another "
      "system writes on components, and send what one system tells another "
      "as an event."},
@@ -479,6 +479,26 @@ constexpr std::array<RuleInfo, static_cast<std::size_t>(Count)> RULES = {{
      false,
      "`sfs::detail` is the engine's internals: it changes without notice, "
      "and some of it opens what the API keeps closed. Use the public API."},
+    {SystemLookup,
+     "system-lookup",
+     W,
+     L,
+     false,
+     false,
+     false,
+     "Game code should not look systems up. Use the engine's facilities "
+     "(`physics()`, `navigation()`, `graphics()`, ...) for engine features; "
+     "read game state from components and scene data, and send what one part "
+     "tells another as an event."},
+    {KeepsFacility,
+     "keeps-facility",
+     W,
+     L,
+     false,
+     false,
+     false,
+     "A facility is valid for the step that got it: get it where you use it, "
+     "and hand workers its snapshots."},
     {BadIgnore,
      "bad-ignore",
      W,

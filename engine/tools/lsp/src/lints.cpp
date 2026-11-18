@@ -76,6 +76,24 @@ constexpr std::array<std::string_view, 7> MUTATORS = {"addComponent",
                                                       "addSystem",
                                                       "removeSystem"};
 
+// Calls that look a system up, which game code never makes.
+constexpr std::array<std::string_view, 5> SYSTEM_LOOKUPS = {"getSystem",
+                                                            "tryGetSystem",
+                                                            "hasSystem",
+                                                            "forEachSystem",
+                                                            "renderSystem"};
+
+// The engine's facility classes, in sfs::facility.
+constexpr std::array<std::string_view, 9> FACILITIES = {"Animation",
+                                                        "Assets",
+                                                        "Cameras",
+                                                        "DebugDraw",
+                                                        "Graphics",
+                                                        "Meshes",
+                                                        "Navigation",
+                                                        "Physics3D",
+                                                        "Prefabs"};
+
 // Of those, the ones a hook may make on its own entity.
 constexpr std::array<std::string_view, 3> OWN_ENTITY_CHANGES = {
     "addComponent",
@@ -217,6 +235,10 @@ struct Linter::Walk : lint::LintFile
   std::vector<Candidate> candidates;
   std::vector<std::string_view> assigned;
   std::vector<std::string_view> checkedSystems;
+  // `using namespace sfs::facility;` seen, and the names that stand for a
+  // facility here (`using sfs::facility::X;`, aliases), for keeps-facility.
+  bool usingFacility = false;
+  std::vector<std::string_view> facilityNames;
   std::vector<Term> terms;
   std::vector<Group> groups;
   // The file's responses and response types, for response-sent-twice.
@@ -238,6 +260,8 @@ struct Linter::Walk : lint::LintFile
     candidates.clear();
     assigned.clear();
     checkedSystems.clear();
+    usingFacility = false;
+    facilityNames.clear();
     terms.clear();
     groups.clear();
     responseSends.clear();
@@ -280,6 +304,7 @@ struct Linter::Walk : lint::LintFile
       return LeaveSfs;
     case Kind::UsingDeclaration:
       readUsing(node);
+      noteFacilityUsing(node);
       noteUsing(node, source, *path, usings);
       return 0;
     case Kind::ClassSpecifier:
@@ -337,6 +362,7 @@ struct Linter::Walk : lint::LintFile
     case Kind::AliasDeclaration:
     case Kind::TypeDefinition:
       readHandleAlias(node);
+      noteFacilityAlias(node);
       noteUsing(node, source, *path, usings);
       return 0;
     default:
@@ -721,21 +747,16 @@ struct Linter::Walk : lint::LintFile
       return;
     }
 
-    if ((name == "getSystem" || name == "tryGetSystem" ||
-         name == "hasSystem") &&
-        hasArguments && function && function->system)
-    {
-      const std::string_view read =
-          lastName(text(ts_node_named_child(arguments, 0)));
-
-      if (read != function->owner && index->isSystem(read))
-        report(RuleId::SystemReadsSystem,
-               call,
-               "Systems should not read other systems. Have " +
-                   std::string(function->owner) + " read the state " +
-                   std::string(read) + " writes on components, and send " +
-                   "what one tells the other as an event.");
-    }
+    if (contains(SYSTEM_LOOKUPS, name) && index->enabled() &&
+        looksUpThroughHost(call))
+      report(RuleId::SystemLookup,
+             call,
+             "Game code should not look systems up, as this " +
+                 std::string(name) +
+                 "() does. Use the engine's facilities (physics(), "
+                 "navigation(), graphics(), ...) for engine features; read "
+                 "game state from components and scene data, and send what "
+                 "one part tells another as an event.");
   }
 
   // Whether the walk is in code that runs again and again once its object is
@@ -761,6 +782,23 @@ struct Linter::Walk : lint::LintFile
   // GameObject or another game object class, or one of the project's.
   bool isGameObjectClass(std::string_view name) const
   {
+    return derivesFromSfs(name, {"GameObject", "ui::Layer"}, true);
+  }
+
+  // Whether `name` is a scene class: of the file, deriving from SFS's Scene
+  // or StandardScene, directly or through others of the file.
+  bool isSceneClass(std::string_view name) const
+  {
+    return derivesFromSfs(name, {"Scene", "StandardScene"}, false);
+  }
+
+  // Whether `name` derives from one of SFS's `bases`, directly or through
+  // classes of the file; with `indexedObjects`, a class the project index
+  // has as a game object counts too.
+  bool derivesFromSfs(std::string_view name,
+                      std::initializer_list<std::string_view> bases,
+                      bool indexedObjects) const
+  {
     // Each class is looked at once, so a cycle of bases (code being typed
     // may have one, branching too) ends the walk.
     std::vector<std::string_view> pending{name};
@@ -779,7 +817,7 @@ struct Linter::Walk : lint::LintFile
 
       if (!found)
       {
-        if (index->isGameObject(at))
+        if (indexedObjects && index->isGameObject(at))
           return true;
 
         continue;
@@ -796,8 +834,9 @@ struct Linter::Walk : lint::LintFile
         {
           const std::string_view base = text(namedChild(clause, b));
 
-          if (isSfsName(base, "GameObject"))
-            return true;
+          for (const std::string_view sfsBase : bases)
+            if (isSfsName(base, sfsBase))
+              return true;
 
           pending.push_back(lastName(base));
         }
@@ -1912,8 +1951,11 @@ struct Linter::Walk : lint::LintFile
       return;
 
     const ClassScope& owner = classes.back();
+    const bool object =
+        !owner.system && !owner.component && !owner.service &&
+        (isGameObjectClass(owner.name) || isSceneClass(owner.name));
 
-    if (!owner.system && !owner.component && !owner.service)
+    if (!owner.system && !owner.component && !owner.service && !object)
       return;
 
     const TSNode parent = ts_node_parent(node);
@@ -1928,9 +1970,18 @@ struct Linter::Walk : lint::LintFile
     {
       const TSNode child = ts_node_named_child(node, i);
 
+      // A static member outlives every scene: the worst place for one.
       if (kind(child) == Kind::StorageClassSpecifier && text(child) == "static")
+      {
+        checkKeepsFacility(node, owner.name);
         return;
+      }
     }
+
+    checkKeepsFacility(node, owner.name);
+
+    if (object)
+      return;
 
     if (owner.service)
     {
@@ -1950,6 +2001,130 @@ struct Linter::Walk : lint::LintFile
       checkPerEntityMap(node);
     else
       checkReaderOnComponent(node);
+  }
+
+  // keeps-facility: a data member holding one of SFS's facilities (its type,
+  // or a template argument of it, in sfs::facility).
+  void checkKeepsFacility(TSNode node, std::string_view owner)
+  {
+    if (kind(field(node, "declarator")) == Kind::FunctionDeclarator ||
+        !namesSfsFacility(text(field(node, "type"))))
+      return;
+
+    report(RuleId::KeepsFacility,
+           node,
+           "A facility is valid for the step that got it, so " +
+               std::string(owner) +
+               " should not keep one. Get it where you use it, and hand "
+               "workers its snapshots.");
+  }
+
+  // Whether a spelled type names one of SFS's facilities anywhere in it:
+  // `sfs::facility::Navigation`, `std::optional<facility::Physics3D>` where
+  // SFS's names are visible, a bare name after `using namespace
+  // sfs::facility;` or `using sfs::facility::X;`, or an alias of one. A
+  // game's own `facility::` namespace isn't SFS's: its names aren't these.
+  bool namesSfsFacility(std::string_view spelled) const
+  {
+    const auto identifier = [](char c)
+    { return std::isalnum(static_cast<unsigned char>(c)) || c == '_'; };
+
+    for (std::size_t at = 0; at < spelled.size();)
+    {
+      if (!identifier(spelled[at]))
+      {
+        ++at;
+        continue;
+      }
+
+      std::size_t end = at;
+
+      while (end < spelled.size() && identifier(spelled[end]))
+        ++end;
+
+      const std::string_view word = spelled.substr(at, end - at);
+      const std::string_view before = spelled.substr(0, at);
+      at = end;
+      const bool qualified = before.ends_with("::");
+
+      if (!qualified &&
+          std::find(facilityNames.begin(), facilityNames.end(), word) !=
+              facilityNames.end())
+        return true;
+
+      if (!contains(FACILITIES, word))
+        continue;
+
+      if (before.ends_with("sfs::facility::") || (!qualified && usingFacility))
+        return true;
+
+      if (!before.ends_with("facility::"))
+        continue;
+
+      const std::string_view scope = before.substr(
+          0, before.size() - std::string_view("facility::").size());
+
+      if ((scope.empty() ||
+           !(identifier(scope.back()) || scope.back() == ':')) &&
+          (usingSfs || sfsDepth > 0))
+        return true;
+    }
+
+    return false;
+  }
+
+  // Notes `using namespace sfs::facility;` and `using sfs::facility::X;`, so
+  // keeps-facility knows the bare names.
+  void noteFacilityUsing(TSNode node)
+  {
+    const bool directive = spelledAs(text(node), {"using", "namespace"}, false);
+
+    for (uint32_t i = 0; i < namedCount(node); ++i)
+    {
+      std::string_view named = text(namedChild(node, i));
+
+      if (named.starts_with("::"))
+        named.remove_prefix(2);
+
+      if (directive)
+        usingFacility = usingFacility || named == "sfs::facility" ||
+                        (named == "facility" && (usingSfs || sfsDepth > 0));
+      else if (namesSfsFacility(named))
+        facilityNames.push_back(lastName(named));
+    }
+  }
+
+  // Notes an alias of a facility (`using Physics = sfs::facility::Physics3D;`,
+  // or a typedef), so keeps-facility knows it by its new name.
+  void noteFacilityAlias(TSNode node)
+  {
+    const bool alias = kind(node) == Kind::AliasDeclaration;
+    const std::string_view type = text(field(node, "type"));
+    // A typedef's declarator is the new type's name itself.
+    const std::string_view name =
+        alias ? text(field(node, "name")) : text(field(node, "declarator"));
+
+    if (!name.empty() && namesSfsFacility(type))
+      facilityNames.push_back(name);
+  }
+
+  // system-lookup's receivers: none (the system's or scene's own), `this`, or
+  // a registry or a scene (`registry->`, `m_scene->`, `scene()`), so a game's
+  // own `inventory.hasSystem()` isn't taken for one.
+  bool looksUpThroughHost(TSNode call) const
+  {
+    const TSNode receiver = receiverOf(call);
+
+    if (ts_node_is_null(receiver) || kind(receiver) == Kind::This)
+      return true;
+
+    std::string lowered(lastName(text(receiver)));
+
+    for (char& c : lowered)
+      c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+    return lowered.find("registry") != std::string::npos ||
+           lowered.find("scene") != std::string::npos;
   }
 
   // ------------------------------------------------------------- services

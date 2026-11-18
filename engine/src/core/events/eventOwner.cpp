@@ -13,6 +13,8 @@
 namespace sfs::detail
 {
 
+EventUser::~EventUser() = default;
+
 EventOwner::~EventOwner()
 {
   for (const ConsumerRef& ref : consumers)

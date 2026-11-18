@@ -3,25 +3,23 @@
 `PrefabSystem` makes copies of prefab assets while the game runs, so a system
 or a script can place things the way a scene file does: a forest planted from
 its trees' prefabs, a crate dropped from a truck, a building put up by the
-player. Every `StandardScene` has one.
+player. Every `StandardScene` has one. Game code uses it through its
+[facility](../../facilities/index.md), `prefabs()`, from a system, a service's
+handler, a game object or a scene.
 
 ```cpp
 #include <sfs/sfs.h>
-
-// From a system:
-auto* prefabs = registry->tryGetSystem<sfs::PrefabSystem>();
-// From a game object: scene().tryGetSystem<sfs::PrefabSystem>()
 
 sfs::TransformComponent where;
 where.position = {29.0f, 32.0f, 0.0f};
 where.rotation = glm::angleAxis(0.4f, glm::vec3(0, 0, 1));
 where.scale = glm::vec3(1.1f);
 
-sfs::Entity tree = prefabs->spawn("asset:b87c181ec21487542704a4ebe5ed1339", where, group);
+sfs::Entity tree = prefabs().spawn("asset:b87c181ec21487542704a4ebe5ed1339", where, group);
 if (auto* renderer = tree.getComponent<sfs::MeshRendererComponent>())
   renderer->tint = {0.9f, 1.0f, 0.9f, 1.0f};
 
-prefabs->despawn(tree); // it and everything below it, at the next flush
+prefabs().despawn(tree); // it and everything below it, at the next flush
 ```
 
 | Call | What it does |

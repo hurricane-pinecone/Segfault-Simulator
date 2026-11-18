@@ -122,8 +122,12 @@ protected:
 };
 ```
 
-Inside a scene you have `createEntity()`, `createObject<T>()`, `addSystem<T>()` /
-`getSystem<T>()` / `tryGetSystem<T>()` / `hasSystem<T>()`,
+Inside a scene you have `createEntity()`, `createObject<T>()`, `addSystem<T>()`,
+the engine's [facilities](../facilities/index.md) (`physics()`,
+`navigation()`, `graphics()`, `meshes()`, `cameras()`, `debugDraw()`,
+`prefabs()`, `animation()`, `assets()`; a game object has the same, as its
+scene's), `getSystem<T>()` / `tryGetSystem<T>()` / `hasSystem<T>()` (for hosts
+and tools: game code never looks a system up),
 `addService<T>()` / `forEachService(fn)` ([services](../../core/services/index.md)),
 `events()` (the
 scene's [events](../../core/events/index.md): `events().send(E{...})`, and

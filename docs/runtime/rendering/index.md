@@ -109,9 +109,11 @@ frame, and each cascade tests it against its own box.
 
 ## Picking
 
-`picking.h` finds what's under a ray (`RenderSystem::screenRay(pixel)` gives
-the ray through a pixel): `pickEntity()` the nearest hit, and `pickSurface()`
-the exact mesh triangle. A mesh entity is hit where the ray meets its
+`picking.h` finds what's under a ray (`cameras().screenRay(pixel)` gives the
+ray through a pixel): `pickEntity()` the nearest hit, and `pickSurface()` the
+exact mesh triangle. Game code calls them through the meshes
+[facility](../facilities/index.md): `meshes().pickEntity(ray)` and
+`meshes().pickSurface(ray)`. A mesh entity is hit where the ray meets its
 triangles, not just its bounds, so a camera inside a landscape's bounds still
 picks whatever stands on it; anything without a mesh (a sprite where it was
 drawn last frame, given the render system) is hit where the ray enters its
@@ -155,7 +157,7 @@ nearest triangle hit among pickable meshes, each ruled out first by its bounds
 
 ## Stats and debug settings
 
-`RenderSystem::stats()` reports the last frame's draw calls, instances,
+`graphics().stats()` (`RenderSystem::stats()`) reports the last frame's draw calls, instances,
 shadow instances and point lights. `settings()` exposes lighting, shadow and
 camera knobs as `ModuleSetting`s, so a debug panel shows them like any other
 system's settings.

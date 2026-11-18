@@ -605,8 +605,13 @@ private:
                   "for a keyed type, or fn(const Entity&, const R&, "
                   "const Responder<R>&) for a request");
 
+    // One that can't be called (logged as it was bound) passes its events
+    // unread, so it doesn't hold its type's queue.
     if (!detail::bound(fn))
+    {
+      addHandler([](detail::EventQueueBase&, uint32_t) {});
       return;
+    }
 
     addHandler(
         [fn = std::move(fn)](
@@ -625,8 +630,13 @@ private:
     static_assert(std::invocable<TFunction&, EventRange<TEvent>>,
                   "onEvents() takes fn(sfs::EventRange<E>)");
 
+    // One that can't be called (logged as it was bound) passes its events
+    // unread, so it doesn't hold its type's queue.
     if (!detail::bound(fn))
+    {
+      addHandler([](detail::EventQueueBase&, uint32_t) {});
       return;
+    }
 
     addHandler(
         [fn = std::move(fn)](
@@ -667,8 +677,13 @@ private:
     static_assert(std::invocable<TFunction&, LatestEventRange<TEvent>>,
                   "onLatestEvents() takes fn(sfs::LatestEventRange<E>)");
 
+    // One that can't be called (logged as it was bound) passes its events
+    // unread, so it doesn't hold its type's queue.
     if (!detail::bound(fn))
+    {
+      addHandler([](detail::EventQueueBase&, uint32_t) {});
       return;
+    }
 
     addHandler(
         [fn = std::move(fn)](
@@ -694,8 +709,13 @@ private:
                   "fn(const Entity&, const R&, const Responder<R>&) for a "
                   "request");
 
+    // One that can't be called (logged as it was bound) passes its events
+    // unread, so it doesn't hold its type's queue.
     if (!detail::bound(fn))
+    {
+      addHandler([](detail::EventQueueBase&, uint32_t) {});
       return;
+    }
 
     addHandler(
         [fn = std::move(fn)](
@@ -1443,8 +1463,14 @@ private:
         "onResponses(), onProgresses() and onFailures() take "
         "fn(sfs::ResponseRange<R, Response>), the role's response");
 
+    // One that can't be called (logged as it was bound) passes its
+    // responses unread, so it doesn't hold their queue.
     if (!detail::bound(fn))
+    {
+      m_runs[static_cast<std::size_t>(kRole)] = [](detail::EventQueueBase&,
+                                                   uint32_t) {};
       return;
+    }
 
     using Queue = detail::EventQueue<detail::ResponseTo<TRequest, TResponse>>;
     m_runs[static_cast<std::size_t>(kRole)] =
@@ -1469,8 +1495,14 @@ private:
                   "onResponse(), onProgress() and onFailure() take "
                   "fn(const Entity&, const Response&), the role's response");
 
+    // One that can't be called (logged as it was bound) passes its
+    // responses unread, so it doesn't hold their queue.
     if (!detail::bound(fn))
+    {
+      m_runs[static_cast<std::size_t>(kRole)] = [](detail::EventQueueBase&,
+                                                   uint32_t) {};
       return;
+    }
 
     using Queue = detail::EventQueue<detail::ResponseTo<TRequest, TResponse>>;
     m_runs[static_cast<std::size_t>(kRole)] =

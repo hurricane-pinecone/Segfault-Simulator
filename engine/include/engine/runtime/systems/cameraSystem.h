@@ -25,7 +25,8 @@ namespace sfs
 /**
  * Moves cameras that follow something (CameraFollowComponent): eases each one
  * toward its target and advances its shake. The same in every render style.
- * Also resolves the scene's active camera (activeCamera()).
+ * Also resolves the scene's active camera (activeCamera(); game code asks
+ * cameras().active()).
  *
  * After every game object's update (lateUpdate()), it keeps the view of each
  * camera with a CameraCollisionComponent clear of solid colliders, pitching

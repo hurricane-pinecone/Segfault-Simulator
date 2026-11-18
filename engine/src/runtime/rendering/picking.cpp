@@ -5,6 +5,7 @@
 #include "engine/core/components/pickableComponent.h"
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/ecs/entity.h"
+#include "engine/core/ecs/registry.h"
 #include "engine/core/hierarchy/hierarchy.h"
 #include "engine/core/rendering/aabb.h"
 #include "engine/core/rendering/camera.h"
@@ -22,6 +23,7 @@
 #include <algorithm>
 #include <limits>
 #include <optional>
+#include <vector>
 
 namespace sfs
 {
@@ -33,6 +35,14 @@ constexpr MouseButton BUTTONS[] = {MouseButton::Left,
                                    MouseButton::Right,
                                    MouseButton::X1,
                                    MouseButton::X2};
+
+std::optional<PickHit> pickEntityAmong(const std::vector<Entity>& entities,
+                                       const MeshLibrary& meshes,
+                                       const Ray& ray,
+                                       const RenderSystem* drawnBy);
+std::optional<SurfaceHit> pickSurfaceAmong(const std::vector<Entity>& entities,
+                                           const MeshLibrary& meshes,
+                                           const Ray& ray);
 
 float volume(const Aabb& box)
 {
@@ -104,50 +114,15 @@ std::optional<PickHit> pickEntity(Scene& scene,
                                   const Ray& ray,
                                   const RenderSystem* drawnBy)
 {
-  std::optional<PickHit> best;
-  float bestVolume = 0.0f;
+  return pickEntityAmong(scene.entities(), meshes, ray, drawnBy);
+}
 
-  constexpr float TIE = 1.0e-4f;
-
-  for (const Entity& entity : scene.entities())
-  {
-    const std::optional<Aabb> bounds = entityBounds(entity, meshes, drawnBy);
-    float distance = 0.0f;
-
-    if (!bounds || !ray.intersectAabb(*bounds, distance) ||
-        (best && distance > best->distance + TIE))
-      continue;
-
-    // A mesh by where the ray meets its triangles: its bounds only say it
-    // might be hit (a ray from inside a landscape's bounds enters them at
-    // once, wherever it really meets the ground).
-    if (MeshRendererComponent* meshRenderer =
-            entity.getComponent<MeshRendererComponent>())
-    {
-      const auto hit = meshes.raycast(meshRenderer->mesh,
-                                      hierarchy::worldMatrix(entity),
-                                      ray,
-                                      entity.getId());
-
-      if (!hit)
-        continue;
-
-      distance = hit->distance;
-    }
-
-    const float size = volume(*bounds);
-    const bool nearer = !best || distance < best->distance - TIE;
-    const bool tiedButSmaller =
-        best && distance <= best->distance + TIE && size < bestVolume;
-
-    if (nearer || tiedButSmaller)
-    {
-      best = PickHit{entity, distance, entity, ray.at(distance)};
-      bestVolume = size;
-    }
-  }
-
-  return best;
+std::optional<PickHit> pickEntity(Registry& registry,
+                                  const MeshLibrary& meshes,
+                                  const Ray& ray,
+                                  const RenderSystem* drawnBy)
+{
+  return pickEntityAmong(registry.entities(), meshes, ray, drawnBy);
 }
 
 std::optional<PickHit>
@@ -224,12 +199,81 @@ void pickUnderCursor(Scene& scene,
 std::optional<SurfaceHit>
 pickSurface(Scene& scene, const MeshLibrary& meshes, const Ray& ray)
 {
+  return pickSurfaceAmong(scene.entities(), meshes, ray);
+}
+
+std::optional<SurfaceHit>
+pickSurface(Registry& registry, const MeshLibrary& meshes, const Ray& ray)
+{
+  return pickSurfaceAmong(registry.entities(), meshes, ray);
+}
+
+namespace
+{
+
+// pickEntity() among these entities.
+std::optional<PickHit> pickEntityAmong(const std::vector<Entity>& entities,
+                                       const MeshLibrary& meshes,
+                                       const Ray& ray,
+                                       const RenderSystem* drawnBy)
+{
+  std::optional<PickHit> best;
+  float bestVolume = 0.0f;
+
+  constexpr float TIE = 1.0e-4f;
+
+  for (const Entity& entity : entities)
+  {
+    const std::optional<Aabb> bounds = entityBounds(entity, meshes, drawnBy);
+    float distance = 0.0f;
+
+    if (!bounds || !ray.intersectAabb(*bounds, distance) ||
+        (best && distance > best->distance + TIE))
+      continue;
+
+    // A mesh by where the ray meets its triangles: its bounds only say it
+    // might be hit (a ray from inside a landscape's bounds enters them at
+    // once, wherever it really meets the ground).
+    if (MeshRendererComponent* meshRenderer =
+            entity.getComponent<MeshRendererComponent>())
+    {
+      const auto hit = meshes.raycast(meshRenderer->mesh,
+                                      hierarchy::worldMatrix(entity),
+                                      ray,
+                                      entity.getId());
+
+      if (!hit)
+        continue;
+
+      distance = hit->distance;
+    }
+
+    const float size = volume(*bounds);
+    const bool nearer = !best || distance < best->distance - TIE;
+    const bool tiedButSmaller =
+        best && distance <= best->distance + TIE && size < bestVolume;
+
+    if (nearer || tiedButSmaller)
+    {
+      best = PickHit{entity, distance, entity, ray.at(distance)};
+      bestVolume = size;
+    }
+  }
+
+  return best;
+}
+
+// pickSurface() among these entities.
+std::optional<SurfaceHit> pickSurfaceAmong(const std::vector<Entity>& entities,
+                                           const MeshLibrary& meshes,
+                                           const Ray& ray)
+{
   std::optional<SurfaceHit> best;
 
   // A pick sees entities not yet flushed into queries, as pickEntity() does,
   // so one made this frame can be picked.
   // sfs-ignore-next-line(filter-in-loop)
-  for (const Entity& entity : scene.entities())
+  for (const Entity& entity : entities)
   {
     const MeshRendererComponent* meshRenderer =
         entity.getComponent<const MeshRendererComponent>();
@@ -258,5 +302,7 @@ pickSurface(Scene& scene, const MeshLibrary& meshes, const Ray& ray)
 
   return best;
 }
+
+} // namespace
 
 } // namespace sfs

@@ -2,6 +2,7 @@
 
 #include "component.h"
 #include "engine/core/ecs/entityDeclaration.h"
+#include "engine/core/ecs/facilityAccess.h"
 #include "engine/core/ecs/moduleSettings.h"
 #include "engine/core/ecs/query.h"
 #include "engine/core/events/eventVerbs.h"
@@ -39,7 +40,9 @@ int systemLookupId()
  * kinds join and leave (observe()), and talks to other systems through
  * events with what it inherits from EventVerbs: send() and send(key, event),
  * and the consumers and requesters it makes in create() (consumer<E>(),
- * requester<R>()), whose handlers run before its update().
+ * requester<R>()), whose handlers run before its update(). It reaches the
+ * engine's features through its facilities (physics(), navigation(), ...:
+ * docs/runtime/facilities), never by looking another system up.
  */
 class System : public EventVerbs
 {
@@ -93,12 +96,22 @@ protected:
   /** A callback observe() calls with the entity joining or leaving. */
   using EntityCallback = std::function<void(const Entity&)>;
 
+  /** The engine's animation clips (facility::Animation). */
+  inline facility::Animation animation() const;
+  /** The scene's asset loading (facility::Assets). */
+  inline facility::Assets assets() const;
+  /** The scene's cameras (facility::Cameras). */
+  inline facility::Cameras cameras() const;
   /**
    * Sets the system up, once, when it's added to a registry, with its
    * registry set: registers components and observers, sets its time step,
    * builds what it builds once. The constructor only initialises members.
    */
   virtual void create(){};
+  /** Debug drawing, in development builds only (facility::DebugDraw). */
+  inline facility::DebugDraw debugDraw() const;
+  /** The scene's rendering (facility::Graphics). */
+  inline facility::Graphics graphics() const;
   /**
    * Runs once a frame after every game object's onUpdate() (Unity's
    * LateUpdate): for what must follow what the objects did, such as a camera
@@ -109,6 +122,10 @@ protected:
    * @param deltaTime the frame's time, as above
    */
   virtual void lateUpdate(double deltaTime){};
+  /** The scene's meshes (facility::Meshes). */
+  inline facility::Meshes meshes() const;
+  /** The scene's navigation (facility::Navigation). */
+  inline facility::Navigation navigation() const;
   /**
    * Reacts as another kind of entity, those matching TTerms (components and
    * filter groups, as Registry::query() takes them), joins or leaves (set
@@ -146,6 +163,10 @@ protected:
   virtual void onEntityAdded(const Entity& entity) {}
   /** See onEntityAdded(). */
   virtual void onEntityRemoved(const Entity& entity) {}
+  /** The scene's 3D physics (facility::Physics3D). */
+  inline facility::Physics3D physics() const;
+  /** Prefab copies made as the game runs (facility::Prefabs). */
+  inline facility::Prefabs prefabs() const;
 
   /**
    * Adds a term to what an entity needs to be one of this system's entities

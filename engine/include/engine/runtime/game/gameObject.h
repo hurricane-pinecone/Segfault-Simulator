@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/core/ecs/entity.h"
+#include "engine/core/ecs/facilityAccess.h"
 #include "engine/core/events/eventOwner.h"
 #include "engine/runtime/input/input.h"
 #include "engine/runtime/systems/collision2D.h"
@@ -28,6 +29,20 @@ public:
   Scene& scene() const { return *m_scene; }
 
 protected:
+  /** The engine's animation clips (facility::Animation). */
+  inline facility::Animation animation() const;
+  /** The scene's asset loading (facility::Assets). */
+  inline facility::Assets assets() const;
+  /** The scene's cameras (facility::Cameras). */
+  inline facility::Cameras cameras() const;
+  /** Debug drawing, in development builds only (facility::DebugDraw). */
+  inline facility::DebugDraw debugDraw() const;
+  /** The scene's rendering (facility::Graphics). */
+  inline facility::Graphics graphics() const;
+  /** The scene's meshes (facility::Meshes). */
+  inline facility::Meshes meshes() const;
+  /** The scene's navigation (facility::Navigation). */
+  inline facility::Navigation navigation() const;
   // Physics (3D scenes, PhysicsSystem3D): this object's entity began or
   // stopped touching another body, or passing through a trigger (either one
   // being the trigger). Called as the physics updates, before the objects do.
@@ -46,6 +61,10 @@ protected:
   virtual void onTriggerExit(const Collision3D& collision){};
   virtual void onTriggerExit2D(const Collision2D& collision){};
   virtual void onUpdate(double deltaTime){};
+  /** The scene's 3D physics (facility::Physics3D). */
+  inline facility::Physics3D physics() const;
+  /** Prefab copies made as the game runs (facility::Prefabs). */
+  inline facility::Prefabs prefabs() const;
 
   sfs::Entity m_entity;
 

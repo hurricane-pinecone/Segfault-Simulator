@@ -42,7 +42,9 @@ class MeshLibrary;
  *
  * StandardScene adds one. What's below an animator is found again when an
  * entity it moved is destroyed, while its meshes are still loading, and on
- * rebind().
+ * rebind(). Game code uses it through its animation() facility
+ * (facility::Animation: play(), restart(), clipNames(), length()) and the
+ * AnimatorComponent's fields.
  */
 class AnimationSystem : public System
 {

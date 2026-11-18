@@ -25,7 +25,7 @@ get back from `withModule`. `StandardScene` registers one for you (with stains
 on), so a scene made in the editor has it already:
 
 ```cpp
-auto* particles = getSystem<sfs::RenderSystem>().module<sfs::ParticleModule>();
+auto* particles = graphics().module<sfs::ParticleModule>(); // the graphics facility
 ```
 
 ## Spawning

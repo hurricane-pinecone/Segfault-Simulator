@@ -22,7 +22,6 @@
 #include "engine/runtime/scriptableObjects/scriptableObjects.h"
 #include "engine/runtime/scripting/scriptRegistry.h"
 #include "engine/runtime/serialization/sceneSerializer.h"
-#include "engine/runtime/systems/physicsSystem3D.h"
 #include "engine/runtime/systems/prefabSystem.h"
 
 #include <glm/glm/ext/vector_float3.hpp>
@@ -278,15 +277,6 @@ MeshLibrary::Provider StandardScene::modelMeshes()
     return out;
   };
   return provider;
-}
-
-PhysicsSystem3D* StandardScene::physicsSystem()
-{
-#ifdef SFS_HAS_PHYSICS
-  return tryGetSystem<PhysicsSystem3D>();
-#else
-  return nullptr;
-#endif
 }
 
 bool StandardScene::play(const std::filesystem::path& file)

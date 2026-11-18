@@ -39,8 +39,8 @@ Two overrides, for test runs and development keys:
 
 - `SFS_DRAW_COLLIDERS=1` (or `0`) in the environment turns it on (or off)
   over the scene's setting.
-- Game code: `render.forceDrawColliders(true)` (or `false`; `std::nullopt`
-  goes back to the scene's setting), on the scene's `RenderSystem`.
+- Game code: `debugDraw().forceColliders(true)` (or `false`; `std::nullopt`
+  goes back to the scene's setting).
 
 In a release export the tick, the variable and the call do nothing (the log
 says so once).
@@ -50,16 +50,23 @@ with the setting on or off.
 
 ## Your own lines
 
-`RenderSystem::debugLines()` is the frame's `DebugLines`: add to it while
-updating, and the next frame draws it and empties it.
+Draw with the debug drawing [facility](../../facilities/index.md),
+`debugDraw()`, on every system, service, game object and scene: it adds to the
+frame's `DebugLines` while updating, and the next frame draws them and empties
+them, so draw every frame to keep a shape up.
 
 ```cpp
-sfs::DebugLines& lines = render.debugLines();
-lines.line(from, to, glm::vec4(1.0f, 0.2f, 0.2f, 1.0f));          // a segment
-lines.box(placed, centre, halfSize, sfs::DebugLines::pack(color)); // a box
+const sfs::facility::DebugDraw lines = debugDraw();
+if (!lines.enabled()) // debug features off: skip working the lines out
+  return;
+lines.line(from, to, glm::vec4(1.0f, 0.2f, 0.2f, 1.0f));               // a segment
+lines.box(placed, centre, halfSize, sfs::facility::DebugDraw::pack(color)); // a box
 lines.sphere(placed, centre, radius, packed);
-lines.capsule(placed, centre, radius, halfLength, packed);         // along z
+lines.capsule(placed, centre, radius, halfLength, packed);              // along z
 ```
+
+While debug features are off (a release export) `debugDraw()` draws nothing
+and its calls compile away; it never warns.
 
 `placed` is a rigid matrix (turn and move, no scale); colours are as seen
 (sRGB), packed RGBA8. Lines are a pixel wide and unlit; the frame's exposure

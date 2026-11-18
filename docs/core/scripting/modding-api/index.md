@@ -66,17 +66,20 @@ values) use a config, an engine helper (below), or the raw Lua C API via
 ### b) Resolve live game state *lazily*
 
 Bindings outlive any single scene, so resolve through the game **at call time** —
-never capture a scene or system pointer up front:
+never capture a scene, a facility or a module pointer up front:
 
 ```cpp
 sfs::ParticleEngine* particlesOf(sfs::Scene* scene)
 {
-  if (!scene || !scene->hasSystem<sfs::RenderSystem>())
+  if (!scene)
     return nullptr;
-  return scene->getSystem<sfs::RenderSystem>().module<sfs::ParticleModule>();
+  return scene->graphics().module<sfs::ParticleModule>(); // null if absent
 }
 // inside a bind: particlesOf(game.currentScene())  // re-resolved every call
 ```
+
+The scene's [facilities](../../../runtime/facilities/index.md) (`graphics()`,
+`physics()`, ...) are the way to the engine's features: never a system lookup.
 
 ### c) Reuse engine-provided tables
 

@@ -314,7 +314,7 @@ name paths.
 `SceneSerializer::instantiate`, `savePrefab` and `instanceEntry` do this from
 code; `setPrefabSource` says where prefabs come from (`StandardScene::serializer()`
 reads them through the asset store); while a game runs, systems and scripts
-make copies with [`PrefabSystem::spawn`](../systems/prefab-system/index.md).
+make copies with [`prefabs().spawn()`](../systems/prefab-system/index.md).
 At runtime an instance's root has a
 `PrefabInstanceComponent`, and each entity from a prefab a
 `PrefabLinkComponent` with its `$id`.

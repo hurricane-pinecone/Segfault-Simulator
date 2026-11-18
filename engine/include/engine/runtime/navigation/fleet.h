@@ -221,6 +221,12 @@ public:
   bool solid(AgentId id) const;
   const AgentSpec* spec(AgentId id) const;
   float speed(AgentId id) const; // signed
+  /**
+   * The speed cap it drives by (setSpeedCap()).
+   * @param id the agent
+   * @return m/s; infinity for no cap, or an id that isn't an agent
+   */
+  float speedCap(AgentId id) const;
   State state(AgentId id) const;
   /** The events since the last call. */
   std::vector<Event> takeEvents();

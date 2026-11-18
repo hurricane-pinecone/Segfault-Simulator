@@ -115,6 +115,16 @@ void create() override
 }
 ```
 
+Its handlers may use the engine's
+[facilities](../../runtime/facilities/index.md), as a system does: a raycast
+(`physics()`), a path order (`navigation()`), a prefab copy (`prefabs()`), a
+debug line (`debugDraw()`). A facility hands out answers, never lists. An
+entity a facility query gives (a raycast's hit), and what it leads to
+(its parent, its parts), the service may read, but it changes only the
+entities its events hand it (and those it makes itself: `createEntity()`, a
+prefab copy). A service has no update, so a debug line it draws shows for one frame: drawing
+every frame is a System's job.
+
 What it can't reach is a list: it has no registry, can't query, has no
 entities of its own and can't observe a list. A reverse lookup ("who carries
 this pickup?") needs a list, so what a service needs must come in the event,

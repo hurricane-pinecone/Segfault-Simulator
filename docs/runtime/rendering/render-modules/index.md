@@ -25,6 +25,13 @@ returns it for configuring. `module<T>()` finds a registered one (null if
 there's none), `hasModule<T>()` asks, and `withModules<A, B, ...>()` registers
 several default-constructed ones at once.
 
+That's how a scene sets its renderer up. Game code (systems, services, game
+objects) reaches the modules through the graphics
+[facility](../../facilities/index.md): `graphics().module<T>()` finds one,
+valid for this step only (use it now, never keep it), and
+`graphics().addModule<T>(args...)` adds a game's own (null when the scene
+doesn't render).
+
 ## Registration is the enable
 
 A feature is on **iff** its module type is registered. Adding the module turns

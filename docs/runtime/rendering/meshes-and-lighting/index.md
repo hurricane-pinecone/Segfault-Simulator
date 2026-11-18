@@ -46,12 +46,14 @@ it. Each flat face holds the whole image upright; a sphere, cylinder or cone
 wraps it once around (from the top down, on a sphere); caps lay it flat.
 `append()` keeps them.
 
-Upload a mesh through the render system's `MeshLibrary`. It returns a
-`MeshHandle`, and keeps the mesh's bounds for culling. Meshes are freed with the
-render system.
+Upload a mesh through the render system's `MeshLibrary`, which game code
+reaches through the meshes [facility](../../facilities/index.md), `meshes()`.
+It returns a `MeshHandle`, and keeps the mesh's bounds for culling. Meshes are
+freed with the render system.
 
 ```cpp
-const sfs::MeshHandle houseMesh = render.meshes().add(house);
+const sfs::MeshHandle houseMesh = meshes().add(house, "house");
+const sfs::Aabb* box = meshes().bounds(houseMesh); // valid for this step
 ```
 
 ### Loading models in the background
@@ -465,7 +467,8 @@ dry ground shallow), asked where a deformer presses: at the corners of blocks
 of 4 x 4 texels (12 cm), blended between them (a step in it, at the edge of a
 game's grid cell, slopes over a block).
 
-**From a game.** Through `render.module<sfs::DeformationModule>()`:
+**From a game.** Through `graphics().module<sfs::DeformationModule>()` (the
+graphics [facility](../../facilities/index.md)), got where it's used:
 
 - `stamp(ground, center, heading, size, depth, shape)` presses a shape in (a
   footprint, a hoof): `shape` an image asset whose red is the imprint, from
@@ -491,7 +494,7 @@ game's grid cell, slopes over a block).
   save, to replicate, to react to) without disturbing the GPU's.
 
 ```cpp
-auto* deformation = render.module<sfs::DeformationModule>();
+auto* deformation = graphics().module<sfs::DeformationModule>();
 deformation->setSoftness(ground, [&](glm::vec2 at) { return soil.wetness(at); });
 deformation->clearRegion(ground, plot.outline); // levelled
 ```
@@ -526,32 +529,35 @@ an optional `surfaceVertex()` (see `meshSurface.wgsl`).
 
 ### Materials from code
 
-`MeshLibrary::setMaterial(name, material)` makes (or, called again, updates in
-place) a named material from game code, for example one whose texture the
+`meshes().setMaterial(name, material)` (`MeshLibrary::setMaterial()`) makes
+(or, called again, updates in place) a named material from game code, for example one whose texture the
 game paints as it runs. Entities choose it by name in a `materials` slot like
 any other; updating it shows on everything using it at once.
 
 ## Camera
 
-`RenderSystem::camera()` returns the scene's `Camera`. It is an orbit camera
-for a Z-up world: it looks at `target` from `distance` away, turned by `yaw`
-around +Z and tilted by `pitch` above the ground. In a 3D game without a
-camera entity, game code drives these fields, so a free orbit, a follow camera
-and a fixed angle are just different ways of setting them. (A flat or
-isometric game sees through a camera entity looking straight at its plane;
-see [Styles](../styles/index.md#the-camera).)
+`RenderSystem::camera()` is the scene's `Camera`. It is an orbit camera for a
+Z-up world: it looks at `target` from `distance` away, turned by `yaw` around
++Z and tilted by `pitch` above the ground. Without a camera entity its host
+drives these fields (the editor's free look); a game points its view with a
+camera entity (below), so a free orbit, a follow camera and a fixed angle are
+just different ways of moving that entity. (A flat or isometric game sees
+through a camera entity looking straight at its plane; see
+[Styles](../styles/index.md#the-camera).)
+
+Game code reads the camera as last drawn through the cameras
+[facility](../../facilities/index.md): `cameras().rendered()`.
 
 ```cpp
-sfs::Camera& camera = render.camera();
-camera.target = playerPosition;
-camera.yaw += turnInput * dt;
-camera.projection = sfs::Camera::Projection::Orthographic; // or Perspective
+const sfs::Camera& camera = cameras().rendered();
+const glm::vec3 eye = camera.position();         // a lamp's glow toward the eye
+const glm::vec3 ahead = camera.groundForward();  // camera-relative movement
 ```
 
 `groundForward()` and `groundRight()` give camera-relative movement axes on the
-ground. `RenderSystem::screenRay(pixel)` returns the world-space ray through a
-pixel of the view, from the camera as last rendered, for picking.
-`Ray::intersectPlaneZ` finds where it hits a ground plane.
+ground. `cameras().screenRay(pixel)` (`RenderSystem::screenRay()`) returns the
+world-space ray through a pixel of the view, from the camera as last rendered,
+for picking. `Ray::intersectPlaneZ` finds where it hits a ground plane.
 
 ### Camera entities
 

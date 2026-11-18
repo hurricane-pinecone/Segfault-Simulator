@@ -17,6 +17,7 @@
 
 #include "engine/core/ecs/component.h"
 #include "engine/core/ecs/entityDeclaration.h"
+#include "engine/core/ecs/facilityAccess.h"
 #include "engine/core/ecs/hierarchyLinks.h"
 #include "engine/core/events/events.h"
 #include "pool.h"
@@ -278,7 +279,9 @@ public:
    * while no other thread is looking one up: the lookup reads the list of
    * systems. A lookup that overlaps a change anyway remembers nothing.
    * System types must have distinct qualified names (see
-   * detail::systemLookupId()); debug builds log a clash.
+   * detail::systemLookupId()); debug builds log a clash. Lookups are for
+   * hosts, tools and the facilities: game code reaches engine features
+   * through the facilities (docs/runtime/facilities), never a lookup.
    * @return the system, or null if there is none
    */
   template <typename TSystem>
@@ -532,6 +535,7 @@ private:
   friend class Entity;
   friend class Scene;
   friend class System;
+  friend struct detail::HostAccess;
   template <typename... TTerms>
   friend class QueryIterator;
   friend bool hierarchy::setParent(Entity child, const Entity& parent);
@@ -632,6 +636,10 @@ private:
   // pointer to one lasts until it's removed, and the slots grow only as types
   // are first added.
   std::vector<std::unique_ptr<void, void (*)(void*)>> m_sceneData;
+
+  // The asset store its scene loads through, set by the scene that owns it
+  // (null for a registry with no scene): read through detail::HostAccess.
+  AssetStore* m_assetStore = nullptr;
 
   // Outlives the services and systems, and their readers, because
   // ~Registry() destroys them in its body, before any member.

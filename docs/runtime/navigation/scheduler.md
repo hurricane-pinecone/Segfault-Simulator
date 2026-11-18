@@ -1,13 +1,15 @@
 # Planning scheduler
 
 Every path job of a scene runs on ONE worker pool: `sfs::nav::PlanScheduler`
-(`engine/runtime/navigation/planScheduler.h`). `NavigationSystem` owns it
-(`nav->scheduler()`); its fleet's plans (trips, wait spots, look-ahead), the
-coarse graph build and a game's own planning (coverage plans, turns, line-ups)
-all go through it. There are no other planning pools. A game that keeps job
-handles beyond a frame (a route's job, a coverage plan's) holds the scheduler by
-`nav->sharedScheduler()` (a `std::shared_ptr`; keep it as a `weak_ptr`), so a
-handle dropped after the scene's gone cancels nothing that isn't there.
+(`engine/runtime/navigation/planScheduler.h`). `NavigationSystem` owns it,
+and game code gets it from the navigation facility,
+`navigation().scheduler()` (a `std::shared_ptr`); its fleet's plans (trips,
+wait spots, look-ahead), the coarse graph build and a game's own planning
+(coverage plans, turns, line-ups) all go through it. There are no other
+planning pools. Ask for it where it's used rather than keeping a copy of it
+anywhere: a game that keeps job handles beyond a frame (a route's job, a
+coverage plan's) keeps them with a `weak_ptr` to the scheduler, so a handle
+dropped after the scene's gone cancels nothing that isn't there.
 
 The problem it solves: with separate first-in-first-out pools, one vehicle's
 long job (a 20 s coverage plan) held a thread while another vehicle's 50 ms turn
@@ -128,7 +130,7 @@ when its deadline comes close (and is escalated if it's then going to miss).
 
 ## Look-ahead
 
-`nav::Fleet::planAhead(id, ask)` (`NavigationSystem::planAhead(entity, ask)`)
+`nav::Fleet::planAhead(id, ask)` (`navigation().planAhead(entity, ask)`)
 plans an agent's next way from where its current path ends (its last sample's
 pose and hitch), needed by when it gets there: its speed profile's time left,
 in real seconds at the game's measured pace. `ahead(id)` hands the finished

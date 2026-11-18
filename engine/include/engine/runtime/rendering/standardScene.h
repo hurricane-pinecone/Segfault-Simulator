@@ -13,7 +13,6 @@
 namespace sfs
 {
 
-class PhysicsSystem3D;
 class RenderSystem;
 
 /**
@@ -50,13 +49,6 @@ public:
   MeshHandle builtinMesh(BuiltinMesh mesh) const;
 
   /**
-   * The scene's physics, or null when it has none. Physics is optional: a
-   * scene that wants it lists "PhysicsSystem3D" among its game systems, so it
-   * exists only while the scene plays.
-   */
-  PhysicsSystem3D* physicsSystem();
-
-  /**
    * Replace the scene's contents with a scene file and start its scripts,
    * game systems and services: what playing a scene file means, in a game or
    * the editor.
@@ -65,6 +57,10 @@ public:
    */
   bool play(const std::filesystem::path& file);
 
+  /**
+   * The scene's render system, for its host (the editor, the game loop):
+   * game code uses the facilities (graphics(), meshes(), cameras(), ...).
+   */
   RenderSystem& renderSystem() { return *m_render; }
 
   /**

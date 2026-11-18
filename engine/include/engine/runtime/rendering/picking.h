@@ -14,6 +14,7 @@ namespace sfs
 
 class MeshLibrary;
 class MouseInput;
+class Registry;
 class RenderSystem;
 class Scene;
 struct CursorPickComponent;
@@ -60,6 +61,12 @@ struct PickHit
  * sees every living entity, those not yet flushed into queries included.
  */
 std::optional<PickHit> pickEntity(Scene& scene,
+                                  const MeshLibrary& meshes,
+                                  const Ray& ray,
+                                  const RenderSystem* drawnBy = nullptr);
+
+/** pickEntity() over a registry's living entities (the meshes() facility's). */
+std::optional<PickHit> pickEntity(Registry& registry,
                                   const MeshLibrary& meshes,
                                   const Ray& ray,
                                   const RenderSystem* drawnBy = nullptr);
@@ -114,5 +121,10 @@ struct SurfaceHit
  */
 std::optional<SurfaceHit>
 pickSurface(Scene& scene, const MeshLibrary& meshes, const Ray& ray);
+
+/** pickSurface() over a registry's living entities (the meshes() facility's).
+ */
+std::optional<SurfaceHit>
+pickSurface(Registry& registry, const MeshLibrary& meshes, const Ray& ray);
 
 } // namespace sfs

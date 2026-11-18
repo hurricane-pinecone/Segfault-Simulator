@@ -48,6 +48,11 @@ add_runtime_test(terrainParticleCollisionTests particles/terrainParticleCollisio
 add_runtime_test(keyboardInputTests input/keyboardInputTests.cpp)
 add_runtime_test(mouseInputTests input/mouseInputTests.cpp)
 
+# facilities/
+add_runtime_test(facilitiesTests facilities/facilitiesTests.cpp)
+sfs_event_traits(facilitiesTests FILES
+    "${CMAKE_CURRENT_SOURCE_DIR}/facilities/facilitiesTests.cpp")
+
 # sceneManager/
 add_runtime_test(sceneTests sceneManager/sceneTests.cpp)
 sfs_event_traits(sceneTests FILES

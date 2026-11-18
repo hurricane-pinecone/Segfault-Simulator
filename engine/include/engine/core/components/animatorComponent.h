@@ -24,9 +24,11 @@ namespace sfs
  *
  * Its fields are what it starts with when the scene plays, and what the
  * editor shows (posed at `time` while editing, without moving the joints).
- * A game drives it through AnimationSystem (play(), restart(), length())
- * and its fields (`playing` false holds it, `speed`, `time` seeks);
- * switching clips with a fade cross-fades between them.
+ * A game plays a clip, with a cross-fade of its own, or restarts one,
+ * through the animation() facility (play(), restart(); length() and
+ * clipNames() answer about its clips), and drives the rest through its fields
+ * (`playing` false holds it, `speed`, `time` seeks; writing `clip` switches,
+ * cross-fading over `fade`).
  *
  * @param std::string clip - the clip it plays, by name (empty: none, its
  *        model as bound)
@@ -63,10 +65,10 @@ struct AnimatorComponent
   [[sfs::range(0, 2)]] float fade = 0.2f;
   std::string source;
 
-  // As it's playing (not saved; AnimationSystem's): its clips' layers; a
-  // play() or restart() not yet taken up (and play()'s fade, -1: the `fade`
-  // field's); whether it has started, and whether a clip that doesn't loop
-  // has reached its end.
+  // As it's playing (not saved; AnimationSystem's): its clips' layers; the
+  // engine's own note of a play() or restart() not yet taken up (and play()'s
+  // fade, -1: the `fade` field's), never written by a game; whether it has
+  // started, and whether a clip that doesn't loop has reached its end.
   [[sfs::hide]] AnimationPlayback playback;
   [[sfs::hide]] float fadeRequest = -1.0f;
   [[sfs::hide]] bool restart = false;

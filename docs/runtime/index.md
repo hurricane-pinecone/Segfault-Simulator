@@ -20,6 +20,9 @@ Game     your application — window, the main loop, which scenes exist
   lifecycle and the per-frame hooks where your code runs.
 - **[Scene files](./serialization/index.md)**: saving and loading scenes,
   their style included.
+- **[Engine facilities](./facilities/index.md)**: how game code reaches the
+  engine's features (`physics()`, `navigation()`, `graphics()`, ...), from
+  every system, service, game object and scene.
 - **[Rendering](./rendering/index.md)**: the one renderer, the styles, render
   modules, sprites, meshes and lighting, and render backends.
 - **[2D and 3D physics](./systems/index.md#2d-physics)**: `PhysicsSystem2D`

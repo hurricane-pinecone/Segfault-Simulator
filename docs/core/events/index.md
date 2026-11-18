@@ -559,6 +559,12 @@ holding either outlive its scene.
 | Something happened to one entity, where only the newest matters | Entity news, read with `readLatest()`. |
 | Something to ask for and hear back about | A request with its responses. |
 | A worker's result | A broadcast, or a response through a responder. |
+| Asking the engine: a raycast, a path order, a debug line, a prefab copy | A call on a [facility](../../runtime/facilities/index.md) (`physics()`, `navigation()`, ...), answered at once. |
+
+Events are for what game systems and services tell each other. The engine's
+facilities are its API, called directly, as Unity's `Physics.Raycast` is: an
+order given to the navigation reads back in the same step, and the outcome
+comes back as news (`nav::AgentEvent`).
 
 Never put a flag (`justDied`), a message or a request field on a component
 for another system to pick up: send an event. And never send an event to

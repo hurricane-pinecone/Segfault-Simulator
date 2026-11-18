@@ -53,11 +53,11 @@ auto graph = std::make_shared<sfs::nav::LaneGraph>();
 const int a = graph->addNode({0, 0}), b = graph->addNode({400, 0});
 graph->addLane({a, b, eastLine, 11.0f, 1.0f, roadId}); // keeping left
 graph->addLane({b, a, westLine, 11.0f, 1.0f, roadId});
-nav->setLaneGraph("roads", graph);  // replaced whole when the lanes change
+navigation().setLaneGraph("roads", graph); // replaced whole when the lanes change
 ```
 
-`NavigationSystem::setLaneGraph(name, graph)` registers (or with null removes)
-a graph by name; `laneGraph(name)` hands it back. A graph is immutable once
+`navigation().setLaneGraph(name, graph)` registers (or with null removes) a
+graph by name; `navigation().laneGraph(name)` hands it back. A graph is immutable once
 handed over: plans hold a `shared_ptr` to the one they started with, so
 replacing it never disturbs a plan in progress.
 

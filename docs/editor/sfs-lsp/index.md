@@ -65,7 +65,6 @@ ignored; everything else is a warning.
 | `with-in-register` | sfs-lsp | warning | An `sfs::With` group written in `registerComponent<...>()` or `observe<...>()` is just its components, since neither binds a row. Register or observe the components themselves. |
 | `late-register` | sfs-lsp | warning | `registerComponent()` should not run once the system is in a registry, where it's ignored. Register components in `create()`. |
 | `hook-mutates` | sfs-lsp | warning | `onEntityAdded()`, `onEntityRemoved()` and `observe` callbacks should change only their own entity's components. Change other entities, and create or destroy entities and systems, in `update()`. |
-| `system-reads-system` | sfs-lsp | warning | Systems should not read other systems. Read the state another system writes on components, and send what one system tells another as an event. |
 | `per-entity-map` | sfs-lsp | warning | A system or service should not keep per-entity data in a map or set keyed by entity. Put the data on a component, in a hidden field. |
 | `own-entity` | sfs-lsp | warning | A component should not store the entity it's on. Drop the field, and use the entity the system already has. |
 | `unknown-attribute` | sfs-lsp | warning | An attribute should be standard C++, an `sfs::` one, or in a vendor's namespace. Fix the name or the namespace. |
@@ -85,6 +84,8 @@ ignored; everything else is a warning.
 | `service-reaches-registry` | sfs-lsp | warning | A Service works on the entities its events hand it and never reaches the registry, the scene or a list of entities. Do work over lists of entities in a System. |
 | `service-update-method` | sfs-lsp | warning | A Service has no update or hooks, so this is never called. Do the work in an event handler, or make it a System. |
 | `engine-internal` | sfs-lsp | warning | `sfs::detail` is the engine's internals: it changes without notice, and some of it opens what the API keeps closed. Use the public API. |
+| `system-lookup` | sfs-lsp | warning | Game code should not look systems up. Use the engine's facilities (`physics()`, `navigation()`, `graphics()`, ...) for engine features; read game state from components and scene data, and send what one part tells another as an event. |
+| `keeps-facility` | sfs-lsp | warning | A facility is valid for the step that got it: get it where you use it, and hand workers its snapshots. |
 | `bad-ignore` | sfs-codegen, sfs-lsp | warning | An `sfs-ignore` comment should name known warning rules in the right form. Fix the comment. |
 <!-- sfs-rules:end -->
 
@@ -147,13 +148,6 @@ game's own `Any` is never taken for SFS's.
   [the ECS docs](../../core/ecs/index.md) describe, and `TransformSystem`
   does), but changes to other entities, and creating or destroying entities and
   systems, belong in `update()`.
-- `system-reads-system`: `getSystem<T>()`, `tryGetSystem<T>()` or
-  `hasSystem<T>()` in a system's method, where `T` is one of the project's
-  systems. A system reads the state others write on components, and what one
-  system tells another goes through [events](../../core/events/index.md).
-  The engine's own systems
-  (`RenderSystem::debugLines()`, raycasts) are its public API and aren't
-  flagged, and game objects and UI may read systems.
 - `per-entity-map`: a system's or [service](../../core/services/index.md)'s
   member that's a map or set keyed by `sfs::Entity` or its id. Per-entity
   data goes on a component, in a hidden field.
@@ -335,6 +329,36 @@ catch the rest.
   API keeps closed. Use the public API. The SFS tree itself (a root with
   `.sfs-engine`) isn't a project, so it isn't checked.
 
+### Facilities
+
+The engine's features come from its
+[facilities](../../runtime/facilities/index.md) (`physics()`,
+`navigation()`, `graphics()`, ...), never a system lookup:
+
+- `system-lookup`: a call named `getSystem`, `tryGetSystem`, `hasSystem`,
+  `forEachSystem` or `renderSystem` (StandardScene's, for its host), with or
+  without template arguments, made on a registry or a scene (`registry->`,
+  `m_scene->`, `scene.`, `scene()`) or on nothing (the class's own), anywhere
+  in a project's code: systems, services, game objects, scenes, utils and UI
+  alike. A game's own `inventory.hasSystem()` isn't one. Engine features
+  come from the facilities; game state from components and scene data; and
+  what one part tells another goes by [event](../../core/events/index.md).
+  Lookups are for hosts and tools: the SFS tree (the engine, the editor and
+  their tests) isn't a project, so it isn't checked.
+- `keeps-facility`: a data member, static ones included, whose type (or a
+  template argument of it) is one of SFS's facilities (`sfs::facility::X`,
+  `facility::X` where SFS's names are visible, or a name brought in by
+  `using namespace sfs::facility;`, `using sfs::facility::X;` or an alias),
+  in a class deriving from `System`, `Service`, `GameObject` (a
+  `ui::Layer` included) or `Scene`, or in a component. A facility is valid for the step
+  that got it: get it where it's used (a local, a parameter), and hand
+  workers what it gives out to share (a physics snapshot, the planning
+  scheduler). A plain struct a util takes (a world of facilities for one
+  check) isn't flagged.
+- `system-reads-system` is retired: `system-lookup` covers it. Its name stays
+  reserved (names are never reused), so an `sfs-ignore` naming it is a
+  `bad-ignore`.
+
 ### Attributes outside codegen
 
 - `unknown-attribute`: an unscoped attribute that isn't standard C++, with a
@@ -350,7 +374,7 @@ A comment hides the warnings of the rules it names:
 #pragma once
 // sfs-ignore-file(no-script-type)
 
-auto& spawns = registry->getSystem<SpawnSystem>(); // sfs-ignore(system-reads-system): until spawning moves to events
+auto& spawns = registry->getSystem<SpawnSystem>(); // sfs-ignore(system-lookup): until spawning moves to events
 
 // sfs-ignore-next-line(own-entity)
 state.entity = entity;
@@ -534,8 +558,8 @@ shell, or put the engine's `bin/` on your `PATH`.
 The server attaches in an SFS project (the folder with `project.sfsproj`) or,
 failing that, the SFS source tree, whose root has a `.sfs-engine` marker file.
 The engine's samples have their own `project.sfsproj`, so they are projects of
-their own. Outside a project (the SFS source tree included) the
-`system-reads-system` lint is off, as it needs the project's list of systems.
+their own. Outside a project (the SFS source tree included) the lints that
+need a project (`system-lookup`, `engine-internal`) are off.
 
 ## Neovim
 
@@ -628,10 +652,10 @@ with the folder holding `project.sfsproj` (or `.sfs-engine`) as the root.
 
 ### Turning rules off
 
-`initializationOptions: { "disabledRules": ["system-reads-system"] }` turns
+`initializationOptions: { "disabledRules": ["per-entity-map"] }` turns
 rules off for you, in every file; it's the per-user counterpart of
 `sfs-ignore`. Errors and `bad-ignore` can't be turned off. In Neovim, add
-`init_options = { disabledRules = { "system-reads-system" } }` beside `cmd`.
+`init_options = { disabledRules = { "per-entity-map" } }` beside `cmd`.
 
 ## Checking from the command line
 
@@ -760,7 +784,7 @@ query, a registration or an observer, `term`: `required`, `any`, `with` or
 | `consumes` | `consumer<E>()`. |
 | `requests` | `requester<R>()`, and a requester's `request(entity, R{...})`. |
 | `responds` | A responder's `respond`, `progress` and `fail`, to the response type sent. |
-| `reads-system` | `getSystem<T>()`, `tryGetSystem<T>()`, `hasSystem<T>()` of another system: what the `system-reads-system` rule flags. |
+| `reads-system` | `getSystem<T>()`, `tryGetSystem<T>()`, `hasSystem<T>()` of another system: lookups the `system-lookup` rule flags. |
 | `uses-util` | An `#include` of a utils file's header. |
 
 ### Who an edge is from

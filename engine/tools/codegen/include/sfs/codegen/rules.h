@@ -87,6 +87,8 @@ enum class RuleId : uint8_t
   ServiceReachesRegistry,
   ServiceUpdateMethod,
   EngineInternal,
+  SystemLookup,
+  KeepsFacility,
   BadIgnore,
   ConstexprName,
   NestedTernary,
@@ -119,8 +121,9 @@ struct RuleInfo
   /** Its diagnostics mark a deprecated name (the LSP Deprecated tag). */
   bool deprecated;
   /**
-   * Nothing reports it yet: it's kept out of completion, the docs and
-   * sfs-ignore until something does.
+   * Nothing reports it, yet or any more (a retired rule keeps its row, since
+   * names are never reused): it's kept out of completion, the docs and
+   * sfs-ignore.
    */
   bool reserved;
   /** One sentence: the docs table, completion and hover. */

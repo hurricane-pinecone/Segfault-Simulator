@@ -1,6 +1,8 @@
 #pragma once
 
+#include <glm/glm/ext/matrix_float4x4.hpp>
 #include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
 
 #include <cmath>
 
@@ -87,5 +89,21 @@ struct Rect
 
   glm::vec2 lo{0.0f}, hi{0.0f};
 };
+
+/**
+ * THE measure of a mounted part's box as planned (one function: an agent's
+ * boxes, Traffic's, and a game's own planners alike): the box lo..hi of a
+ * collider whose frame is `inAgent` in the agent's own frame (level, its
+ * origin the reference point: x along it, heights up from the agent's
+ * origin), bounded there, exactly where it's held. Its true size: no tilt is
+ * ever baked in (the ground's tilt is put on per checked pose by stanceOf()).
+ * @param inAgent the collider's frame in the agent's
+ * @param lo the collider's low corner, in its own frame
+ * @param hi its high corner
+ * @return the box, its bottom never below 0
+ */
+Box3 mountedBox(const glm::mat4& inAgent,
+                const glm::vec3& lo,
+                const glm::vec3& hi);
 
 } // namespace sfs::nav

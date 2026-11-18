@@ -228,11 +228,24 @@ to a registry, with its registry set: it registers components and observers,
 sets its time step and builds what it builds once; the constructor only
 initialises members), `update(double dt)` (per frame), `lateUpdate(double dt)` (per
 frame, after the game objects; see [Late update](#late-update)) and
-`render()` (per frame, after update). Add it to a scene and fetch it later:
+`render()` (per frame, after update). Add it to a scene:
 
 ```cpp
 scene.addSystem<DriftSystem>();
+```
 
+Game code never looks a system up. The engine's features (raycasts, path
+orders, render modules, debug lines, prefab copies) come from its
+[facilities](../../runtime/facilities/index.md): `physics()`, `navigation()`,
+`graphics()` and the rest, on every system, service, game object and scene.
+Game state comes from components and scene data, and what one part tells
+another goes by [event](../events/index.md). The `system-lookup` lint flags a
+lookup in a project's code.
+
+Lookups are for hosts and tools: the game loop, the scene serializer, the debug
+UI, the editor and tests.
+
+```cpp
 DriftSystem& drift = scene.getSystem<DriftSystem>(); // system must be present
 if (scene.hasSystem<DriftSystem>()) { /* ... */ }
 
@@ -252,8 +265,8 @@ catches it, tells the player in a message box and ends the game. Use
 A lookup finds the first system added that is a `T` (that type, or one
 derived from it). The registry remembers the answer for each type until a
 system is added or removed, so a lookup costs the same however many systems
-the scene has, and wherever `T` is among them. Systems still don't read other
-systems: lookups are for scripts, tools and setup.
+the scene has, and wherever `T` is among them. The facilities find their
+engine systems the same way.
 
 - Any thread may look a system up, but add and remove systems only while no
   other thread is looking one up. A lookup that overlaps a change anyway

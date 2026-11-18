@@ -21,8 +21,8 @@ class StandardScene;
  * its next update, and navigation sees the static ones from there), and its
  * game object scripts are started (onCreate), as when a scene plays.
  *
- * Every StandardScene has one: `registry->tryGetSystem<PrefabSystem>()` from
- * a system, `scene().tryGetSystem<PrefabSystem>()` from a game object.
+ * Every StandardScene has one. Game code uses it through its prefabs()
+ * facility (facility::Prefabs), from a system, service, game object or scene.
  */
 class PrefabSystem : public System
 {

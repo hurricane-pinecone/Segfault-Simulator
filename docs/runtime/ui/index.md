@@ -345,7 +345,7 @@ UTF-8, and glyphs are baked as they're first needed, so any language's letters
 work if the font has them.
 
 The default font and colours are the scene's theme:
-`render.module<sfs::UiModule>()->theme()` (its `font`, `text`, `button`
+`graphics().module<sfs::UiModule>()->theme()` (its `font`, `text`, `button`
 colours, `accent`...). A game usually sets its font there once, in a layer's
 `onCreate`.
 

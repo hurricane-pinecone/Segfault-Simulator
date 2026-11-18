@@ -89,6 +89,7 @@ nav:
   - Runtime:
       - runtime/index.md
       - Game & scenes: runtime/game-and-scenes/index.md
+      - Engine facilities: runtime/facilities/index.md
       - Scene files: runtime/serialization/index.md
       - Rendering:
           - runtime/rendering/index.md

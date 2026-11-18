@@ -46,7 +46,7 @@ done to, and is coloured by what it does:
 | `sends` | `send(E{...})`, `broadcast<E>()`. |
 | `consumes` | `consumer<E>()`. |
 | `requests`, `responds` | A requester asking, a responder answering. |
-| `reads-system` | `getSystem<T>()` of another system, which the [`system-reads-system`](../sfs-lsp/index.md#rules) rule warns about. |
+| `reads-system` | `getSystem<T>()` of another system, which the [`system-lookup`](../sfs-lsp/index.md#facilities) rule warns about. |
 | `uses-util` | An `#include` of a utils file's header. |
 
 The [export's documentation](../sfs-lsp/index.md#architecture-export) has

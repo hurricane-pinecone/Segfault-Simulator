@@ -21,7 +21,9 @@
 #include "engine/runtime/navigation/fleet.h"
 #include "engine/runtime/navigation/geometry.h"
 #include "engine/runtime/navigation/planScheduler.h"
+#include "engine/runtime/navigation/vehicle/speedProfile.h"
 #include "engine/runtime/navigation/vehicle/vehicleKind.h"
+#include "engine/runtime/navigation/vehicle/vehiclePath.h"
 #include "engine/runtime/navigation/vehicle/vehicleSpec.h"
 #include "engine/runtime/sceneManager/scene.h"
 #include "engine/runtime/scriptableObjects/scriptableObjects.h"
@@ -39,6 +41,7 @@
 #include <glm/glm/gtc/quaternion.hpp>
 #include <glm/glm/trigonometric.hpp>
 
+#include <algorithm>
 #include <any>
 #include <atomic>
 #include <chrono>
@@ -48,6 +51,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <memory>
 #include <string>
 #include <thread>
@@ -229,6 +233,26 @@ struct World
     return events;
   }
 };
+
+// A straight path a game made for `agent`, along x from x0 to x1 at y,
+// profiled by the agent's own spec.
+std::shared_ptr<const nav::AgentPath>
+straightPath(const nav::AgentSpec& agent, float x0, float x1, float y)
+{
+  nav::vehicle::VehiclePath p;
+
+  for (float x = x0; x <= x1 + 1.0e-4f; x += 0.1f)
+  {
+    nav::vehicle::PathPoint q;
+    q.s = x - x0;
+    q.pose = {{x, y}, 0.0f};
+    p.points.push_back(q);
+  }
+
+  p.start = p.points.front().pose;
+  nav::vehicle::profile(p, nav::vehicle::modelOf(agent));
+  return std::make_shared<nav::vehicle::VehicleAgentPath>(std::move(p));
+}
 
 void registerTruckSpec()
 {
@@ -609,7 +633,7 @@ int main()
   }
 
   TEST("a mounted tool (rigid hitch) should join the agent's boxes; one "
-       "left out (setActive false) should leave the fleet till it's back")
+       "left out (active false) should leave the fleet till it's back")
   {
     Specs specs;
     World world;
@@ -618,18 +642,18 @@ int main()
     world.scene.update(FRAME);
     const auto id = static_cast<nav::Fleet::AgentId>(car.getId());
     const std::size_t alone = world.navigation.fleet().spec(id)->boxes.size();
-    NavigationSystem::Hitch mounted;
+    NavHitch mounted;
     mounted.towed = tool;
     mounted.rigid = true;
-    world.navigation.hitch(car, mounted);
+    car.getComponent<NavAgentComponent>()->hitch = mounted;
     world.scene.update(FRAME);
     const nav::AgentSpec* spec = world.navigation.fleet().spec(id);
     CHECK(spec->boxes.size() == alone + 1);
     CHECK(!spec->trailer);
-    world.navigation.setActive(car, false);
+    car.getComponent<NavAgentComponent>()->active = false;
     world.scene.update(FRAME);
     CHECK(!world.navigation.fleet().has(id));
-    world.navigation.setActive(car, true);
+    car.getComponent<NavAgentComponent>()->active = true;
     world.scene.update(FRAME);
     CHECK(world.navigation.fleet().has(id));
   }
@@ -644,12 +668,12 @@ int main()
     world.scene.update(FRAME);
     const auto id = static_cast<nav::Fleet::AgentId>(car.getId());
     const std::size_t alone = world.navigation.fleet().spec(id)->boxes.size();
-    NavigationSystem::Hitch mounted;
+    NavHitch mounted;
     mounted.towed = tool;
     mounted.rigid = true;
-    world.navigation.hitch(car, mounted);
-    world.navigation.setSpeedCap(car, 0.0f);
-    world.navigation.setActive(car, false);
+    car.getComponent<NavAgentComponent>()->hitch = mounted;
+    car.getComponent<NavAgentComponent>()->speedCap = 0.0f;
+    car.getComponent<NavAgentComponent>()->active = false;
     world.scene.update(FRAME);
     CHECK(!world.navigation.fleet().has(id));
     world.scene.destroyEntity(car);
@@ -659,12 +683,13 @@ int main()
     world.scene.update(FRAME);
     CHECK(world.navigation.fleet().has(id));
     CHECK(world.navigation.fleet().spec(id)->boxes.size() == alone);
-    const NavAgentComponent* fresh = next.getComponent<NavAgentComponent>();
+    const NavAgentComponent* fresh =
+        next.getComponent<const NavAgentComponent>();
     CHECK(!fresh->hitch && fresh->active && std::isinf(fresh->speedCap));
   }
 
   TEST("a mounted part's box should be its true size in the agent's own "
-       "frame (mountedBox): as its mount holds it (Hitch::mount), never "
+       "frame (mountedBox): as its mount holds it (NavHitch::mount), never "
        "with the body's pitch baked in; exactly where it's held")
   {
     Specs specs;
@@ -681,13 +706,13 @@ int main()
     tool.getComponent<TransformComponent>()->rotation = nosedDown * lifted;
     tool.getComponent<TransformComponent>()->position = glm::vec3(
         glm::mat4_cast(nosedDown) * glm::vec4(5.0f, 0.0f, 1.5f, 1.0f));
-    NavigationSystem::Hitch mounted;
+    NavHitch mounted;
     mounted.towed = tool;
     mounted.rigid = true;
     // (Its authored mount, lowered: level, 5 m ahead, 1 m up.)
     mounted.mount =
         glm::translate(glm::mat4(1.0f), glm::vec3(5.0f, 0.0f, 1.0f));
-    world.navigation.hitch(car, mounted);
+    car.getComponent<NavAgentComponent>()->hitch = mounted;
     world.scene.update(FRAME);
     const auto id = static_cast<nav::Fleet::AgentId>(car.getId());
     const nav::AgentSpec* spec = world.navigation.fleet().spec(id);
@@ -703,10 +728,9 @@ int main()
       CHECK(std::abs(b.half - 2.0f) < 1.0e-4f);
       CHECK(std::abs(b.bottom - 0.5f) < 1.0e-4f);
       CHECK(std::abs(b.top - 1.5f) < 1.0e-4f);
-      const nav::Box3 same =
-          NavigationSystem::mountedBox(*mounted.mount,
-                                       glm::vec3(-1.5f, -2.0f, -0.5f),
-                                       glm::vec3(1.5f, 2.0f, 0.5f));
+      const nav::Box3 same = nav::mountedBox(*mounted.mount,
+                                             glm::vec3(-1.5f, -2.0f, -0.5f),
+                                             glm::vec3(1.5f, 2.0f, 0.5f));
       CHECK(b.back == same.back && b.front == same.front);
       CHECK(b.bottom == same.bottom && b.top == same.top);
     }
@@ -714,7 +738,7 @@ int main()
     // (No mount given: where it's held now relative to the agent, the
     // lift's 14 degrees but not the body's 5: in the agent's own frame.)
     mounted.mount.reset();
-    world.navigation.hitch(car, mounted);
+    car.getComponent<NavAgentComponent>()->hitch = mounted;
     world.scene.update(FRAME);
     spec = world.navigation.fleet().spec(id);
     CHECK(spec && spec->boxes.size() == 2u);
@@ -730,7 +754,7 @@ int main()
     }
   }
 
-  TEST("a towed trailer: its box measured from its axle (Hitch::axle off "
+  TEST("a towed trailer: its box measured from its axle (NavHitch::axle off "
        "its origin), its drawbar to that axle, and the angle it was left at "
        "taken while nothing moves the agent")
   {
@@ -741,12 +765,12 @@ int main()
     Entity trailer = world.solid({-6.0f, 0.0f, 0.5f}, {4.0f, 2.0f, 1.0f});
     trailer.getComponent<TransformComponent>()->rotation =
         glm::angleAxis(0.2f, glm::vec3(0.0f, 0.0f, 1.0f));
-    NavigationSystem::Hitch towed;
+    NavHitch towed;
     towed.towed = trailer;
     towed.hitchBehind = 1.0f;
     towed.drawbar = 4.0f;
     towed.axle = -0.5f;
-    world.navigation.hitch(car, towed);
+    car.getComponent<NavAgentComponent>()->hitch = towed;
     world.scene.update(FRAME);
     const auto id = static_cast<nav::Fleet::AgentId>(car.getId());
     const nav::AgentSpec* spec = world.navigation.fleet().spec(id);
@@ -760,6 +784,86 @@ int main()
     }
 
     CHECK(std::abs(world.navigation.fleet().hitch(id) - -0.2f) < 1.0e-3f);
+  }
+
+  TEST("a speed cap written on NavAgentComponent should hold the agent, and "
+       "reach the fleet at once for every order that plans, as at its update")
+  {
+    Specs specs;
+    World world;
+    Entity car = world.car({0.0f, 0.0f}, 0.0f, specs.car);
+    world.scene.update(FRAME);
+    const auto id = static_cast<nav::Fleet::AgentId>(car.getId());
+    NavAgentComponent* agent = car.getComponent<NavAgentComponent>();
+    const nav::AgentSpec* spec = world.navigation.fleet().spec(id);
+    CHECK(spec != nullptr);
+    const nav::AgentSpec planned = spec ? *spec : nav::AgentSpec{};
+
+    agent->speedCap = 0.0f;
+    world.navigation.setPath(car, straightPath(planned, 0.0f, 30.0f, 0.0f));
+    CHECK(world.navigation.fleet().speedCap(id) == 0.0f);
+
+    for (int frame = 0; frame < 90; ++frame)
+      world.step();
+
+    CHECK(world.navigation.fleet().along(id) < 0.2f);
+    agent->speedCap = 2.0f;
+    world.navigation.planAhead(car, {});
+    CHECK(world.navigation.fleet().speedCap(id) == 2.0f);
+    agent->speedCap = 1.5f;
+    (void)world.navigation.planNow(car, {});
+    CHECK(world.navigation.fleet().speedCap(id) == 1.5f);
+    agent->speedCap = 1.0f;
+    world.navigation.requestGoal(car, {{{30.0f, 0.0f}, 0.0f}});
+    CHECK(world.navigation.fleet().speedCap(id) == 1.0f);
+    agent->speedCap = 0.5f;
+    world.step();
+    CHECK(world.navigation.fleet().speedCap(id) == 0.5f);
+    agent->speedCap = std::numeric_limits<float>::infinity();
+    float fastest = 0.0f;
+
+    for (int frame = 0; frame < 150; ++frame)
+    {
+      world.step();
+      fastest = std::max(fastest, world.navigation.fleet().speed(id));
+    }
+
+    CHECK(fastest > 2.0f);
+  }
+
+  TEST("an agent's news should name the other agent it's about by its "
+       "entity (AgentEvent::other)")
+  {
+    Specs specs;
+    World world;
+    Entity car = world.car({0.0f, 0.0f}, 0.0f, specs.car);
+    Entity parked = world.car({20.0f, 0.0f}, 0.0f, specs.car);
+    world.scene.update(FRAME);
+    const auto id = static_cast<nav::Fleet::AgentId>(car.getId());
+    const nav::AgentSpec* spec = world.navigation.fleet().spec(id);
+    CHECK(spec != nullptr);
+    const nav::AgentSpec planned = spec ? *spec : nav::AgentSpec{};
+
+    world.navigation.setPath(car, straightPath(planned, 0.0f, 40.0f, 0.0f));
+    bool named = false;
+    bool none = true;
+
+    for (int frame = 0; frame < 30 * 10 && !named; ++frame)
+    {
+      world.step();
+
+      for (auto [about, news] : world.agentNews.read())
+      {
+        if (news.what.kind == nav::Fleet::Event::Kind::NeedsPlan &&
+            about == car)
+          named = news.other == parked;
+
+        none = none && (news.what.other != 0 || !news.other.isValid());
+      }
+    }
+
+    CHECK(named);
+    CHECK(none);
   }
 
   return testing::report("navigationSystemTests");

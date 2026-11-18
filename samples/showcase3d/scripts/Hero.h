@@ -29,7 +29,6 @@ public:
 protected:
   void onCreate(sfs::Scene& scene) override
   {
-    m_physics = scene.tryGetSystem<sfs::PhysicsSystem3D>();
     m_director = scene.tryFindObject<IslandDirector>();
     m_model = scene.findEntity("Hero/Model");
     const auto* transform = entity().getComponent<sfs::TransformComponent>();
@@ -73,7 +72,7 @@ protected:
 
   void onUpdate(double deltaTime) override
   {
-    if (!m_physics || !m_physics->hasBody(entity()))
+    if (!physics().hasBody(entity()))
       return;
 
     const float dt = static_cast<float>(std::min(deltaTime, 0.05));
@@ -83,7 +82,7 @@ protected:
     if (!sfs::expect(transform, entity()))
       return;
 
-    glm::vec3 velocity = m_physics->velocity(entity());
+    glm::vec3 velocity = physics().velocity(entity());
 
     if (transform->position.z < fallLimit)
     {
@@ -97,7 +96,7 @@ protected:
     sfs::Ray ray;
     ray.origin = transform->position - glm::vec3(0.0f, 0.0f, 0.02f);
     ray.direction = glm::vec3(0.0f, 0.0f, -1.0f);
-    const auto below = m_physics->raycast(ray, 0.15f);
+    const auto below = physics().raycast(ray, 0.15f);
     m_grounded = below && below->entity != entity() && velocity.z < 2.0f;
 
     if (m_grounded)
@@ -183,7 +182,7 @@ protected:
     if (velocity.z < 0.0f && m_dashClock <= 0.0f)
       velocity.z -= 7.0f * dt;
 
-    m_physics->setVelocity(entity(), glm::vec3(run, velocity.z));
+    physics().setVelocity(entity(), glm::vec3(run, velocity.z));
 
     // The model: turned the way it faces, squashed back into shape.
     m_stretch += (1.0f - m_stretch) * std::min(12.0f * dt, 1.0f);
@@ -217,8 +216,7 @@ private:
 
     transform->position = m_spawn + glm::vec3(0.0f, 0.0f, 0.5f);
 
-    if (m_physics)
-      m_physics->setVelocity(entity(), glm::vec3(0.0f));
+    physics().setVelocity(entity(), glm::vec3(0.0f));
 
     m_dashClock = 0.0f;
 
@@ -235,7 +233,6 @@ private:
 
   void squash(float stretch) { m_stretch = stretch; }
 
-  sfs::PhysicsSystem3D* m_physics = nullptr;
   IslandDirector* m_director = nullptr;
   sfs::Entity m_model;
   glm::vec3 m_spawn{0.0f};

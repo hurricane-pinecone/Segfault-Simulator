@@ -46,28 +46,32 @@ the scene plays:
 | `fade` | How long switching `clip` cross-fades, in seconds |
 | `source` | The model asset (`asset:<id>`) whose clips it plays; empty: its skinned meshes' own model. Another model's clips play on this one's joints by name (a shared animation library for characters with the same skeleton) |
 
-Game code drives it through `AnimationSystem` (what needs its clips or
-starts one) and the component's fields (the rest). The component is plain
-data: its hidden fields (`playback`, `finished`...) are the system's to keep.
+Game code drives it through the [animation facility](../facilities/index.md),
+`animation()`, for one-off orders (`play(entity, clip, fade)` starts a clip
+with a cross-fade of its own, `restart(entity)` starts the one playing again)
+and what it knows of the clips (`length(entity, clip)`, `clipNames(entity)`),
+and through the component's fields for the steady state (`speed`, `playing`,
+`time`). The component's hidden fields (`playback`, `finished`...) are the
+system's to keep.
 
 ```cpp
-auto& animation = registry->getSystem<sfs::AnimationSystem>();
 sfs::AnimatorComponent* animator = entity.getComponent<sfs::AnimatorComponent>();
 if (!sfs::expect(animator, entity))
   return;
-animation.play(entity, "walk", 0.25f); // cross-fade to walk over a quarter second
+animation().play(entity, "walk", 0.25f); // cross-fade to walk over a quarter second
 animator->speed = walkSpeed / 1.4f;
 if (animator->clip == "pick-up" && animator->finished)
-  animation.play(entity, "idle", 0.2f);
-float seconds = animation.length(entity, "sprint");
-animator->playing = false;             // hold the pose; true carries on
-animator->time = 0.5f;                 // seek
-animation.restart(entity);             // the clip playing, from its start
+  animation().play(entity, "idle", 0.2f);
+float seconds = animation().length(entity, "sprint");
+animator->playing = false;               // hold the pose; true carries on
+animator->time = 0.5f;                   // seek
+animation().restart(entity);             // the clip playing, from its start
 ```
 
 `play()` with a fade blends the clip in while the others fade out; playing
 again before a fade ends keeps the clips fading out (up to four at once), so
-quick changes stay smooth. A clip's length and the clip names are known once
+quick changes stay smooth. Writing `clip` switches too, cross-fading over the
+component's own `fade`. A clip's length and the clip names are known once
 its model has loaded (the first update after the scene starts, in a game).
 Animation events are not supported yet.
 
@@ -76,7 +80,7 @@ Animation events are not supported yet.
 Every scene has an `AnimationSystem` (StandardScene adds it). Each update it:
 
 1. moves each animator's time on by the update's seconds times its `speed`
-   (times `AnimationSystem::setTimeScale()`), or not at all while the game is
+   (times `AnimationSystem::setTimeScale()`, the host's), or not at all while the game is
    paused (`Registry::setPaused()`); `speed` 0 holds one;
 2. samples its clips and blends them by their cross-fade weights. The nodes its
    clips move start from their rest pose, so a channel one clip has and the
