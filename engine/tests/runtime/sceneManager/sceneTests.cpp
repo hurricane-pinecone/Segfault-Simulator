@@ -323,8 +323,8 @@ private:
   EventConsumer<BeatEvent> m_beats;
 };
 
-// Counts beats with a handler (before its onUpdate) and reads them again in
-// onUpdate: the same span.
+// Counts beats with a handler, its member function (before its onUpdate),
+// and reads them again in onUpdate: the same span.
 class BeatCounter : public GameObject
 {
 public:
@@ -334,8 +334,8 @@ public:
 protected:
   void onCreate(Scene& scene) override
   {
-    m_beats = scene.events().consumer<BeatEvent>().onEvent(
-        [this](const BeatEvent& beat) { handled.push_back(beat.number); });
+    m_beats =
+        scene.events().consumer<BeatEvent>().onEvent(&BeatCounter::onBeat);
   }
   void onUpdate(double) override
   {
@@ -343,6 +343,8 @@ protected:
   }
 
 private:
+  void onBeat(const BeatEvent& beat) { handled.push_back(beat.number); }
+
   EventConsumer<BeatEvent> m_beats;
 };
 

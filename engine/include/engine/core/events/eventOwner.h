@@ -13,6 +13,16 @@ namespace sfs::detail
 class EventQueueBase;
 struct EventQueueLink;
 
+/**
+ * What owns event handles: a system or a service (through EventVerbs) or a
+ * game object. A handler given as a member function is called on it.
+ */
+class EventUser
+{
+public:
+  virtual ~EventUser() = default;
+};
+
 /** A consumer an owner made: its queue's link and its slot there. */
 struct ConsumerRef
 {
@@ -51,6 +61,12 @@ struct EventHandler
 struct EventOwner
 {
   EventOwner() = default;
+  /**
+   * An owner part of `user`, whose member functions its handles' handlers
+   * may be.
+   * @param user the system, service or game object it's part of
+   */
+  explicit EventOwner(EventUser* user) : user(user) {}
   EventOwner(const EventOwner&) = delete;
   /**
    * Lets go of its consumers' slots, so a handle that outlives it (moved
@@ -127,6 +143,11 @@ struct EventOwner
   std::vector<ConsumerRef> consumers;
   /** Their handlers, in the order given, kept as `consumers` is. */
   std::vector<EventHandler> handlers;
+  /**
+   * The system, service or game object it's part of, which handlers given as
+   * member functions are called on (null: none).
+   */
+  EventUser* user = nullptr;
 };
 
 } // namespace sfs::detail

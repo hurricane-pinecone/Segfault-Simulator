@@ -144,6 +144,52 @@ m_deaths = consumer<EnemyDiedEvent>().onEvents(
 A `read()` in `update()` on a consumer with handlers gives the same events
 the handlers just got.
 
+### Member functions as handlers
+
+A handler can be a member function of the system (or service, or object)
+that makes the consumer: pass a pointer to it. Anything longer than a line
+reads best this way, with `create()` a list of what handles what and each
+handler a named function of its own:
+
+```cpp
+class LootSystem : public sfs::System
+{
+protected:
+  void create() override
+  {
+    m_deaths = consumer<EnemyDiedEvent>().onEvent(&LootSystem::onEnemyDied);
+    m_opened = consumer<ChestOpenedEvent>().onEvent(&LootSystem::onChestOpened);
+  }
+
+private:
+  void onEnemyDied(const EnemyDiedEvent& died)
+  {
+    if (const LootTable* table = died.enemy.getComponent<LootTable>())
+      dropLoot(died.enemy, *table);
+  }
+
+  void onChestOpened(const sfs::Entity& chest, const ChestOpenedEvent& opened)
+  {
+    // ...
+  }
+
+  sfs::EventConsumer<EnemyDiedEvent> m_deaths;
+  sfs::EventConsumer<ChestOpenedEvent> m_opened;
+};
+```
+
+The member function takes what the handler would: `(const E&)`,
+`(const sfs::Entity&, const E&)` for entity news, a range for `onEvents()`,
+and so on. It may be `const`, and private. It's called on the handle's owner,
+just as a lambda capturing `this` would be, and costs the same apart from
+the call going through the member pointer. The compiler checks its
+parameters as it checks a lambda's, and that it belongs to a system, service
+or object; one of another class than the owner is logged as the handler is
+given, and never runs. Every verb that takes a handler takes a member
+function: `onEvent()`, `onEvents()`, `onLatest()`, `onLatestEvents()`, and
+a requester's `onResponse()`, `onProgress()`, `onFailure()` and their batch
+forms.
+
 ### News about one entity
 
 Rows of `[[sfs::event_entity_news]]` give the entity too:
@@ -257,7 +303,7 @@ requests are served by the same system; give another server's responses a
 type of their own.
 
 The asker makes a *requester* in `create()` and gives it a handler for each
-role in one chain:
+role in one chain, here its own member functions:
 
 ```cpp
 class EnemyAISystem : public sfs::System
@@ -266,15 +312,9 @@ protected:
   void create() override
   {
     m_paths = requester<PathRequest>()
-                  .onProgress([this](const sfs::Entity& enemy,
-                                     const PathLegResponse& leg)
-                              { startOn(enemy, leg.points); })
-                  .onResponse([this](const sfs::Entity& enemy,
-                                     const PathFoundResponse& found)
-                              { follow(enemy, found.points); })
-                  .onFailure([this](const sfs::Entity& enemy,
-                                    const PathFailedResponse&)
-                             { wander(enemy); });
+                  .onProgress(&EnemyAISystem::onPathLeg)
+                  .onResponse(&EnemyAISystem::onPathFound)
+                  .onFailure(&EnemyAISystem::onPathFailed);
   }
 
   void update(double) override
@@ -285,6 +325,21 @@ protected:
   }
 
 private:
+  void onPathFailed(const sfs::Entity& enemy, const PathFailedResponse&)
+  {
+    wander(enemy);
+  }
+
+  void onPathFound(const sfs::Entity& enemy, const PathFoundResponse& found)
+  {
+    follow(enemy, found.points);
+  }
+
+  void onPathLeg(const sfs::Entity& enemy, const PathLegResponse& leg)
+  {
+    startOn(enemy, leg.points);
+  }
+
   sfs::EventRequester<PathRequest> m_paths;
 };
 ```
@@ -555,9 +610,9 @@ In development builds:
 | `requester<R>()` | System or Service `create()`; `scene().events()` in `onCreate` | A requester's builder. |
 | `broadcast<E>()` | System, Service; `scene().events()` | A broadcast for a worker. |
 | `read()`, `readLatest()` | `EventConsumer` | What arrived since the last update; the newest per entity. |
-| `onEvent(fn)`, `onEvents(fn)`, `onLatest(fn)`, `onLatestEvents(fn)` | `EventConsumer` | Handlers, run before the owner's update. |
+| `onEvent(fn)`, `onEvents(fn)`, `onLatest(fn)`, `onLatestEvents(fn)` | `EventConsumer` | Handlers, run before the owner's update: a callable, or `&Owner::member`. |
 | `unread()`, `skip()` | `EventConsumer` | How many it hasn't read; pass them all. |
-| `onResponse(fn)`, `onProgress(fn)`, `onFailure(fn)`, `onResponses(fn)`, `onProgresses(fn)`, `onFailures(fn)`, `ignoreFailure()` | requester builder | Handlers by role: the success required, a declared failure handled or ignored, progress optional. |
+| `onResponse(fn)`, `onProgress(fn)`, `onFailure(fn)`, `onResponses(fn)`, `onProgresses(fn)`, `onFailures(fn)`, `ignoreFailure()` | requester builder | Handlers by role (a callable, or `&Owner::member`): the success required, a declared failure handled or ignored, progress optional. |
 | `request()`, `waiting()`, `cancel()` | `EventRequester` | See above. |
 | `respond()`, `progress()`, `fail()`, `superseded()`, `key()` | `Responder` | See above. |
 | `respond(entity, s)`, `progress(entity, p)`, `fail(entity, f)`, `open(entity)` | `EventConsumer` of a request type | Answers every open request about an entity later, by entity. |

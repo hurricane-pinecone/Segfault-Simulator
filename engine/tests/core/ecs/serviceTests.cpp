@@ -348,6 +348,62 @@ private:
   std::unique_ptr<WorkerPool> m_pool;
 };
 
+// A scout that takes orders, asks for searches and serves them itself, every
+// handler a member function: orders by entity, the requests with their
+// responders, and the request's three roles, some of them const.
+class Scout : public Service
+{
+public:
+  std::vector<int> orders;
+  std::vector<int> legs;
+  std::vector<int> found;
+  mutable std::vector<int> failed;
+
+protected:
+  void create() override
+  {
+    m_orders = consumer<OrderEvent>().onEvent(&Scout::onOrder);
+    m_served = consumer<SearchRequest>().onEvent(&Scout::onSearch);
+    m_searches = requester<SearchRequest>()
+                     .onProgress(&Scout::onLeg)
+                     .onResponse(&Scout::onFound)
+                     .onFailure(&Scout::onFailed);
+  }
+
+private:
+  void onFailed(const Entity&, const FailedResponse& failure) const
+  {
+    failed.push_back(failure.value);
+  }
+  void onFound(const Entity&, const FoundResponse& response)
+  {
+    found.push_back(response.value);
+  }
+  void onLeg(const Entity&, const LegResponse& leg) { legs.push_back(leg.leg); }
+  void onOrder(const Entity& entity, const OrderEvent& order)
+  {
+    orders.push_back(order.value);
+    m_searches.request(entity, SearchRequest{order.value});
+  }
+  void onSearch(const Entity&,
+                const SearchRequest& search,
+                const Responder<SearchRequest>& responder) const
+  {
+    if (search.value < 0)
+    {
+      responder.fail(FailedResponse{search.value});
+      return;
+    }
+
+    responder.progress(LegResponse{search.value});
+    responder.respond(FoundResponse{search.value});
+  }
+
+  EventConsumer<OrderEvent> m_orders;
+  EventConsumer<SearchRequest> m_served;
+  EventRequester<SearchRequest> m_searches;
+};
+
 // One step of a headless host: the frame boundary, then services before the
 // systems.
 void step(Registry& registry, std::initializer_list<System*> systems = {})
@@ -566,6 +622,25 @@ int main()
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
 
     CHECK(sawSuperseded.load());
+  }
+
+  TEST("a service's handlers should be its member functions: a consumer's, "
+       "a request server's and a requester's by role")
+  {
+    Registry registry;
+    Scout& scout = registry.addService<Scout>();
+    const Entity a = registry.createEntity();
+    const Entity b = registry.createEntity();
+    registry.events().send(a, OrderEvent{1});
+    registry.events().send(b, OrderEvent{-2});
+
+    for (int i = 0; i < 4; ++i)
+      step(registry);
+
+    CHECK((scout.orders == std::vector<int>{1, -2}));
+    CHECK((scout.legs == std::vector<int>{1}));
+    CHECK((scout.found == std::vector<int>{1}));
+    CHECK((scout.failed == std::vector<int>{-2}));
   }
 
   TEST("a service's requester should hear its responses at its next run, a "

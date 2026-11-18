@@ -21,7 +21,9 @@ a compile error, not a run-time check:
   (`onEvent()`, `onEvents()`, `onLatest()`, `onLatestEvents()`) give an
   `EventConsumerBuilder<E, true>`, and only that one converts to
   `EventConsumer<E>`: the conversion's `static_assert(kHandled)` is the error
-  for a consumer with no handler.
+  for a consumer with no handler. The steps forward their argument to the
+  consumer's verb, so a member function of the service reaches the
+  consumer's member overload with no builder overload of its own.
 - What a System has and a Service doesn't (`query`, `getEntities`,
   `registerComponent`, `observe`, the `registry` pointer) is System's own, not
   EventVerbs', so in a Service those names aren't declared: a use fails to

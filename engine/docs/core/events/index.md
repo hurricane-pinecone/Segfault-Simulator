@@ -265,7 +265,31 @@ Rows of requests and responses carry their ticket beside the key and stamp.
 A system and a service (both through `EventVerbs`) and a game object each
 hold a `detail::EventOwner`: an update stamp, the consumers it made, and
 their handlers (`std::function<void(EventQueueBase&, uint32_t)>`, made once
-in `create()`).
+in `create()`), and `user`, the object it's part of. `EventVerbs` and
+`GameObject` derive from `detail::EventUser`, an empty polymorphic base, and
+initialise their owner with `this`.
+
+- Member-function handlers: each handler-taking verb (a consumer's
+  `onEvent`/`onEvents`/`onLatest`/`onLatestEvents`, & and && alike, and the
+  requester builder's six role steps) has an overload for `TMember TClass::*`,
+  which partial ordering prefers to the callable template. It binds the
+  member to the handle's owner once, as the handler is given
+  (`detail::bindMember()`: a `dynamic_cast<TClass*>` of `owner->user`), into
+  a `detail::MemberHandler<TClass, TMember>` (the object pointer and the
+  member pointer, 24 bytes on the Itanium ABI), and hands that to the
+  callable overload, so the signature checks and their messages stay one
+  copy. `MemberHandler::operator()` forwards through `std::invoke`,
+  constrained on the member being invocable with the arguments, so the
+  checks see the member's own parameters. `MemberHandler` static_asserts that
+  TMember is a function type and TClass derives from `EventUser`. A handle of
+  nothing (no queue, or a requester with no events) binds to nothing, quietly;
+  no owner logs as `handlersWithoutOwner()` does, and an owner of another
+  class logs `handlerOfOtherClass()`. Either way the handler's object is
+  null and the add steps drop it (`detail::bound()`), so it never runs. Per
+  event it costs the call through the member pointer, which can't be inlined
+  as a lambda's direct call can; the `std::function` holding it is made once
+  in `create()` (24 bytes is past libstdc++'s 16-byte local buffer, so one
+  allocation then), never per event.
 
 - `Registry::updateSystem()` and the scene's object loop run
   `begin()` (a new stamp), `dispatch()` (each handler whose consumer has
@@ -321,7 +345,7 @@ the next take-in. The tests run under ThreadSanitizer.
 | A request type's tickets | 32 bytes per outstanding request in blocks of 256, a fixed 32 KB directory, a page of entity heads (12 bytes an id) per 1,024 ids asked about, 12 bytes per requester (its list's head), 4 per freed number, and a route (about 56 bytes and its ids) per response type it handles | a block per 256 tickets at once, a page per 1,024 ids |
 | `Responder<R>` | the request type's channel (aliasing `shared_ptr`), the key, the generation, the ticket | never |
 | A keyed channel | a word per entity id in pages of 1,024 under an 8 KB directory; a request type's response inboxes | a page per 1,024 ids sent to |
-| An owner | its stamp and flags, its consumers, its handlers | in `create()` |
+| An owner | its stamp and flags, its consumers, its handlers, its user | in `create()` |
 
 Event type ids come from one table in engine-core keyed by the type's name
 (`detail::eventTypeId()`), as component ids do, so the engine, the editor and

@@ -137,6 +137,18 @@ struct [[sfs::event_news]] ReusedSlotEvent
 {
   int value = 0;
 };
+struct [[sfs::event_news]] AlarmEvent
+{
+  int value = 0;
+};
+struct [[sfs::event_entity_news]] AlertEvent
+{
+  int value = 0;
+};
+struct [[sfs::event_news]] LootEvent
+{
+  int value = 0;
+};
 struct [[sfs::event_response]] AskedResponse
 {
   int value = 0;
@@ -255,6 +267,83 @@ public:
 
 protected:
   void create() override { events = consumer<TEvent>(); }
+};
+
+// A guard post whose handlers are its member functions: alarms on their
+// own, alerts about one guard, and a const member that only looks.
+class GuardPost : public System
+{
+public:
+  std::vector<int> alarms;
+  std::vector<std::size_t> alarmBatches;
+  std::vector<std::pair<Entity, int>> alerts;
+  std::vector<int> newest;
+  std::vector<std::size_t> newestBatches;
+  mutable int looked = 0;
+
+protected:
+  void create() override
+  {
+    m_alarms = consumer<AlarmEvent>().onEvent(&GuardPost::onAlarm);
+    m_alarmBatches = consumer<AlarmEvent>().onEvents(&GuardPost::onAlarms);
+    m_looks = consumer<AlarmEvent>().onEvent(&GuardPost::look);
+    m_alerts = consumer<AlertEvent>()
+                   .onEvent(&GuardPost::onAlert)
+                   .onLatest(&GuardPost::onNewestAlert)
+                   .onLatestEvents(&GuardPost::onNewestAlerts);
+  }
+  void update(double) override {}
+
+private:
+  void look(const AlarmEvent&) const { ++looked; }
+  void onAlarm(const AlarmEvent& alarm) { alarms.push_back(alarm.value); }
+  void onAlarms(EventRange<AlarmEvent> batch)
+  {
+    alarmBatches.push_back(batch.size());
+  }
+  void onAlert(const Entity& guard, const AlertEvent& alert)
+  {
+    alerts.emplace_back(guard, alert.value);
+  }
+  void onNewestAlert(const Entity&, const AlertEvent& alert)
+  {
+    newest.push_back(alert.value);
+  }
+  void onNewestAlerts(LatestEventRange<AlertEvent> batch)
+  {
+    newestBatches.push_back(batch.size());
+  }
+
+  EventConsumer<AlarmEvent> m_alarms;
+  EventConsumer<AlarmEvent> m_alarmBatches;
+  EventConsumer<AlarmEvent> m_looks;
+  EventConsumer<AlertEvent> m_alerts;
+};
+
+// A looter whose loot handler is public, so another system can name it.
+class Looter : public System
+{
+public:
+  int looted = 0;
+
+  void onLoot(const LootEvent&) { ++looted; }
+
+protected:
+  void update(double) override {}
+};
+
+// Gives its consumer a member function of Looter, which it isn't.
+class Thief : public System
+{
+public:
+  EventConsumer<LootEvent> loot;
+
+protected:
+  void create() override
+  {
+    loot = consumer<LootEvent>().onEvent(&Looter::onLoot);
+  }
+  void update(double) override {}
 };
 
 // A set-up that makes `into` a consumer of TEvent.
@@ -470,6 +559,49 @@ int main()
     registry.events().send(HandledEvent{3});
     run(registry, probe);
     CHECK((seen == std::vector<int>{1, 2, 3}));
+  }
+
+  TEST("member functions of the owner should handle events as lambdas do, "
+       "with the entity and without, const or not")
+  {
+    Registry registry;
+    GuardPost& post = registry.addSystem<GuardPost>();
+    const Entity a = registry.createEntity();
+    const Entity b = registry.createEntity();
+    registry.events().send(AlarmEvent{1});
+    registry.events().send(AlarmEvent{2});
+    registry.events().send(a, AlertEvent{10});
+    registry.events().send(b, AlertEvent{20});
+    registry.events().send(a, AlertEvent{30});
+    registry.updateSystem(post, 0.0);
+    CHECK((post.alarms == std::vector<int>{1, 2}));
+    CHECK((post.alarmBatches == std::vector<std::size_t>{2}));
+    CHECK(post.looked == 2);
+    CHECK(post.alerts.size() == 3u);
+    CHECK((post.alerts[0] == std::pair<Entity, int>{a, 10}));
+    CHECK((post.alerts[1] == std::pair<Entity, int>{b, 20}));
+    CHECK((post.alerts[2] == std::pair<Entity, int>{a, 30}));
+    CHECK((post.newest == std::vector<int>{20, 30}));
+    CHECK((post.newestBatches == std::vector<std::size_t>{2}));
+    frame(registry);
+    registry.updateSystem(post, 0.0);
+    CHECK(post.alarms.size() == 2u);
+    CHECK(post.alarmBatches.size() == 1u);
+  }
+
+  TEST("a member function of a class that isn't the owner should be logged "
+       "and never run")
+  {
+    LogCapture log;
+    Registry registry;
+    Looter& looter = registry.addSystem<Looter>();
+    Thief& thief = registry.addSystem<Thief>();
+    CHECK(log.count(Logger::Level::ERROR, "is a member function of") == 1);
+    CHECK(thief.loot.valid());
+    registry.events().send(LootEvent{1});
+    registry.updateSystem(thief, 0.0);
+    registry.updateSystem(looter, 0.0);
+    CHECK(looter.looted == 0);
   }
 
   TEST("onEvents should get each update's events at once, and onLatest and "

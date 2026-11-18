@@ -69,11 +69,11 @@ struct EventHost
  * update()), requester<R>() to ask for a request type and receive its
  * responses.
  */
-class EventVerbs
+class EventVerbs : public detail::EventUser
 {
 public:
   EventVerbs(const EventVerbs&) = delete;
-  virtual ~EventVerbs() = default;
+  ~EventVerbs() override = default;
   EventVerbs& operator=(const EventVerbs&) = delete;
   /**
    * Whether it runs: a disabled system or service is skipped by its host
@@ -227,7 +227,7 @@ private:
   void noEvents() const;
 
   Events* m_events = nullptr;
-  detail::EventOwner m_eventOwner;
+  detail::EventOwner m_eventOwner{this};
   bool m_declaring = false;
   bool m_enabled = true;
   bool m_warnedOutside = false;

@@ -39,6 +39,17 @@ namespace detail
  */
 void handlersWithoutOwner(std::string_view type);
 
+/**
+ * Logs a handler given as a member function of a class its handle's owner
+ * isn't: it never runs.
+ * @param type the event type's name
+ * @param handlerClass the member function's class
+ * @param owner the handle's owner; null: none of a known type
+ */
+void handlerOfOtherClass(std::string_view type,
+                         const std::type_info& handlerClass,
+                         const EventUser* owner);
+
 // The rows a consumer's span gives, for every event or each key's current
 // one.
 template <typename TEvent, bool kLatest>
@@ -104,6 +115,95 @@ concept RowHandler =
     (!kRequest<TEvent> && kKeyed<TEvent> &&
      std::invocable<TFunction&, const Entity&, const TEvent&>) ||
     (!kKeyed<TEvent> && std::invocable<TFunction&, const TEvent&>);
+
+/**
+ * A handler given as a member function of its handle's owner, bound to it:
+ * calls the member function on the owner with the handler's arguments, as a
+ * lambda capturing `this` would. It takes what the member function takes, so
+ * the handle checks it as it checks any handler.
+ */
+template <typename TClass, typename TMember>
+struct MemberHandler
+{
+  static_assert(std::is_function_v<TMember>,
+                "A handler given as a member pointer must be a member "
+                "function");
+  static_assert(std::derived_from<TClass, EventUser>,
+                "A handler given as a member function must be a member of "
+                "the handle's owner: a class deriving from sfs::System, "
+                "sfs::Service or sfs::GameObject");
+
+  /** Calls the member function on the owner. */
+  template <typename... TArgs>
+    requires std::invocable<TMember TClass::*, TClass*, TArgs...>
+  decltype(auto) operator()(TArgs&&... args) const
+  {
+    return std::invoke(member, object, std::forward<TArgs>(args)...);
+  }
+
+  /**
+   * The handle's owner, as the member function's class; null when there's
+   * none of that class to call it on, and the handler is dropped.
+   */
+  TClass* object = nullptr;
+  /** The member function. */
+  TMember TClass::*member = nullptr;
+};
+
+/**
+ * Binds a member function to a handle's owner, once, as the handler is
+ * given: the owner must be a TClass, checked as it's bound.
+ * @param owner the handle's owner; null: none
+ * @param member the member function
+ * @param type the handle's event type's name, for the log
+ * @return the handler; its object null when the owner isn't a TClass, or
+ *         there's none (logged)
+ */
+template <typename TClass, typename TMember>
+MemberHandler<TClass, TMember> bindMember(const EventOwner* owner,
+                                          TMember TClass::*member,
+                                          std::string_view type)
+{
+  MemberHandler<TClass, TMember> handler{nullptr, member};
+
+  if (!owner) [[unlikely]]
+  {
+    handlersWithoutOwner(type);
+    return handler;
+  }
+
+  if constexpr (std::derived_from<TClass, EventUser>)
+    if (owner->user)
+      handler.object = dynamic_cast<TClass*>(owner->user);
+
+  if (!handler.object) [[unlikely]]
+    handlerOfOtherClass(type, typeid(TClass), owner->user);
+
+  return handler;
+}
+
+/**
+ * Whether a handler can be called: any but a member function left with no
+ * owner to call it on.
+ * @param fn the handler
+ * @return whether it can be called
+ */
+template <typename TFunction>
+constexpr bool bound([[maybe_unused]] const TFunction& fn)
+{
+  return true;
+}
+
+/**
+ * Whether a member function handler has an owner to call it on.
+ * @param handler the handler
+ * @return whether it can be called
+ */
+template <typename TClass, typename TMember>
+bool bound(const MemberHandler<TClass, TMember>& handler)
+{
+  return handler.object != nullptr;
+}
 
 } // namespace detail
 
@@ -202,6 +302,28 @@ public:
   }
 
   /**
+   * As onEvent(), with a member function of the consumer's owner (the
+   * system, service or object that made it) as the handler, taking what
+   * onEvent()'s takes, const or not:
+   * `m_kills = consumer<EnemyDiedEvent>().onEvent(&ScoreSystem::onKill);`.
+   * @param member the owner's member function
+   * @return this consumer, for more
+   */
+  template <typename TClass, typename TMember>
+  EventConsumer& onEvent(TMember TClass::*member) &
+  {
+    addEventHandler(bindToOwner(member));
+    return *this;
+  }
+  /** As onEvent(member) on a consumer just made, to be assigned. */
+  template <typename TClass, typename TMember>
+  EventConsumer&& onEvent(TMember TClass::*member) &&
+  {
+    addEventHandler(bindToOwner(member));
+    return std::move(*this);
+  }
+
+  /**
    * Gives it a handler for each update's new events at once, called in its
    * owner's slot when there are some: `fn(sfs::EventRange<E>)`.
    * @param fn the handler
@@ -218,6 +340,26 @@ public:
   EventConsumer&& onEvents(TFunction fn) &&
   {
     addEventsHandler(std::move(fn));
+    return std::move(*this);
+  }
+
+  /**
+   * As onEvents(), with a member function of the consumer's owner as the
+   * handler: `void Owner::fn(sfs::EventRange<E>)`, const or not.
+   * @param member the owner's member function
+   * @return this consumer, for more
+   */
+  template <typename TClass, typename TMember>
+  EventConsumer& onEvents(TMember TClass::*member) &
+  {
+    addEventsHandler(bindToOwner(member));
+    return *this;
+  }
+  /** As onEvents(member) on a consumer just made, to be assigned. */
+  template <typename TClass, typename TMember>
+  EventConsumer&& onEvents(TMember TClass::*member) &&
+  {
+    addEventsHandler(bindToOwner(member));
     return std::move(*this);
   }
 
@@ -242,6 +384,26 @@ public:
   }
 
   /**
+   * As onLatest(), with a member function of the consumer's owner as the
+   * handler, taking what onLatest()'s takes, const or not.
+   * @param member the owner's member function
+   * @return this consumer, for more
+   */
+  template <typename TClass, typename TMember>
+  EventConsumer& onLatest(TMember TClass::*member) &
+  {
+    addLatestHandler(bindToOwner(member));
+    return *this;
+  }
+  /** As onLatest(member) on a consumer just made, to be assigned. */
+  template <typename TClass, typename TMember>
+  EventConsumer&& onLatest(TMember TClass::*member) &&
+  {
+    addLatestHandler(bindToOwner(member));
+    return std::move(*this);
+  }
+
+  /**
    * Gives it a handler for each update's newest current events per key at
    * once (keyed types), called in its owner's slot when there are some:
    * `fn(sfs::LatestEventRange<E>)`.
@@ -259,6 +421,26 @@ public:
   EventConsumer&& onLatestEvents(TFunction fn) &&
   {
     addLatestEventsHandler(std::move(fn));
+    return std::move(*this);
+  }
+
+  /**
+   * As onLatestEvents(), with a member function of the consumer's owner as
+   * the handler: `void Owner::fn(sfs::LatestEventRange<E>)`, const or not.
+   * @param member the owner's member function
+   * @return this consumer, for more
+   */
+  template <typename TClass, typename TMember>
+  EventConsumer& onLatestEvents(TMember TClass::*member) &
+  {
+    addLatestEventsHandler(bindToOwner(member));
+    return *this;
+  }
+  /** As onLatestEvents(member) on a consumer just made, to be assigned. */
+  template <typename TClass, typename TMember>
+  EventConsumer&& onLatestEvents(TMember TClass::*member) &&
+  {
+    addLatestEventsHandler(bindToOwner(member));
     return std::move(*this);
   }
 
@@ -422,6 +604,10 @@ private:
                   "onEvent() takes fn(const E&), fn(const Entity&, const E&) "
                   "for a keyed type, or fn(const Entity&, const R&, "
                   "const Responder<R>&) for a request");
+
+    if (!detail::bound(fn))
+      return;
+
     addHandler(
         [fn = std::move(fn)](
             detail::EventQueueBase& base, uint32_t slot) mutable
@@ -438,6 +624,10 @@ private:
   {
     static_assert(std::invocable<TFunction&, EventRange<TEvent>>,
                   "onEvents() takes fn(sfs::EventRange<E>)");
+
+    if (!detail::bound(fn))
+      return;
+
     addHandler(
         [fn = std::move(fn)](
             detail::EventQueueBase& base, uint32_t slot) mutable
@@ -476,6 +666,10 @@ private:
                   "request");
     static_assert(std::invocable<TFunction&, LatestEventRange<TEvent>>,
                   "onLatestEvents() takes fn(sfs::LatestEventRange<E>)");
+
+    if (!detail::bound(fn))
+      return;
+
     addHandler(
         [fn = std::move(fn)](
             detail::EventQueueBase& base, uint32_t slot) mutable
@@ -499,6 +693,10 @@ private:
                   "onLatest() takes fn(const Entity&, const E&), or "
                   "fn(const Entity&, const R&, const Responder<R>&) for a "
                   "request");
+
+    if (!detail::bound(fn))
+      return;
+
     addHandler(
         [fn = std::move(fn)](
             detail::EventQueueBase& base, uint32_t slot) mutable
@@ -508,6 +706,20 @@ private:
           for (auto&& row : detail::spanRange<TEvent, true>(queue, slot))
             detail::callWithRow<TEvent>(fn, row);
         });
+  }
+
+  // A member function of the consumer's owner, bound to it; one with no
+  // owner to call it on (a consumer of nothing has none) is dropped.
+  template <typename TClass, typename TMember>
+  detail::MemberHandler<TClass, TMember>
+  bindToOwner(TMember TClass::*member) const
+  {
+    const detail::EventQueueBase* queue = queueBase();
+
+    if (!queue)
+      return {nullptr, member};
+
+    return detail::bindMember(m_owner, member, queue->name());
   }
 
   detail::EventQueue<TEvent>* queue() const
@@ -612,8 +824,9 @@ private:
  * What a service's consumer<E>() gives: an EventConsumer<E> being built,
  * which becomes the consumer it's assigned to only once it has a handler
  * (onEvent(), onEvents(), onLatest(), onLatestEvents(), each as the
- * consumer's), checked as it compiles: an owner with no update to read in
- * runs only its handlers. It is moved, never copied.
+ * consumer's, a callable or a member function of the service), checked as it
+ * compiles: an owner with no update to read in runs only its handlers. It is
+ * moved, never copied.
  */
 template <typename TEvent, bool kHandled = false>
 class [[nodiscard]] EventConsumerBuilder
@@ -1013,6 +1226,20 @@ public:
   }
 
   /**
+   * As onFailure(), with a member function of the requester's owner as the
+   * handler: `void Owner::fn(const Entity& key, const F& response)`, const
+   * or not.
+   * @param member the owner's member function
+   * @return the builder, as onFailure()'s
+   */
+  template <typename TClass, typename TMember>
+  EventRequesterBuilder<TRequest, kSuccess, kProgress, true>
+  onFailure(TMember TClass::*member) &&
+  {
+    return std::move(*this).onFailure(bindToOwner(member));
+  }
+
+  /**
    * Handles each update's failure responses at once:
    * `fn(sfs::ResponseRange<R, F>)`.
    * @param fn the handler
@@ -1028,6 +1255,19 @@ public:
       addBatch<detail::ResponseRole::Failure>(std::move(fn));
 
     return next<kSuccess, kProgress, true>();
+  }
+
+  /**
+   * As onFailures(), with a member function of the requester's owner as the
+   * handler: `void Owner::fn(sfs::ResponseRange<R, F>)`, const or not.
+   * @param member the owner's member function
+   * @return the builder, as onFailures()'s
+   */
+  template <typename TClass, typename TMember>
+  EventRequesterBuilder<TRequest, kSuccess, kProgress, true>
+  onFailures(TMember TClass::*member) &&
+  {
+    return std::move(*this).onFailures(bindToOwner(member));
   }
 
   /**
@@ -1050,6 +1290,20 @@ public:
   }
 
   /**
+   * As onProgress(), with a member function of the requester's owner as the
+   * handler: `void Owner::fn(const Entity& key, const P& response)`, const
+   * or not.
+   * @param member the owner's member function
+   * @return the builder, as onProgress()'s
+   */
+  template <typename TClass, typename TMember>
+  EventRequesterBuilder<TRequest, kSuccess, true, kFailure>
+  onProgress(TMember TClass::*member) &&
+  {
+    return std::move(*this).onProgress(bindToOwner(member));
+  }
+
+  /**
    * Handles each update's progress responses at once:
    * `fn(sfs::ResponseRange<R, P>)`.
    * @param fn the handler
@@ -1069,6 +1323,19 @@ public:
   }
 
   /**
+   * As onProgresses(), with a member function of the requester's owner as
+   * the handler: `void Owner::fn(sfs::ResponseRange<R, P>)`, const or not.
+   * @param member the owner's member function
+   * @return the builder, as onProgresses()'s
+   */
+  template <typename TClass, typename TMember>
+  EventRequesterBuilder<TRequest, kSuccess, true, kFailure>
+  onProgresses(TMember TClass::*member) &&
+  {
+    return std::move(*this).onProgresses(bindToOwner(member));
+  }
+
+  /**
    * Handles each success response to a current request, in the owner's
    * slot: `fn(const Entity& key, const Success& response)`.
    * @param fn the handler
@@ -1084,6 +1351,21 @@ public:
   }
 
   /**
+   * As onResponse(), with a member function of the requester's owner (the
+   * system, service or object that made it) as the handler:
+   * `void Owner::fn(const Entity& key, const Success& response)`, const or
+   * not: `requester<PathRequest>().onResponse(&EnemyAI::onPath)`.
+   * @param member the owner's member function
+   * @return the builder, as onResponse()'s
+   */
+  template <typename TClass, typename TMember>
+  EventRequesterBuilder<TRequest, true, kProgress, kFailure>
+  onResponse(TMember TClass::*member) &&
+  {
+    return std::move(*this).onResponse(bindToOwner(member));
+  }
+
+  /**
    * Handles each update's success responses at once, in the owner's slot
    * when there are some: `fn(sfs::ResponseRange<R, Success>)`.
    * @param fn the handler
@@ -1096,6 +1378,20 @@ public:
     detail::checkRoleStep<TRequest, detail::ResponseRole::Success, kSuccess>();
     addBatch<detail::ResponseRole::Success>(std::move(fn));
     return next<true, kProgress, kFailure>();
+  }
+
+  /**
+   * As onResponses(), with a member function of the requester's owner as
+   * the handler: `void Owner::fn(sfs::ResponseRange<R, Success>)`, const or
+   * not.
+   * @param member the owner's member function
+   * @return the builder, as onResponses()'s
+   */
+  template <typename TClass, typename TMember>
+  EventRequesterBuilder<TRequest, true, kProgress, kFailure>
+  onResponses(TMember TClass::*member) &&
+  {
+    return std::move(*this).onResponses(bindToOwner(member));
   }
 
   /**
@@ -1146,6 +1442,10 @@ private:
         std::invocable<TFunction&, ResponseRange<TRequest, TResponse>>,
         "onResponses(), onProgresses() and onFailures() take "
         "fn(sfs::ResponseRange<R, Response>), the role's response");
+
+    if (!detail::bound(fn))
+      return;
+
     using Queue = detail::EventQueue<detail::ResponseTo<TRequest, TResponse>>;
     m_runs[static_cast<std::size_t>(kRole)] =
         [fn = std::move(fn), requester = m_requester.m_id](
@@ -1168,6 +1468,10 @@ private:
     static_assert(std::invocable<TFunction&, const Entity&, const TResponse&>,
                   "onResponse(), onProgress() and onFailure() take "
                   "fn(const Entity&, const Response&), the role's response");
+
+    if (!detail::bound(fn))
+      return;
+
     using Queue = detail::EventQueue<detail::ResponseTo<TRequest, TResponse>>;
     m_runs[static_cast<std::size_t>(kRole)] =
         [fn = std::move(fn), requester = m_requester.m_id](
@@ -1179,6 +1483,20 @@ private:
            detail::responseRange<TRequest, TResponse>(queue, slot, requester))
         fn(key, response);
     };
+  }
+
+  // A member function of the requester's owner, bound to it; one with no
+  // owner to call it on (a requester of nothing has none) is dropped.
+  template <typename TClass, typename TMember>
+  detail::MemberHandler<TClass, TMember> bindToOwner(TMember TClass::*member)
+  {
+    if (!m_requester.m_events)
+      return {nullptr, member};
+
+    return detail::bindMember(
+        m_requester.m_owner,
+        member,
+        m_requester.m_events->template queue<TRequest>().name());
   }
 
   // Gives the owner the role's handler, if there is one.

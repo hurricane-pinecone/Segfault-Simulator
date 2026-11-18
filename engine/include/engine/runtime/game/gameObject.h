@@ -10,10 +10,10 @@ namespace sfs
 {
 
 class Scene;
-class GameObject
+class GameObject : public detail::EventUser
 {
 public:
-  virtual ~GameObject() = default;
+  ~GameObject() override = default;
 
   /**
    * Whether it's been destroyed (Scene::destroyObject, or its entity was):
@@ -59,7 +59,7 @@ private:
   // The owner of the event handles it makes in onCreate
   // (scene().events().consumer<E>(), requester<R>()): the scene runs their
   // handlers before its onUpdate.
-  detail::EventOwner m_eventOwner;
+  detail::EventOwner m_eventOwner{this};
 };
 
 } // namespace sfs

@@ -46,15 +46,16 @@ class ScoreService : public sfs::Service
 protected:
   void create() override
   {
-    m_deaths = consumer<EnemyDiedEvent>().onEvent(
-        [this](const sfs::Entity&, const EnemyDiedEvent&)
-        {
-          if (Score* score = sceneData<Score>())
-            ++score->kills;
-        });
+    m_deaths = consumer<EnemyDiedEvent>().onEvent(&ScoreService::onEnemyDied);
   }
 
 private:
+  void onEnemyDied(const sfs::Entity&, const EnemyDiedEvent&)
+  {
+    if (Score* score = sceneData<Score>())
+      ++score->kills;
+  }
+
   sfs::EventConsumer<EnemyDiedEvent> m_deaths;
 };
 ```
@@ -68,6 +69,10 @@ private:
   `onLatestEvents()`): a service has no update to read it in, so a consumer
   without one doesn't compile. A handler may `read()` the service's other
   consumers.
+- A handler is best a member function of the service,
+  `&ScoreService::onEnemyDied`, so `create()` reads as a list of what handles
+  what. A lambda is fine for a one-liner. See
+  [member functions as handlers](../events/index.md#member-functions-as-handlers).
 - A requester is made as a system's is, `requester<R>()`, with its response
   handlers.
 - It sends with `send(e)`, `send(entity, e)`, `cancel<E>(entity)` and
@@ -154,25 +159,29 @@ class SquadService : public sfs::Service
 protected:
   void create() override
   {
-    m_idle = consumer<GuardIdleEvent>().onLatest(
-        [](const sfs::Entity& guard, const GuardIdleEvent&)
-        {
-          if (const Guard* state = guard.getComponent<Guard>())
-            guard.addComponent<PatrolTask>(PatrolTask{state->firstRoute});
-        });
+    m_idle = consumer<GuardIdleEvent>().onLatest(&SquadService::onIdle);
     m_done = consumer<PatrolFinishedEvent>().onLatest(
-        [](const sfs::Entity& guard, const PatrolFinishedEvent&)
-        {
-          const Guard* state = guard.getComponent<Guard>();
-          if (!state)
-            return;
-          // One add replaces the task in place: PatrolSystem, polling its
-          // tasks, sees the new route and fresh progress.
-          guard.addComponent<PatrolTask>(PatrolTask{state->nextRoute});
-        });
+        &SquadService::onPatrolFinished);
   }
 
 private:
+  void onIdle(const sfs::Entity& guard, const GuardIdleEvent&) const
+  {
+    if (const Guard* state = guard.getComponent<Guard>())
+      guard.addComponent<PatrolTask>(PatrolTask{state->firstRoute});
+  }
+
+  void onPatrolFinished(const sfs::Entity& guard,
+                        const PatrolFinishedEvent&) const
+  {
+    const Guard* state = guard.getComponent<Guard>();
+    if (!state)
+      return;
+    // One add replaces the task in place: PatrolSystem, polling its tasks,
+    // sees the new route and fresh progress.
+    guard.addComponent<PatrolTask>(PatrolTask{state->nextRoute});
+  }
+
   sfs::EventConsumer<GuardIdleEvent> m_idle;
   sfs::EventConsumer<PatrolFinishedEvent> m_done;
 };
@@ -198,26 +207,28 @@ protected:
   void create() override
   {
     m_scheduler = std::make_unique<sfs::nav::PlanScheduler>();
-    m_requests = consumer<PathRequest>().onEvent(
-        [this](const sfs::Entity& agent, const PathRequest& request,
-               const sfs::Responder<PathRequest>& responder)
-        {
-          sfs::nav::PlanScheduler::Request job;
-          job.owner = agent.getId(); // the scheduler's fair turn
-          job.label = "path";
-          job.collected = false;     // it answers through the responder
-          job.wanted = [responder] { return !responder.superseded(); };
-          job.step = [grid = request.grid, responder](auto&)
-          {
-            // plan on *grid; responder.progress(leg) for each leg, then
-            // respond(...) or fail(...)
-            return sfs::nav::PlanScheduler::Step::Done;
-          };
-          m_scheduler->submit(std::move(job));
-        });
+    m_requests =
+        consumer<PathRequest>().onEvent(&PathPlannerService::onPathRequest);
   }
 
 private:
+  void onPathRequest(const sfs::Entity& agent, const PathRequest& request,
+                     const sfs::Responder<PathRequest>& responder)
+  {
+    sfs::nav::PlanScheduler::Request job;
+    job.owner = agent.getId(); // the scheduler's fair turn
+    job.label = "path";
+    job.collected = false;     // it answers through the responder
+    job.wanted = [responder] { return !responder.superseded(); };
+    job.step = [grid = request.grid, responder](auto&)
+    {
+      // plan on *grid; responder.progress(leg) for each leg, then
+      // respond(...) or fail(...)
+      return sfs::nav::PlanScheduler::Step::Done;
+    };
+    m_scheduler->submit(std::move(job));
+  }
+
   sfs::EventConsumer<PathRequest> m_requests;
   // Last: destroyed first, so its workers are joined before anything a job
   // holds goes.
@@ -303,7 +314,7 @@ systems.
 | Call | Where | |
 | --- | --- | --- |
 | `create()` | Service | Makes its handles, once. |
-| `consumer<E>()` | Service `create()` | A consumer, given a handler, kept as a member. |
+| `consumer<E>()` | Service `create()` | A consumer, given a handler (a callable, or `&Service::member`), kept as a member. |
 | `requester<R>()` | Service `create()` | A requester's builder. |
 | `send(e)`, `send(entity, e)`, `cancel<E>(entity)`, `broadcast<E>()` | Service | As a system's. |
 | `sceneData<T>()` | Service | The scene's one T, or null. |

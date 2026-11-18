@@ -86,6 +86,12 @@ struct Plain
   int value = 0;
 };
 
+// Not an owner of event handles: its member functions can't be handlers.
+struct Unrelated
+{
+  void onNews(const NewsEvent&) {}
+};
+
 class Uses : public sfs::System
 {
 protected:
@@ -118,6 +124,22 @@ protected:
         [](sfs::ResponseRange<SearchRequest, FoundResponse>){});
     m_door = requester<DoorRequest>().onResponse(
         [](const sfs::Entity&, const OpenedResponse&){});
+    // Member functions of the owner, const, noexcept or neither.
+    m_news =
+        consumer<NewsEvent>().onEvent(&Uses::onNews).onEvents(&Uses::onAllNews);
+    m_keyed = consumer<KeyedEvent>()
+                  .onEvent(&Uses::onKeyed)
+                  .onLatest(&Uses::onKeyed)
+                  .onLatestEvents(&Uses::onNewestKeyed);
+    m_searches = consumer<SearchRequest>().onEvent(&Uses::onSearch);
+    m_search = requester<SearchRequest>()
+                   .onResponse(&Uses::onFound)
+                   .onProgress(&Uses::onStep)
+                   .onFailure(&Uses::onFailed);
+    m_both = requester<SearchRequest>()
+                 .onResponses(&Uses::onFounds)
+                 .onProgresses(&Uses::onSteps)
+                 .onFailures(&Uses::onFailures);
 #elif SFS_COMPILE_FAIL_CASE == 1
     m_search = requester<SearchRequest>().onFailure(
         [](const sfs::Entity&, const FailedResponse&){});
@@ -145,6 +167,14 @@ protected:
                    .ignoreFailure();
 #elif SFS_COMPILE_FAIL_CASE == 27
     auto news = requester<NewsEvent>();
+#elif SFS_COMPILE_FAIL_CASE == 29
+    m_news = consumer<NewsEvent>().onEvent(&Unrelated::onNews);
+#elif SFS_COMPILE_FAIL_CASE == 30
+    m_keyed = consumer<KeyedEvent>().onEvent(&Uses::onNews);
+#elif SFS_COMPILE_FAIL_CASE == 31
+    m_news = consumer<NewsEvent>().onEvent(&Uses::m_count);
+#elif SFS_COMPILE_FAIL_CASE == 32
+    m_door = requester<DoorRequest>().onResponse(&Uses::onFound);
 #endif
   }
 
@@ -222,6 +252,23 @@ protected:
   }
 
 private:
+  void onAllNews(sfs::EventRange<NewsEvent>) {}
+  void onFailed(const sfs::Entity&, const FailedResponse&) {}
+  void onFailures(sfs::ResponseRange<SearchRequest, FailedResponse>) const {}
+  void onFound(const sfs::Entity&, const FoundResponse&) noexcept {}
+  void onFounds(sfs::ResponseRange<SearchRequest, FoundResponse>) {}
+  void onKeyed(const sfs::Entity&, const KeyedEvent&) const {}
+  void onNewestKeyed(sfs::LatestEventRange<KeyedEvent>) {}
+  void onNews(const NewsEvent&) {}
+  void onSearch(const sfs::Entity&,
+                const SearchRequest&,
+                const sfs::Responder<SearchRequest>&) const noexcept
+  {
+  }
+  void onStep(const sfs::Entity&, const StepResponse&) const {}
+  void onSteps(sfs::ResponseRange<SearchRequest, StepResponse>) {}
+
+  int m_count = 0;
   sfs::EventConsumer<NewsEvent> m_news;
   sfs::EventConsumer<KeyedEvent> m_keyed;
   sfs::EventConsumer<FoundResponse> m_found;
