@@ -77,8 +77,35 @@ add_editor_test(prefabsTests prefabsTests.cpp
     "${EDITOR_SRC_DIR}/history/historySteps.cpp")
 target_link_libraries(prefabsTests PRIVATE sfs::engine)
 
+add_editor_test(codeFontTests codeFontTests.cpp "${EDITOR_SRC_DIR}/widgets/codeFont.cpp")
+target_link_libraries(codeFontTests PRIVATE sfs::engine)
+target_compile_definitions(codeFontTests PRIVATE
+    SFS_TEST_FONTS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../fonts")
+
 add_editor_test(widgetsTests widgetsTests.cpp "${EDITOR_SRC_DIR}/widgets/widgets.cpp")
 target_link_libraries(widgetsTests PRIVATE sfs::engine)
+
+add_editor_test(panelTests panelTests.cpp
+    "${EDITOR_SRC_DIR}/panels/consolePanel.cpp"
+    "${EDITOR_SRC_DIR}/panels/panel.cpp"
+    "${EDITOR_SRC_DIR}/widgets/widgets.cpp")
+target_link_libraries(panelTests PRIVATE sfs::engine)
+
+add_editor_test(uiPreviewTests uiPreviewTests.cpp "${EDITOR_SRC_DIR}/panels/uiPreviewDraw.cpp")
+target_link_libraries(uiPreviewTests PRIVATE sfs::engine)
+
+add_editor_test(boardCanvasTests boardCanvasTests.cpp "${EDITOR_SRC_DIR}/widgets/boardCanvas.cpp")
+target_link_libraries(boardCanvasTests PRIVATE sfs::engine)
+
+add_editor_test(architectureTests architectureTests.cpp
+    "${EDITOR_SRC_DIR}/architecture/graph.cpp"
+    "${EDITOR_SRC_DIR}/architecture/highlight.cpp"
+    "${EDITOR_SRC_DIR}/architecture/layout.cpp"
+    "${EDITOR_SRC_DIR}/architecture/positions.cpp"
+    "${EDITOR_SRC_DIR}/architecture/routing.cpp"
+    "${EDITOR_SRC_DIR}/architecture/generator.cpp"
+    "${EDITOR_SRC_DIR}/build/childProcess.cpp")
+target_link_libraries(architectureTests PRIVATE sfs::engine)
 
 add_editor_test(selectionTests selectionTests.cpp)
 target_link_libraries(selectionTests PRIVATE sfs::engine)

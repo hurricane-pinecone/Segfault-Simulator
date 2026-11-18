@@ -91,6 +91,33 @@ private:
   std::string m_output; // each message framed, reused
 };
 
+/** What a command-line run (--check, --fix, --format, --graph) is run on. */
+struct CommandRun
+{
+  /** The root: --root's, else the nearest project's or engine's folder. */
+  std::filesystem::path root;
+  /** The rules --disable turned off. */
+  codegen::RuleSet disabled;
+  /** The C++ files the paths name, sorted, each once. */
+  std::vector<std::filesystem::path> files;
+};
+
+/**
+ * Reads the arguments the command-line runs share, `[--root DIR] [--disable
+ * RULE]... PATH...`, and lists the C++ files the paths name (a folder's,
+ * recursively). Relative paths are the root's when one is given, else the
+ * working folder's.
+ *
+ * @param args the arguments
+ * @param allowDisable whether --disable is taken
+ * @param run filled in
+ * @return false when they're wrong (with the usage printed) or name no C++
+ *   files (with a message)
+ */
+bool readCommandRun(const std::vector<std::string>& args,
+                    bool allowDisable,
+                    CommandRun& run);
+
 /**
  * Turns a rule off for the session (disabledRules, --disable). Errors and
  * bad-ignore can't be turned off.

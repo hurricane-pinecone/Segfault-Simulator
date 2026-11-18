@@ -36,6 +36,7 @@ public:
     ConfigMode mode = ConfigMode::Auto;
     std::filesystem::path engineConfig; // folder holding the engine's init.lua
     std::filesystem::path workingDirectory;
+    bool icons = false; // the UI's font draws Nerd Font icons (g:sfs_icons)
   };
 
   explicit NvimClient(const BuildEnvironment& environment);
@@ -43,6 +44,12 @@ public:
 
   /** The project script being edited last (an editor path), if any. */
   const std::filesystem::path& focusedScript() const { return m_focusedScript; }
+
+  /**
+   * How many times a project script has been entered (its buffer, the same
+   * one again included): it goes up as focusedScript() is told again.
+   */
+  uint64_t focusedScriptRevision() const { return m_focusedRevision; }
 
   /** Keys in Neovim's notation, e.g. "i", "<C-s>", "<lt>". */
   void input(const std::string& keys);
@@ -54,8 +61,14 @@ public:
              int row,
              int column);
 
-  /** Open a file (an editor path) in the current window. */
-  void open(const std::filesystem::path& file);
+  /**
+   * Open a file in the current window.
+   *
+   * @param file the file, as the editor's path
+   * @param line the line to put the cursor on (from 1); 0 leaves it where
+   *        Neovim puts it
+   */
+  void open(const std::filesystem::path& file, int line = 0);
 
   /** The project scripts open in Neovim (listed buffers), as editor paths. */
   const std::vector<std::filesystem::path>& openScripts() const
@@ -98,6 +111,7 @@ private:
   NvimScreen m_screen;
   bool m_scriptSaved = false;
   std::filesystem::path m_focusedScript;
+  uint64_t m_focusedRevision = 0;
   std::vector<std::filesystem::path> m_openScripts;
   int m_columns = 0;
   int m_rows = 0;

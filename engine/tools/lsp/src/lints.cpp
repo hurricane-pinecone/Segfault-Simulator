@@ -359,25 +359,6 @@ struct Linter::Walk : lint::LintFile
       leaveFunction();
   }
 
-  void readUsing(TSNode node)
-  {
-    const bool usingNamespace =
-        spelledAs(text(node), {"using", "namespace"}, false);
-    const uint32_t count = ts_node_named_child_count(node);
-
-    for (uint32_t i = 0; i < count; ++i)
-    {
-      const TSNode child = ts_node_named_child(node, i);
-
-      if (usingNamespace)
-        usingSfs = usingSfs || spelledAs(text(child), {"sfs"}) ||
-                   spelledAs(text(child), {"::sfs"});
-      else if (kind(child) == Kind::QualifiedIdentifier &&
-               text(field(child, "scope")) == "sfs")
-        usingNames.push_back(text(field(child, "name")));
-    }
-  }
-
   bool enterClass(TSNode node)
   {
     if (ts_node_is_null(field(node, "body")))
@@ -1327,25 +1308,6 @@ struct Linter::Walk : lint::LintFile
         consider(send.owner);
 
     return several ? std::string_view{} : only;
-  }
-
-  // Whether a query or observe call is the registry's: made inside a system
-  // (no receiver, or `this`), or on something named like the registry or the
-  // scene. Another library's query<...>() takes other arguments.
-  bool isRegistryCall(TSNode call) const
-  {
-    const TSNode receiver = receiverOf(call);
-
-    if (ts_node_is_null(receiver) || kind(receiver) == Kind::This)
-      return true;
-
-    std::string_view spelled = text(receiver);
-
-    while (!spelled.empty() && isSpace(spelled.back()))
-      spelled.remove_suffix(1);
-
-    return spelled.ends_with("registry") || spelled.ends_with("Registry") ||
-           spelled.ends_with("scene()");
   }
 
   // ------------------------------------------------------------ term lists
@@ -2550,6 +2512,7 @@ Linter::Linter() : m_walk(std::make_unique<Walk>())
       {"alias_declaration", Kind::AliasDeclaration},
       {"type_definition", Kind::TypeDefinition},
       {"namespace_alias_definition", Kind::NamespaceAliasDefinition},
+      {"preproc_include", Kind::PreprocInclude},
       {"if_statement", Kind::IfStatement},
       {"while_statement", Kind::WhileStatement},
       {"for_statement", Kind::ForStatement},

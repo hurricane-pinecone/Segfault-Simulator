@@ -1,3 +1,4 @@
+#include "graph.h"
 #include "server.h"
 
 #include <cstdio>
@@ -17,6 +18,7 @@
 //   sfs-lsp --check [--root DIR] [--disable RULE]... PATH...
 //   sfs-lsp --fix RULE[,RULE...] [--root DIR] PATH...
 //   sfs-lsp --format [--check] [--clang-format PATH] [--root DIR] PATH...
+//   sfs-lsp --graph [--progress] [--root DIR] PATH...
 //   sfs-lsp --version
 //
 // Stdout carries only the protocol; logs go to stderr.
@@ -31,6 +33,7 @@ void usage()
          "       sfs-lsp --fix RULE[,RULE...] [--root DIR] PATH...\n"
          "       sfs-lsp --format [--check] [--clang-format PATH] [--root DIR] "
          "PATH...\n"
+         "       sfs-lsp --graph [--progress] [--root DIR] PATH...\n"
          "       sfs-lsp --version\n";
 }
 
@@ -50,7 +53,8 @@ int main(int argc, char* argv[])
       return 0;
     }
 
-    if (arg == "--check" || arg == "--fix" || arg == "--format")
+    if (arg == "--check" || arg == "--fix" || arg == "--format" ||
+        arg == "--graph")
     {
       try
       {
@@ -58,6 +62,9 @@ int main(int argc, char* argv[])
 
         if (arg == "--format")
           return sfs::lsp::runFormat(rest);
+
+        if (arg == "--graph")
+          return sfs::lsp::runGraph(rest);
 
         return arg == "--check" ? sfs::lsp::runCheck(rest)
                                 : sfs::lsp::runFix(rest);

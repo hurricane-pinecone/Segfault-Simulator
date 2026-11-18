@@ -49,6 +49,9 @@ public:
 
   void duplicateSelection() { m_canvas.duplicateSelection(*m_asset.graph); }
 
+  /** The material's graph: Undo, Duplicate and Delete act on it here. */
+  Edits edits() const override { return Edits::Own; }
+
   /** Its tab was closed, its changes saved or discarded: remove the panel. */
   bool finished() const { return m_finished; }
 
@@ -56,9 +59,6 @@ public:
   bool load(EditorContext& context);
 
   const sfs::AssetId& material() const { return m_material; }
-
-  /** Whose the Edit menu is: this panel's while it was the last one focused. */
-  bool ownsEdit() const { return m_ownsEdit; }
 
   void redo();
 
@@ -106,7 +106,6 @@ private:
   MaterialGraphCanvas m_canvas;
   std::string m_dockWith;
   std::string m_dockBelow;
-  bool m_ownsEdit = false;
   bool m_askClose = false;
   bool m_finished = false;
   float m_sidebarWidth = 300.0f;

@@ -1131,11 +1131,7 @@ void AssetBrowserPanel::drawContents(EditorContext& context)
     }
   }
 
-  // Whose the Edit menu is: this panel's while it, or one of its parts, was
-  // the last panel focused (menus and popups don't count).
-  widgets::trackFocus(m_ownsEdit);
-
-  // Keys, while this panel has focus (elsewhere they're the scene's).
+  // Keys, while this panel has focus.
   if (!m_renaming && !ImGui::GetIO().WantTextInput)
   {
     if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Z))

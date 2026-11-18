@@ -138,7 +138,8 @@ void EditorSettings::load(SDL_Window* window, std::vector<Panel*> panels)
 void EditorSettings::openAllPanels()
 {
   for (Panel* panel : m_panels)
-    panel->open() = true;
+    if (panel->openByDefault())
+      panel->open() = true;
 }
 
 void EditorSettings::readLine(const char* entry, const char* line)

@@ -41,6 +41,7 @@
 #include "engine/runtime/serialization/prefabComponents.h"
 #include "engine/runtime/serialization/sceneSerializer.h"
 #include "engine/runtime/systems/colliderFit.h"
+#include "panels/inspectable.h"
 #include "platform/shell.h"
 #include "scene/editorScene.h"
 #include "scene/entityLabel.h"
@@ -3473,6 +3474,24 @@ void InspectorPanel::drawMaterial(EditorContext& context,
 
 void InspectorPanel::drawContents(EditorContext& context)
 {
+  // Something another panel has selected shows until an entity or an asset
+  // is selected after it.
+  const bool newEntity =
+      context.hasSelection() && context.selection != m_shownSelection;
+  const bool newAsset =
+      context.selectedAsset.valid() && context.selectedAsset != m_shownAsset;
+  m_shownSelection = context.selection;
+  m_shownAsset = context.selectedAsset;
+
+  if (newEntity || newAsset)
+    context.inspected = nullptr;
+
+  if (context.inspected)
+  {
+    context.inspected->drawInspector(context);
+    return;
+  }
+
   // An entity selection wins over an asset one (and replaces it).
   if (context.hasSelection())
     context.selectedAsset = {};

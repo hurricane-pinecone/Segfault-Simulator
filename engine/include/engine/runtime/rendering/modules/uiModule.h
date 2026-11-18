@@ -117,6 +117,14 @@ public:
   /** Keep where every view went (placed()), for tools. */
   void setRecordPlaced(bool record) { m_recordPlaced = record; }
 
+  /**
+   * Whether an image file that can't be loaded is logged as an error (it is
+   * unless told otherwise). A tool showing views filled in with placeholder
+   * text turns it off: a view may use a text field ("Icon 1") as an image's
+   * name. The image draws as nothing either way.
+   */
+  void setReportMissingImages(bool report) { m_reportMissingImages = report; }
+
   /** Bigger or smaller UI (1: as designed); a game's UI scale setting. */
   void setScale(float scale) { m_userScale = scale; }
 
@@ -174,6 +182,7 @@ private:
   std::function<std::vector<ui::Layer*>()> m_layerSource;
   ui::Layer* m_overlay = nullptr;
   bool m_recordPlaced = false;
+  bool m_reportMissingImages = true;
   std::vector<ui::Placed> m_placed;
   glm::vec2 m_screen{0.0f};
 

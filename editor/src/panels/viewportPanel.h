@@ -51,6 +51,7 @@ public:
   /** On its first appearance, tab into the dock node of the window called
    * `window`. */
   void dockWith(std::string window) { m_dockWith = std::move(window); }
+  Edits edits() const override { return Edits::Scene; }
   /** Render the active scene into this viewport (the app switches the context).
    */
   void setActive(bool active);

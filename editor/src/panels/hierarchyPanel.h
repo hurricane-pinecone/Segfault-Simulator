@@ -23,6 +23,8 @@ class HierarchyPanel : public Panel
 public:
   HierarchyPanel() : Panel("Hierarchy") {}
 
+  Edits edits() const override { return Edits::Scene; }
+
 protected:
   void drawContents(EditorContext& context) override;
 

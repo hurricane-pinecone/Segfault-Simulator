@@ -71,8 +71,11 @@ void NvimClient::handle(const Value& message)
       m_scriptSaved = true;
     else if (parts[1].asString() == "sfs_script_focused" && parts.size() >= 3 &&
              !parts[2].asArray().empty())
+    {
       m_focusedScript =
           m_environment.toEditorPath(parts[2].asArray()[0].asString());
+      ++m_focusedRevision;
+    }
     else if (parts[1].asString() == "sfs_scripts_open" && parts.size() >= 3 &&
              !parts[2].asArray().empty())
     {
@@ -131,16 +134,18 @@ void NvimClient::mouse(const char* button,
            Value(column)});
 }
 
-void NvimClient::open(const std::filesystem::path& file)
+void NvimClient::open(const std::filesystem::path& file, int line)
 {
   // As typed keys rather than a direct call, so Neovim can still ask what it
   // needs to (e.g. the swap file "ATTENTION" prompt); <C-\><C-n> leaves
-  // whatever mode it is in first.
+  // whatever mode it is in first. `:edit +N` puts the cursor on line N.
   request("nvim_exec_lua",
-          {str("local keys = '<C-\\\\><C-n>:edit ' .. "
-               "vim.fn.fnameescape(...):gsub('<', '<lt>') .. '<CR>'\n"
+          {str("local file, line = ...\n"
+               "local at = line > 0 and ('+' .. line .. ' ') or ''\n"
+               "local keys = '<C-\\\\><C-n>:edit ' .. at .. "
+               "vim.fn.fnameescape(file):gsub('<', '<lt>') .. '<CR>'\n"
                "vim.api.nvim_input(keys)"),
-           Value(Array{str(m_environment.toBuildPath(file))})});
+           Value(Array{str(m_environment.toBuildPath(file)), Value(line)})});
 }
 
 void NvimClient::poll()
@@ -245,7 +250,8 @@ bool NvimClient::start(const LaunchOptions& options, int columns, int rows)
   const std::string globals =
       "let g:sfs_editor = 1 | let g:sfs_nvim_mode = " + vimString(mode) +
       " | let g:sfs_project_root = " +
-      vimString(m_environment.toBuildPath(options.workingDirectory));
+      vimString(m_environment.toBuildPath(options.workingDirectory)) +
+      " | let g:sfs_icons = " + (options.icons ? "1" : "0");
 
   // SFS_LSP names the sfs-lsp matching this engine, for any config to start
   // beside clangd. The engine config gets its own config/data folders, so the

@@ -82,6 +82,8 @@ class InspectorPanel : public Panel
 public:
   InspectorPanel() : Panel("Inspector") {}
 
+  Edits edits() const override { return Edits::Scene; }
+
 protected:
   void drawContents(EditorContext& context) override;
 
@@ -160,4 +162,8 @@ private:
   std::map<std::string, std::string>
       m_pendingReattach; // unused paths: old -> new
   std::optional<unusedOverrides::Unused> m_pendingRemoveUnused;
+  // The entity and asset selected when last drawn: one selected since takes
+  // the Inspector back from another panel's (EditorContext::inspected).
+  sfs::Entity m_shownSelection;
+  sfs::AssetId m_shownAsset;
 };

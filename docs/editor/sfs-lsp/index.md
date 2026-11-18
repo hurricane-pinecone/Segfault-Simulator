@@ -18,6 +18,9 @@ and merges what both say:
   `sfs-lsp --fix` applies fixes across a tree.
 - **[House rules](#house-rules)**: SFS's own code style, where a `.sfs-lint`
   file turns them on.
+- **[Architecture export](#architecture-export)**: `sfs-lsp --graph` writes
+  your game's systems, components and events, and what each one does with the
+  others, as JSON.
 - **[Formatting](#formatting)**: clang-format, then, where a `.sfs-format`
   file turns them on, SFS's own layout rules (class and definition order,
   blank lines round control blocks), on save and from the command line.
@@ -663,6 +666,156 @@ fix made too long yourself. Run it again and nothing changes. For the entity
 API's migration the order is
 `setup-in-constructor,is-alive,has-then-get,row-lookup,component-pointer`: each
 rule leaves the new forms, which the later ones skip.
+
+## Architecture export
+
+```bash
+sfs-lsp --graph [--progress] [--root DIR] PATH...
+```
+
+writes your game's architecture as JSON on stdout: its systems, services, game
+objects, components, scene data and events as nodes, and what each one's code
+does with the others as edges (which system writes `Health`, who sends
+`EnemyDiedEvent`, which system reads another). It's the picture as the code
+has it, tangles included, so it shows what to clean up; the editor draws it
+on its [Architecture board](../architecture/index.md), and docs, scripts and
+CI checks can read it. The types come from the project's
+`scripts/` (as sfs-codegen reads them) and the files given; the edges from the
+files given. Paths and the root work as they do for `--check`. On a game of a
+few hundred script files it takes well under a second (Release build) and
+about a second in a Debug one: each file is parsed once, on several threads.
+
+### The JSON
+
+```json
+{
+  "version": 1,
+  "root": "/home/me/MyGame",
+  "nodes": [
+    {"id": "component:Health", "kind": "component", "name": "Health",
+     "qualifiedName": "Health", "file": "scripts/components/Health.h",
+     "line": 3, "declared": true, "engine": false, "marked": false},
+    {"id": "event:EnemyDiedEvent", "kind": "event", "name": "EnemyDiedEvent",
+     "qualifiedName": "EnemyDiedEvent", "file": "scripts/events/EnemyEvents.h",
+     "line": 4, "declared": true, "engine": false, "role": "news"},
+    {"id": "system:CombatSystem", "kind": "system", "name": "CombatSystem",
+     "qualifiedName": "CombatSystem", "file": "scripts/systems/CombatSystem.h",
+     "line": 6, "declared": true, "engine": false}
+  ],
+  "edges": [
+    {"from": "system:CombatSystem", "to": "component:Health", "kind": "writes",
+     "sites": [
+       {"file": "scripts/systems/CombatSystem.cpp", "line": 31,
+        "via": "query", "term": "required"},
+       {"file": "scripts/systems/CombatSystem.cpp", "line": 58,
+        "via": "getComponent"}]},
+    {"from": "system:CombatSystem", "to": "event:EnemyDiedEvent",
+     "kind": "sends",
+     "sites": [{"file": "scripts/systems/CombatSystem.cpp", "line": 40,
+                "via": "send"}]}
+  ]
+}
+```
+
+`version` is the schema's version: it goes up when a field changes meaning or
+goes away (adding a field or a kind doesn't). The same tree always gives the
+same JSON: nodes are sorted by `id`, edges by `from`, `to` and `kind`, sites by
+file and line.
+
+Every node has:
+
+| Field | What it holds |
+| --- | --- |
+| `id` | `kind:qualifiedName` (`system:CombatSystem`, `component:sfs::TransformComponent`), or `utils:` and the file's path without its extension (`utils:scripts/utils/Damage`). It stays the same from run to run while the type keeps its name and kind. |
+| `kind` | `system`, `service`, `gameObject`, `component`, `sceneData`, `event`, `scriptableObject`, `meshSource` or `utils`. |
+| `name`, `qualifiedName` | Its name, and with its namespaces. |
+| `file`, `line` | Where it's declared (a utils node: its first file, line 1). Left out when `declared` is false. |
+| `declared` | Whether the files read declare it. An engine type your game uses (`sfs::TransformComponent`) is a node too, with `declared: false`, so no edge to it is lost. |
+| `engine` | Whether it's SFS's: its qualified name starts with `sfs::`. A type the files don't declare counts as SFS's when it's written as `sfs::...`, or where SFS's names are visible (`using namespace sfs;`). |
+| `role` | Events only: `news`, `entityNews`, `request` or `response`, from its attribute; `null` when it isn't known (an engine event). |
+| `responses` | Requests only: the ids of its `success` response and, if it has them, its `progress` and `failure` ones. |
+| `marked` | Declared components and scene data only: whether it's marked `[[sfs::component]]` or `[[sfs::scene_data]]` rather than registered as its header's type. |
+| `files` | Utils nodes only: its files (a header and its source). |
+
+Every edge has `from`, `to`, `kind` and `sites`: one edge per pair and kind,
+with every place it's written. Each site has the `file` (relative to the root)
+and `line`, `via` (the call: `getComponent`, `query`, `getEntities`,
+`registerComponent`, `observe`, `matches`, `childrenOf`, `descendants`,
+`finder`, `find`, `sceneData`, `hasComponent`, `addComponent`, `addTag`,
+`removeComponent`, `addSceneData`, `removeSceneData`, `send`, `broadcast`,
+`consumer`, `requester`, `request`, `respond`, `progress`, `fail`,
+`getSystem`, `tryGetSystem`, `hasSystem` or `include`) and, for a term of a
+query, a registration or an observer, `term`: `required`, `any`, `with` or
+`excluding`.
+
+| Edge kind | From the code |
+| --- | --- |
+| `registers` | `registerComponent<T>()`, each component of the term, with its `term`. |
+| `observes` | `observe<Terms...>()`, each component, with its `term`. |
+| `reads` | Const access: `getComponent<const T>()`, a `const T` (or `sfs::Any<const T>`) term of `query<...>()`, `getEntities<...>()` or a typed hierarchy walk, `sceneData<const T>()`, `finder<const T>()`. |
+| `writes` | The same forms, mutable. The `mutable-read` rule keeps mutable access for code that changes the data, so `writes` means it does. |
+| `adds`, `removes` | `addComponent<T>()`, `addTag<T>()`, `addSceneData<T>()`; `removeComponent<T>()`, `removeSceneData<T>()`. |
+| `filters` | Terms that bind nothing: `sfs::With<...>` and `sfs::Excluding<...>` in a query, `matches<...>()`, and `hasComponent<T>()`. |
+| `sends` | `send(E{...})`, `send(entity, E{...})` (the object's own, an `Events`', or a broadcast's), and `broadcast<E>()`. |
+| `consumes` | `consumer<E>()`. |
+| `requests` | `requester<R>()`, and a requester's `request(entity, R{...})`. |
+| `responds` | A responder's `respond`, `progress` and `fail`, to the response type sent. |
+| `reads-system` | `getSystem<T>()`, `tryGetSystem<T>()`, `hasSystem<T>()` of another system: what the `system-reads-system` rule flags. |
+| `uses-util` | An `#include` of a utils file's header. |
+
+### Who an edge is from
+
+Each site belongs to the code it's written in:
+
+- In a system's, service's or game object's member function, in or out of its
+  class (`void CombatSystem::update(double)`), and in a lambda inside one (an
+  event handler, an `observe()` callback): that class.
+- In a helper class, job or free function of a file whose code is for one
+  system, service or game object (it defines that class, or its members): that
+  one. A job class in `CombatSystem.cpp` works for `CombatSystem`.
+- Anywhere else (a utils file, a header of free helpers, a file for several
+  systems): the file's `utils` node, which a header and its source of one name
+  share. A utils node is only made for a file whose code touches components,
+  scene data, events or systems.
+
+There's no call graph: a system that calls a utils function doesn't take on
+what the function does. That shows as a `uses-util` edge from the system to the
+utils node, which holds the access itself. `uses-util` comes from `#include`
+lines, so it's approximate: an include that isn't used still counts, and a
+utils header reached through another header doesn't.
+
+What it can't see:
+
+- Types are told apart by the names written: a template's own parameter
+  (`getComponent<T>()` in generic code) is left out, and two types of one name
+  in different namespaces are taken for one.
+- A response sent with a type it can't read (`responder.respond(make())`) is
+  left out, as are sends through a variable whose type isn't written where
+  it's declared.
+- A query on something it can't tell is the registry (a template's `store`)
+  only keeps the terms the files declare and SFS's.
+
+### Progress
+
+With `--progress`, it writes one line to stderr for each step, flushed as it
+goes, so a caller can show a progress bar; stdout stays the JSON alone:
+
+```text
+progress 0 623 scan
+progress 1 623 parse
+...
+progress 312 623 index
+...
+progress 623 623 write
+```
+
+Each line is `progress <done> <total> <phase>`. `total` is the same on every
+line, known once the files are listed; `done` never goes down, and the last
+line has `done` equal to `total`. The phases come in order: `scan` (the files
+listed), `parse` (one step for each file given), `index` (each file indexed:
+the files given, then the project's others), `edges` (each file given) and
+`write` (the JSON made, just before it's written). Without `--progress`
+nothing but the JSON is printed.
 
 ## Formatting
 

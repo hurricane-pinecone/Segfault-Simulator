@@ -288,6 +288,22 @@ bool itemReleasedWithoutDrag(ImGuiMouseButton button)
          pressed.y < max.y;
 }
 
+float splitter(const char* id, ImVec2 size)
+{
+  ImGui::InvisibleButton(id, size);
+  const bool sideways = size.y > size.x;
+
+  if (ImGui::IsItemHovered() || ImGui::IsItemActive())
+    ImGui::SetMouseCursor(sideways ? ImGuiMouseCursor_ResizeEW
+                                   : ImGuiMouseCursor_ResizeNS);
+
+  if (!ImGui::IsItemActive())
+    return 0.0f;
+
+  const ImVec2 delta = ImGui::GetIO().MouseDelta;
+  return sideways ? delta.x : delta.y;
+}
+
 std::string shownTab(const char* window)
 {
   const ImGuiWindow* found = ImGui::FindWindowByName(window);

@@ -32,6 +32,10 @@ struct IndexEntry
   codegen::TypeKind kind = codegen::TypeKind::Component;
   /** For a Derived type, its base's unqualified name; else empty. */
   std::string base;
+  /** The line it's declared on, 1-based. */
+  unsigned line = 0;
+  /** Whether it's marked [[sfs::component]] or [[sfs::scene_data]]. */
+  bool marked = false;
 };
 
 /**
@@ -150,6 +154,19 @@ void noteUsing(TSNode node,
                std::vector<UsingName>& usings);
 
 /**
+ * The type of the value a send-like call sends (`x.respond(r)`,
+ * `send(entity, e)`): its one argument's, or the second of two, where it can
+ * be read: `T{...}`, `T(...)`, a variable the function around the call
+ * declares (not `auto` but for `auto v = T{...}`), or a data member the class
+ * around it declares, through `std::move`.
+ *
+ * @param call a call expression
+ * @param source the file's text
+ * @return the type as written, or empty when it can't be read
+ */
+std::string_view sentType(TSNode call, std::string_view source);
+
+/**
  * Finds the responses a file sends and the names it brings into scope, with
  * noteResponseSend() and noteUsing().
  *
@@ -185,6 +202,8 @@ struct ScriptFile
 {
   /** The types codegen registers from it (a header's), in order. */
   std::vector<IndexEntry> entries;
+  /** The event types it declares, in order. */
+  std::vector<codegen::EventModel> events;
   /** Its query aliases (a header's). */
   std::vector<QueryAlias> aliases;
   /** The responses it sends. */
@@ -230,8 +249,23 @@ void findQueryAliases(const TSTree* tree,
 class ProjectIndex
 {
 public:
+  /**
+   * Adds files to be read by indexSlice() besides the project's scripts (or
+   * in place of them, for a root that isn't a project), and puts the index in
+   * use: sfs-lsp --graph on any tree. A later rescan() forgets them.
+   *
+   * @param files the .h and .cpp files, each once
+   */
+  void addFiles(std::span<const std::filesystem::path> files);
+
   /** Whether the root is a project, so the index is in use. */
   bool enabled() const { return m_enabled; }
+
+  /**
+   * The script files read, in path order, each with what it declares and
+   * sends.
+   */
+  std::span<const ScriptFile* const> files() const;
 
   /**
    * The type `name` (unqualified) a script header declares, as codegen
@@ -247,12 +281,32 @@ public:
                               std::string_view name) const;
 
   /**
+   * The event type a script file declares as `name`: by its qualified name
+   * ("game::DoorOpenedEvent"), else by its unqualified one; null when there's
+   * none.
+   */
+  const codegen::EventModel* findEvent(std::string_view name) const;
+
+  /**
    * The script header that declares the type `name` (unqualified), or empty.
    */
   std::filesystem::path headerOf(std::string_view name) const;
 
   /** Reads every waiting script file (sfs-lsp --check). */
   void indexAll(TSParser* parser);
+
+  /**
+   * Reads one file from a tree the caller has, as indexSlice() reads one
+   * from disk, and takes it off the waiting list (sfs-lsp --graph, which
+   * parses each file once).
+   *
+   * @param file the .h or .cpp file
+   * @param tree its syntax tree
+   * @param source its text
+   */
+  void indexFile(const std::filesystem::path& file,
+                 const TSTree* tree,
+                 std::string_view source);
 
   /**
    * Reads up to `count` waiting script files from disk.
@@ -289,6 +343,9 @@ public:
   /** Whether script files are still waiting to be read. */
   bool pending() const { return !m_pending.empty(); }
 
+  /** How many script files are waiting to be read. */
+  std::size_t pendingCount() const { return m_pending.size(); }
+
   /**
    * Looks for script files added or removed since the last look (one stat
    * each).
@@ -300,6 +357,13 @@ public:
    * response type of the project's scripts.
    */
   ResponseKind responseKind(std::string_view qualifiedName) const;
+
+  /**
+   * The kind of the type `name` (unqualified) the scripts declare: a Derived
+   * type's is its base's, as far as the scripts declare its bases (Derived
+   * when they don't); Derived for a name they don't declare.
+   */
+  codegen::TypeKind rootKind(std::string_view name) const;
 
   /**
    * The project's sends of the response type `qualifiedName`, each resolved
@@ -361,6 +425,9 @@ private:
   bool isScriptFile(const std::filesystem::path& path,
                     std::string_view extension) const;
   std::vector<std::filesystem::path> listFiles() const;
+  void readTree(const std::filesystem::path& normal,
+                const TSTree* tree,
+                std::string_view source);
   void replace(const std::filesystem::path& header,
                const codegen::ParseResult& result,
                const TSTree* tree,
@@ -370,7 +437,6 @@ private:
                         const TSTree* tree,
                         std::string_view source,
                         const std::vector<codegen::EventModel>* events);
-  codegen::TypeKind rootKind(std::string_view name) const;
 
   bool m_enabled = false;
   std::filesystem::path m_scripts;
@@ -379,15 +445,17 @@ private:
   NameMap<ScriptFile> m_files;
 
   // What's derived from the files, built when first needed after a change
-  // (buildLookup()): the files in path order, the entries by name, the
-  // response types, and the resolved senders by response type.
+  // (buildLookup()): the files in path order, the entries and events by
+  // name, the response types, and the resolved senders by response type.
   mutable bool m_lookupBuilt = false;
   mutable std::vector<const ScriptFile*> m_sorted;
   mutable NameMap<const IndexEntry*> m_byName;
+  mutable NameMap<const codegen::EventModel*> m_eventsByName;
+  mutable NameMap<const codegen::EventModel*> m_eventsByQualifiedName;
   mutable NameMap<ResponseKind> m_responseKinds;
   mutable NameMap<std::vector<ResponseSender>> m_senders;
   std::vector<std::filesystem::path> m_known;   // sorted: every file listed
-  std::vector<std::filesystem::path> m_pending; // waiting to be read
+  std::vector<std::filesystem::path> m_pending; // sorted: waiting to be read
 };
 
 } // namespace sfs::lsp

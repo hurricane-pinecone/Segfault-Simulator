@@ -227,6 +227,16 @@ calleeName(TSNode call, std::string_view source, TSNode& templateArguments);
 std::string_view declaredName(TSNode declarator, std::string_view source);
 
 /**
+ * The class an out-of-line member function definition is of: `void
+ * ns::X::f() {}` gives "X".
+ * @param function a function definition
+ * @param source the file's text
+ * @return the class's unqualified name; empty for a free function or one
+ *   defined in its class
+ */
+std::string_view definedClassOf(TSNode function, std::string_view source);
+
+/**
  * The class a node is written in: the class body around it, or the class an
  * out-of-line method around it belongs to (`ns::X::f` gives "X").
  * @param node the node
@@ -303,6 +313,20 @@ enum class Wrapper : uint8_t
   Query,
 };
 
+/**
+ * One component a written term names: a plain term's, or a member of an
+ * SFS group, with query aliases and Query lists expanded.
+ */
+struct TermMember
+{
+  /** The component as written, `const` included, e.g. "const Health". */
+  std::string_view spelling;
+  /** The group it's a member of; None for a plain term. */
+  Wrapper group = Wrapper::None;
+  /** The group's spelling, e.g. "sfs::Any<A, B>"; empty for a plain term. */
+  std::string_view groupSpelling;
+};
+
 /** A class or struct with a body, declared in the file. */
 struct FileClass
 {
@@ -375,6 +399,13 @@ struct LintFile
   /** The name of a function's or lambda's first parameter, or empty. */
   std::string_view firstParameter(TSNode parameters) const;
 
+  /**
+   * Whether a query or observe call is the registry's: made inside a system
+   * (no receiver, or `this`), or on something named like the registry or the
+   * scene. Another library's query<...>() takes other arguments.
+   */
+  bool isRegistryCall(TSNode call) const;
+
   /** Whether `name` is a Service class of the file or the project. */
   bool isServiceClass(std::string_view name) const;
 
@@ -406,6 +437,12 @@ struct LintFile
   std::string_view ownerAt(TSNode node) const;
 
   /**
+   * Notes what a using-declaration or using-directive makes visible of SFS:
+   * `using namespace sfs;` (usingSfs) or `using sfs::X;` (usingNames).
+   */
+  void readUsing(TSNode node);
+
+  /**
    * The object a call is made on (`x` of `x.f()`), or null for a plain call.
    */
   TSNode receiverOf(TSNode call) const;
@@ -419,6 +456,24 @@ struct LintFile
 
   /** Forgets the last file's state, keeping the containers' capacity. */
   void resetFile();
+
+  /**
+   * The components a written term names, in order: a plain one, an SFS
+   * group's members, or what a query alias or Query list stands for,
+   * expanded.
+   *
+   * @param at where the term is written, for which SFS names are visible
+   * @param owner the class it's written in, for its query aliases
+   * @param term the term as written
+   * @param out gains each component, up to where the term can't be read
+   * @param depth how deep in aliases the term is; 0 where it's written
+   * @return false when it can't be read: a pack, or aliases nested too deep
+   */
+  bool termMembers(TSNode at,
+                   std::string_view owner,
+                   std::string_view term,
+                   std::vector<TermMember>& out,
+                   int depth = 0) const;
 
   /** The text `node` covers. */
   std::string_view text(TSNode node) const;

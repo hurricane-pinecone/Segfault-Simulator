@@ -3,12 +3,13 @@
 #include "engine/core/rendering/materialGraph.h"
 #include "engine/core/rendering/materialGraphCompiler.h"
 #include "engine/core/rendering/materialNodes.h"
+#include "widgets/boardCanvas.h"
 
 #include <imgui.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
-#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -19,7 +20,9 @@ class AssetDatabase;
 }
 
 // The Material Editor's canvas: draws a material graph's nodes and links, and
-// edits them with the mouse.
+// edits them with the mouse. The board (widgets/boardCanvas.h) pans, zooms,
+// selects and moves the nodes; this adds what's a material graph's own: pins,
+// links between them, the values on the nodes, and the menus.
 //
 //   - Drag a node to move it (and the rest of the selection with it); click to
 //     select, Ctrl+click to add or remove one, drag on empty space to select
@@ -46,7 +49,7 @@ public:
    * A gesture is under way (dragging nodes, a link or a box): the graph is
    * mid-edit, so the panel waits before recording an undo step.
    */
-  bool busy() const { return m_gesture != Gesture::None; }
+  bool busy() const { return m_board.busy(); }
 
   void copySelection(const Graph& graph) const;
 
@@ -68,29 +71,24 @@ public:
   void duplicateSelection(Graph& graph);
 
   /** Fit the view to every node (or, if any, the selected ones) next draw. */
-  void frame() { m_frameRequested = true; }
+  void frame() { m_board.frame(); }
 
   /** The Add Node menu, where the mouse is. */
   void openAddMenu() { m_openAddMenu = true; }
 
   void paste(Graph& graph);
 
-  void select(NodeId node) { m_selection = {node}; }
+  void select(NodeId node) { m_board.select(node); }
 
   void selectAll(const Graph& graph);
 
-  const std::set<NodeId>& selection() const { return m_selection; }
+  /** The selected nodes' ids, in ascending order. */
+  const std::vector<board::BoxId>& selection() const
+  {
+    return m_board.selection();
+  }
 
 private:
-  enum class Gesture
-  {
-    None,
-    Pan,
-    MoveNodes,
-    BoxSelect,
-    Link,
-  };
-
   // A pin: a node's input or output.
   struct Pin
   {
@@ -101,11 +99,13 @@ private:
     bool output = false;
   };
 
-  // Where a node and its pins are, in canvas units.
+  // Where a node is, in canvas units, and its pins: down its left edge for
+  // its inputs and its right for its outputs, a row apart from `pinsTop`.
   struct Layout
   {
     ImVec2 min, max;
-    std::vector<ImVec2> inputs, outputs; // pin centres
+    float pinsTop = 0.0f;
+    uint32_t inputs = 0, outputs = 0;
   };
 
   void acceptTextureDrop(Graph& graph, const sfs::AssetDatabase* assets);
@@ -118,22 +118,21 @@ private:
   void drawColorPicker(Graph& graph);
   // The node's value fields, on it (at zooms where they're usable).
   void drawFields(sfs::materialGraph::Node& node,
+                  std::size_t index,
                   const Graph& graph,
                   const sfs::materialGraph::CompiledGraph& compiled);
-  void drawGrid(ImDrawList* draw, ImVec2 size) const;
   void drawLinks(ImDrawList* draw,
                  const Graph& graph,
                  const sfs::materialGraph::CompiledGraph& compiled) const;
   void drawNode(ImDrawList* draw,
                 const sfs::materialGraph::Node& node,
+                std::size_t index,
                 const Graph& graph,
                 const sfs::materialGraph::CompiledGraph& compiled,
                 const sfs::AssetDatabase* assets) const;
   void drawNodeMenu(Graph& graph);
   bool fieldsShown() const;
   void finishLink(Graph& graph, ImVec2 mouse);
-  void fit(ImVec2 size);
-
   void handleMouse(Graph& graph);
   Layout layout(const sfs::materialGraph::Node& node,
                 const sfs::materialGraph::CompiledGraph& compiled,
@@ -149,28 +148,24 @@ private:
   // Where an added or pasted node goes: the mouse, if it's over the canvas,
   // else the middle of the view (canvas units).
   ImVec2 placement() const;
-  ImVec2 toCanvas(ImVec2 screen) const;
-  ImVec2 toScreen(ImVec2 canvas) const;
+  // A left press on a pin: cut its links (Alt), or start dragging a link from
+  // it (the board's own gesture, until the button is released).
+  board::Press pressPin(Graph& graph, ImVec2 mouse);
 
-  // The view: canvas point (0, 0) sits at m_origin + m_pan on screen.
-  ImVec2 m_origin{0.0f, 0.0f};
-  ImVec2 m_size{0.0f, 0.0f}; // as last drawn
-  ImVec2 m_pan{0.0f, 0.0f};
-  float m_zoom = 1.0f;
-  bool m_frameRequested = true;
+  // The view, the selection, and the mouse's gestures but dragging links.
+  board::Canvas m_board;
 
-  std::set<NodeId> m_selection;
+  // The nodes as last laid out, in drawing order, and each one's first pin in
+  // m_pins (its inputs, then its outputs).
+  std::vector<board::Box> m_boxes;
+  std::vector<std::size_t> m_firstPins;
   // Pin centres as last drawn, for hit tests (canvas units).
   std::vector<std::pair<Pin, ImVec2>> m_pins;
-  std::vector<std::pair<NodeId, Layout>> m_layouts; // in drawing order
 
-  Gesture m_gesture = Gesture::None;
-  ImVec2 m_pressedAt{0.0f, 0.0f}; // where the gesture began (screen)
-  std::vector<std::pair<NodeId, ImVec2>>
-      m_moveStart; // MoveNodes: positions then
-  Pin m_linkFrom;  // Link: the pin it started at
-  bool m_linkPickedUp =
-      false; // Link: taken off an input (dropping it on nothing unlinks)
+  // While a link is dragged (the board's own gesture): the pin it started at,
+  // and whether it was taken off an input (dropping it on nothing unlinks).
+  Pin m_linkFrom;
+  bool m_linkPickedUp = false;
 
   bool m_openAddMenu = false;
   ImVec2 m_addAt{0.0f, 0.0f};   // where an added node goes (canvas units)

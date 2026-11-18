@@ -194,6 +194,26 @@ std::string_view declaredName(TSNode declarator, std::string_view source)
   return {};
 }
 
+std::string_view definedClassOf(TSNode function, std::string_view source)
+{
+  TSNode declarator = LintFile::field(function, "declarator");
+
+  while (!ts_node_is_null(declarator) &&
+         !isType(declarator, "function_declarator"))
+    declarator = LintFile::field(declarator, "declarator");
+
+  TSNode name = LintFile::field(declarator, "declarator");
+  std::string_view owner;
+
+  while (isType(name, "qualified_identifier"))
+  {
+    owner = codegen::nodeText(source, LintFile::field(name, "scope"));
+    name = LintFile::field(name, "name");
+  }
+
+  return lastName(owner);
+}
+
 std::string_view ownerOf(TSNode node, std::string_view source)
 {
   for (TSNode at = parent(node); !ts_node_is_null(at); at = parent(at))
@@ -204,23 +224,9 @@ std::string_view ownerOf(TSNode node, std::string_view source)
     if (!isType(at, "function_definition"))
       continue;
 
-    TSNode declarator = LintFile::field(at, "declarator");
-
-    while (!ts_node_is_null(declarator) &&
-           !isType(declarator, "function_declarator"))
-      declarator = LintFile::field(declarator, "declarator");
-
-    TSNode name = LintFile::field(declarator, "declarator");
-    std::string_view owner;
-
-    while (isType(name, "qualified_identifier"))
-    {
-      owner = codegen::nodeText(source, LintFile::field(name, "scope"));
-      name = LintFile::field(name, "name");
-    }
-
-    if (!owner.empty())
-      return lastName(owner);
+    if (const std::string_view owner = definedClassOf(at, source);
+        !owner.empty())
+      return owner;
   }
 
   return {};
@@ -397,6 +403,22 @@ std::string_view LintFile::firstParameter(TSNode parameters) const
   return {};
 }
 
+bool LintFile::isRegistryCall(TSNode call) const
+{
+  const TSNode receiver = receiverOf(call);
+
+  if (ts_node_is_null(receiver) || kind(receiver) == Kind::This)
+    return true;
+
+  std::string_view spelled = text(receiver);
+
+  while (!spelled.empty() && isSpace(spelled.back()))
+    spelled.remove_suffix(1);
+
+  return spelled.ends_with("registry") || spelled.ends_with("Registry") ||
+         spelled.ends_with("scene()");
+}
+
 bool LintFile::isServiceClass(std::string_view name) const
 {
   const FileClass* found = fileClass(name);
@@ -445,6 +467,25 @@ std::string_view LintFile::ownerAt(TSNode node) const
   return ownerOf(node, source);
 }
 
+void LintFile::readUsing(TSNode node)
+{
+  const bool usingNamespace =
+      spelledAs(text(node), {"using", "namespace"}, false);
+  const uint32_t count = ts_node_named_child_count(node);
+
+  for (uint32_t i = 0; i < count; ++i)
+  {
+    const TSNode child = ts_node_named_child(node, i);
+
+    if (usingNamespace)
+      usingSfs = usingSfs || spelledAs(text(child), {"sfs"}) ||
+                 spelledAs(text(child), {"::sfs"});
+    else if (kind(child) == Kind::QualifiedIdentifier &&
+             text(field(child, "scope")) == "sfs")
+      usingNames.push_back(text(field(child, "name")));
+  }
+}
+
 TSNode LintFile::receiverOf(TSNode call) const
 {
   const TSNode function = field(call, "function");
@@ -480,6 +521,48 @@ void LintFile::resetFile()
   sceneDataCalls.clear();
   loops.clear();
   constructors.clear();
+}
+
+bool LintFile::termMembers(TSNode at,
+                           std::string_view owner,
+                           std::string_view term,
+                           std::vector<TermMember>& out,
+                           int depth) const
+{
+  if (depth > 8 || term.ends_with("..."))
+    return false;
+
+  std::string_view inner;
+  const Wrapper wrapper = wrapperOfText(at, term, inner);
+
+  if (wrapper == Wrapper::None)
+  {
+    if (const QueryAlias* named = alias(owner, trimmed(term)))
+    {
+      for (const std::string& nested : named->terms)
+        if (!termMembers(at, owner, nested, out, depth + 1))
+          return false;
+
+      return true;
+    }
+
+    out.push_back({trimmed(term), Wrapper::None, {}});
+    return true;
+  }
+
+  if (wrapper == Wrapper::Query)
+  {
+    for (const std::string_view nested : splitTerms(inner))
+      if (!termMembers(at, owner, nested, out, depth + 1))
+        return false;
+
+    return true;
+  }
+
+  for (const std::string_view member : splitTerms(inner))
+    out.push_back({member, wrapper, trimmed(term)});
+
+  return true;
 }
 
 std::string_view LintFile::text(TSNode node) const

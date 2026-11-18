@@ -1,0 +1,186 @@
+local fetchReplacedFileContent = require('grug-far.engine.ripgrep.fetchReplacedFileContent')
+local utils = require('grug-far.utils')
+local fetchCommandOutput = require('grug-far.engine.fetchCommandOutput')
+local argUtils = require('grug-far.engine.ripgrep.argUtils')
+local getArgs = require('grug-far.engine.ripgrep.getArgs')
+local parseResults = require('grug-far.engine.ripgrep.parseResults')
+local async_job = require('grug-far.async_job')
+
+---@class grug.far.replaceInFileParams
+---@field inputs grug.far.Inputs
+---@field options grug.far.Options
+---@field replacement_eval_fn fun(...): (string?, string?)
+---@field file string
+---@field on_finish fun(status: grug.far.Status, errorMessage: string?)
+
+--- performs replacement in given file
+---@param params grug.far.replaceInFileParams
+---@return fun()? abort
+local function replaceInFile(params)
+  local file = params.file
+  local on_finish = params.on_finish
+
+  local is_aborted = false
+  local abort
+  abort = function()
+    is_aborted = true
+  end
+
+  local inputs = vim.deepcopy(params.inputs)
+
+  local doReplace = function()
+    abort = fetchReplacedFileContent({
+      inputs = inputs,
+      options = params.options,
+      file = file,
+      on_finish = function(status, errorMessage, content)
+        if status == 'success' and content then
+          return utils.overwriteFileAsync(file, content, function(err)
+            if err then
+              return on_finish('error', 'Could not write: ' .. file .. '\n' .. err)
+            end
+
+            on_finish('success')
+          end)
+        end
+
+        return on_finish(status, errorMessage)
+      end,
+    })
+  end
+
+  local is_multiline_replace = inputs.replacement:find('\n', 1, true) ~= nil
+  if is_multiline_replace then
+    utils.detect_file_eol(file, function(err, eol)
+      if err then
+        on_finish('error', 'Error while determinining file EOL: ' .. file .. '\n' .. err)
+      end
+      if is_aborted then
+        return
+      end
+
+      if eol then
+        inputs.replacement = inputs.replacement:gsub('\n', eol)
+      end
+      vim.schedule(doReplace)
+    end)
+  else
+    doReplace()
+  end
+
+  return abort
+end
+
+--- performs replacement in given file with eval
+---@param params grug.far.replaceInFileParams
+---@return fun()? abort
+local function replaceInFileWithEval(params)
+  local file = params.file
+  local on_finish = params.on_finish
+  local replacement_eval_fn = params.replacement_eval_fn
+
+  local inputs = vim.deepcopy(params.inputs)
+  inputs.paths = ''
+  local args = getArgs(inputs, params.options, { '--json' })
+  args = argUtils.stripReplaceArgs(args)
+  if args then
+    table.insert(args, file)
+  end
+
+  local json_data = {}
+  local chunk_error = nil
+  local abort
+  abort = fetchCommandOutput({
+    cmd_path = params.options.engines.ripgrep.path,
+    args = args,
+    on_fetch_chunk = function(data)
+      if chunk_error then
+        return
+      end
+
+      local json_list = utils.str_to_json_list(data)
+      for _, entry in ipairs(json_list) do
+        if entry.type == 'match' then
+          for _, submatch in ipairs(entry.data.submatches) do
+            local replacementText, err = replacement_eval_fn(submatch.match.text)
+            if err then
+              chunk_error = err
+              if abort then
+                abort()
+              end
+              return
+            end
+            submatch.replacement = { text = replacementText }
+          end
+          table.insert(json_data, entry)
+        end
+      end
+    end,
+    on_finish = function(status, errorMessage)
+      if status == 'error' then
+        return on_finish('error', errorMessage)
+      end
+
+      if chunk_error then
+        return on_finish('error', chunk_error)
+      end
+
+      if status == 'success' and #json_data > 0 then
+        return utils.readFileAsync(file, function(err1, contents)
+          if err1 then
+            return on_finish('error', 'Could not read: ' .. file .. '\n' .. err1)
+          end
+
+          local new_contents = parseResults.getReplacedContents(contents, json_data)
+          return utils.overwriteFileAsync(file, new_contents, function(err2)
+            if err2 then
+              return on_finish('error', 'Could not write: ' .. file .. '\n' .. err2)
+            end
+
+            on_finish('success')
+          end)
+        end)
+      end
+
+      return on_finish('success')
+    end,
+  })
+
+  return abort
+end
+
+--- performs replacement in given matched file
+---@param params {
+--- inputs: grug.far.Inputs,
+--- options: grug.far.Options,
+--- replacement_eval_fn: fun(...): (string?, string?),
+--- files: string[],
+--- report_progress: fun(count: integer),
+--- on_finish: fun(status: grug.far.Status, errorMessage: string?),
+--- }
+local function replaceInMatchedFiles(params)
+  local replace_in_file = params.replacement_eval_fn and replaceInFileWithEval or replaceInFile
+
+  return async_job.parallel_process({
+    items = params.files,
+    maxWorkers = params.options.maxWorkers,
+    on_finish = params.on_finish,
+    process_item = function(finish, file)
+      return replace_in_file({
+        file = file --[[@as string]],
+        inputs = params.inputs,
+        options = params.options,
+        replacement_eval_fn = params.replacement_eval_fn,
+        on_finish = function(status, errorMessage)
+          if status == 'success' then
+            params.report_progress(1)
+          end
+
+          finish(status, errorMessage)
+        end,
+      })
+    end,
+  })
+end
+
+return replaceInMatchedFiles

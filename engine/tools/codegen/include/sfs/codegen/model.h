@@ -87,6 +87,8 @@ struct TypeModel
   TypeKind kind = TypeKind::Component;
   bool uiLayer = false; // a GameObject that's an sfs::ui::Layer
   std::string base;     // Derived: the base's name, unqualified ("VehicleSpec")
+  /** Whether it's marked [[sfs::component]] or [[sfs::scene_data]]. */
+  bool marked = false;
   std::vector<FieldModel> fields;
   std::filesystem::path header;
   unsigned line = 0; // 1-based, where it's declared

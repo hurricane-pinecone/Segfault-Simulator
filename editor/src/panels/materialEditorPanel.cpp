@@ -14,6 +14,7 @@
 #include "engine/runtime/rendering/renderSystem.h"
 #include "panels/panel.h"
 #include "scene/editorScene.h"
+#include "widgets/boardCanvas.h"
 #include "widgets/widgets.h"
 
 #include <imgui.h>
@@ -24,8 +25,8 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
-#include <set>
 #include <utility>
+#include <vector>
 
 namespace mg = sfs::materialGraph;
 
@@ -99,10 +100,6 @@ void MaterialEditorPanel::drawContents(EditorContext& context)
   if (!m_asset.graph)
     return;
 
-  // Whose the Edit menu is: this panel's while it, or one of its parts, was
-  // the last panel focused (menus and popups don't count).
-  widgets::trackFocus(m_ownsEdit);
-
   handleKeys(context);
   drawToolbar(context);
   ImGui::Separator();
@@ -123,14 +120,8 @@ void MaterialEditorPanel::drawContents(EditorContext& context)
   m_canvas.draw(*m_asset.graph, m_compiled, context.assets);
   ImGui::EndChild();
   ImGui::SameLine(0.0f, 0.0f);
-  ImGui::InvisibleButton("##splitter", ImVec2(SPLITTER, available.y));
-
-  if (ImGui::IsItemActive())
-    m_sidebarWidth -= ImGui::GetIO().MouseDelta.x;
-
-  if (ImGui::IsItemHovered() || ImGui::IsItemActive())
-    ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
-
+  m_sidebarWidth -=
+      widgets::splitter("##splitter", ImVec2(SPLITTER, available.y));
   ImGui::SameLine(0.0f, 0.0f);
   ImGui::BeginChild("Sidebar", ImVec2(0.0f, available.y));
   drawSidebar(context);
@@ -448,7 +439,7 @@ void MaterialEditorPanel::drawSidebar(EditorContext& context)
     }
   }
 
-  const std::set<mg::NodeId>& selection = m_canvas.selection();
+  const std::vector<board::BoxId>& selection = m_canvas.selection();
 
   if (selection.size() != 1)
   {
@@ -462,7 +453,8 @@ void MaterialEditorPanel::drawSidebar(EditorContext& context)
     return;
   }
 
-  if (mg::Node* node = m_asset.graph->find(*selection.begin()))
+  if (mg::Node* node =
+          m_asset.graph->find(static_cast<mg::NodeId>(selection.front())))
     drawNodeValues(context, *node);
 }
 

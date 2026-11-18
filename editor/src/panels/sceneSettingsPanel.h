@@ -13,6 +13,9 @@ class SceneSettingsPanel : public Panel
 public:
   SceneSettingsPanel() : Panel("Scene Settings") {}
 
+  /** Its settings are the scene's, undone with the scene's edits. */
+  Edits edits() const override { return Edits::Scene; }
+
 protected:
   void drawContents(EditorContext& context) override;
 

@@ -236,8 +236,10 @@ const ui::SourceImage* UiModule::image(const std::string& source, bool mesh)
 
     if (!rgba)
     {
-      LOG_ERROR("UI image '" + source + "' can't be loaded" +
-                (path.empty() ? " (no such file)" : ""));
+      if (m_reportMissingImages)
+        LOG_ERROR("UI image '" + source + "' can't be loaded" +
+                  (path.empty() ? " (no such file)" : ""));
+
       m_images[key] = nullptr;
       return nullptr;
     }

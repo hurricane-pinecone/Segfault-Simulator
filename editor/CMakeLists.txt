@@ -67,6 +67,19 @@ add_custom_command(
 add_custom_target(SfsEditorNvimConfig DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/nvim.stamp")
 add_dependencies(SfsEditor SfsEditorNvimConfig)
 
+# The Code panel's fonts (see fonts/VENDORED.md) ship next to the executable
+# too, with their licences.
+file(GLOB_RECURSE SFS_EDITOR_FONT_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/fonts/*")
+add_custom_command(
+    OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/fonts.stamp"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_CURRENT_SOURCE_DIR}/fonts" "$<TARGET_FILE_DIR:SfsEditor>/fonts"
+    COMMAND ${CMAKE_COMMAND} -E touch "${CMAKE_CURRENT_BINARY_DIR}/fonts.stamp"
+    DEPENDS ${SFS_EDITOR_FONT_FILES}
+    VERBATIM)
+add_custom_target(SfsEditorFonts DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/fonts.stamp")
+add_dependencies(SfsEditor SfsEditorFonts)
+
 # --- Building game modules ----------------------------------------------------
 # The editor compiles a project's scripts into a module with the same toolchain
 # and engine it was built with: bake those into editorBuildConfig.h.

@@ -866,6 +866,7 @@ private:
     model.nameRange = rangeOf(field(node, "name"));
     model.header = m_path;
     model.line = ts_node_start_point(node).row + 1;
+    model.marked = marked;
 
     for (const std::string& ns : m_namespaces)
       model.qualifiedName += ns + "::";

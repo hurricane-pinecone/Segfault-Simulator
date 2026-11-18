@@ -59,16 +59,13 @@ public:
   void deleteSelected(EditorContext& context);
   /** Duplicate or delete (after asking) what's selected here. */
   void duplicateSelected(EditorContext& context);
+  /** The project's files: Undo, Duplicate and Delete act on them here. */
+  Edits edits() const override { return Edits::Own; }
   /**
    * Where dropped files are imported: the open folder if it's in assets/ or
    * prefabs/, else assets/ itself (relative to the project).
    */
   std::filesystem::path importFolder() const;
-  /**
-   * Whether Undo, Redo, Duplicate and Delete (the Edit menu, Ctrl+Z...) are
-   * this panel's: it had focus last, of the editor's panels.
-   */
-  bool ownsEdit() const { return m_ownsEdit; }
   /** Previews being made in the background (for a progress bar). */
   Thumbnails::Progress previewProgress() const
   {
@@ -241,7 +238,6 @@ private:
   std::optional<std::filesystem::path> m_pendingDelete;
   std::vector<std::filesystem::path> m_clipboard; // what Copy took, for Paste
   std::vector<FileOp> m_undo, m_redo;
-  bool m_ownsEdit = false;
   int m_trashCount = 0; // names the next trash folder
 
   bool m_gridView = true;   // tiles with previews, or a list

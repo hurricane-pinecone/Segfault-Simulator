@@ -5,6 +5,7 @@
 #include "engine/core/rendering/materialGraph.h"
 #include "engine/core/rendering/materialGraphCompiler.h"
 #include "engine/core/rendering/materialNodes.h"
+#include "widgets/boardCanvas.h"
 #include "widgets/theme.h"
 #include "widgets/widgets.h"
 
@@ -16,11 +17,10 @@
 #include <algorithm>
 #include <cctype>
 #include <cfloat>
-#include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <optional>
-#include <set>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -29,18 +29,16 @@
 
 namespace mg = sfs::materialGraph;
 
+using board::operator+;
+using board::operator-;
+using board::operator*;
+
 namespace
 {
 
-// Sizes in canvas units (screen pixels at zoom 1).
-constexpr float HEADER = 24.0f;
-constexpr float ROW = 21.0f;
-constexpr float PAD = 9.0f;
+// Sizes in canvas units (screen pixels at zoom 1). A node's header, rows and
+// padding are the board's box style's.
 constexpr float PIN_RADIUS = 5.0f;
-constexpr float MIN_WIDTH = 140.0f;
-constexpr float GRID = 32.0f;
-constexpr float MIN_ZOOM = 0.25f;
-constexpr float MAX_ZOOM = 2.5f;
 constexpr float FIELDS_ZOOM = 0.6f; // below this, values show as text
 
 constexpr float SWATCH_WIDTH = 20.0f;
@@ -174,41 +172,18 @@ bool contains(const std::string& text, const std::string& filter)
   return lower(text).find(lower(filter)) != std::string::npos;
 }
 
-ImVec2 operator+(ImVec2 a, ImVec2 b) { return {a.x + b.x, a.y + b.y}; }
-ImVec2 operator-(ImVec2 a, ImVec2 b) { return {a.x - b.x, a.y - b.y}; }
-ImVec2 operator*(ImVec2 a, float s) { return {a.x * s, a.y * s}; }
-
 } // namespace
 
 // --- layout ------------------------------------------------------------------
-
-void MaterialGraphCanvas::fit(ImVec2 size)
-{
-  ImRect bounds(ImVec2(FLT_MAX, FLT_MAX), ImVec2(-FLT_MAX, -FLT_MAX));
-  bool any = false;
-
-  for (const auto& [id, nodeLayout] : m_layouts)
-    if (m_selection.empty() || m_selection.contains(id))
-    {
-      bounds.Add(ImRect(nodeLayout.min, nodeLayout.max));
-      any = true;
-    }
-
-  if (!any || size.x <= 0.0f || size.y <= 0.0f)
-    return;
-
-  const float margin = 60.0f;
-  const ImVec2 extent = bounds.GetSize() + ImVec2(2 * margin, 2 * margin);
-  m_zoom = std::clamp(
-      std::min(size.x / extent.x, size.y / extent.y), MIN_ZOOM, 1.25f);
-  m_pan = size * 0.5f - bounds.GetCenter() * m_zoom;
-}
 
 MaterialGraphCanvas::Layout
 MaterialGraphCanvas::layout(const mg::Node& node,
                             const mg::CompiledGraph& compiled,
                             const sfs::AssetDatabase* assets) const
 {
+  const board::BoxStyle& style = m_board.style();
+  const float pad = style.padding;
+  const float row = style.lineHeight;
   Layout out;
   out.min = {node.position.x, node.position.y};
   const mg::NodeType* type = mg::findNodeType(node.type);
@@ -217,9 +192,9 @@ MaterialGraphCanvas::layout(const mg::Node& node,
 
   if (!type)
   {
-    out.max =
-        out.min + ImVec2(std::max(MIN_WIDTH, textWidth(node.type) + 2 * PAD),
-                         HEADER + ROW);
+    out.max = out.min +
+              ImVec2(std::max(style.minWidth, textWidth(node.type) + 2 * pad),
+                     style.headerHeight + row);
     return out;
   }
 
@@ -262,25 +237,21 @@ MaterialGraphCanvas::layout(const mg::Node& node,
         std::max(fieldWidth(mg::ValueType::Vec4), textWidth(globalLabel(node)));
 
   const float width =
-      std::max({MIN_WIDTH,
-                textWidth(type->label) + 2 * PAD,
-                inputsWidth + outputsWidth + 3 * PAD + 2 * PIN_RADIUS,
-                propertyWidth + 2 * PAD});
+      std::max({style.minWidth,
+                textWidth(type->label) + 2 * pad,
+                inputsWidth + outputsWidth + 3 * pad + 2 * PIN_RADIUS,
+                propertyWidth + 2 * pad});
   const int propertyRows = type->property == mg::Property::None ? 0 : 1;
   const std::size_t rows = std::max(type->inputs.size(), type->outputs.size());
-  out.max = out.min +
-            ImVec2(width,
-                   HEADER + (propertyRows + static_cast<float>(rows)) * ROW +
-                       PAD * 0.5f);
-
-  const float top = out.min.y + HEADER + propertyRows * ROW + ROW * 0.5f;
-
-  for (std::size_t i = 0; i < type->inputs.size(); ++i)
-    out.inputs.push_back({out.min.x, top + i * ROW});
-
-  for (std::size_t i = 0; i < type->outputs.size(); ++i)
-    out.outputs.push_back({out.max.x, top + i * ROW});
-
+  out.max =
+      out.min +
+      ImVec2(width,
+             style.headerHeight +
+                 (propertyRows + static_cast<float>(rows)) * row + pad * 0.5f);
+  out.pinsTop =
+      out.min.y + style.headerHeight + propertyRows * row + row * 0.5f;
+  out.inputs = static_cast<uint32_t>(type->inputs.size());
+  out.outputs = static_cast<uint32_t>(type->outputs.size());
   return out;
 }
 
@@ -289,43 +260,47 @@ void MaterialGraphCanvas::layoutNodes(const Graph& graph,
                                       const sfs::AssetDatabase* assets)
 {
   // Selected nodes draw (and are hit) last: on top.
-  m_layouts.clear();
+  const float row = m_board.style().lineHeight;
+  m_boxes.clear();
+  m_firstPins.clear();
   m_pins.clear();
 
   for (int pass = 0; pass < 2; ++pass)
     for (const mg::Node& node : graph.nodes)
-      if (m_selection.contains(node.id) == (pass == 1))
+      if (m_board.isSelected(node.id) == (pass == 1))
       {
-        Layout nodeLayout = layout(node, compiled, assets);
+        const Layout nodeLayout = layout(node, compiled, assets);
+        m_firstPins.push_back(m_pins.size());
 
-        for (uint32_t i = 0; i < nodeLayout.inputs.size(); ++i)
-          m_pins.push_back({{node.id, i, false}, nodeLayout.inputs[i]});
+        for (uint32_t i = 0; i < nodeLayout.inputs; ++i)
+          m_pins.push_back(
+              {{node.id, i, false},
+               ImVec2(nodeLayout.min.x, nodeLayout.pinsTop + i * row)});
 
-        for (uint32_t i = 0; i < nodeLayout.outputs.size(); ++i)
-          m_pins.push_back({{node.id, i, true}, nodeLayout.outputs[i]});
+        for (uint32_t i = 0; i < nodeLayout.outputs; ++i)
+          m_pins.push_back(
+              {{node.id, i, true},
+               ImVec2(nodeLayout.max.x, nodeLayout.pinsTop + i * row)});
 
-        m_layouts.emplace_back(node.id, std::move(nodeLayout));
+        m_boxes.push_back({node.id, nodeLayout.min, nodeLayout.max});
       }
 }
 
 MaterialGraphCanvas::NodeId MaterialGraphCanvas::nodeAt(ImVec2 screen) const
 {
-  const ImVec2 point = toCanvas(screen);
-
-  for (auto it = m_layouts.rbegin(); it != m_layouts.rend(); ++it)
-    if (ImRect(it->second.min, it->second.max).Contains(point))
-      return it->first;
-
-  return 0;
+  const board::Box* box =
+      board::boxAt(m_boxes, m_board.view().toCanvas(screen));
+  return box ? static_cast<NodeId>(box->id) : 0;
 }
 
 std::optional<MaterialGraphCanvas::Pin>
 MaterialGraphCanvas::pinAt(ImVec2 screen) const
 {
-  const float reach = std::max(PIN_RADIUS * 2.0f * m_zoom, 7.0f);
+  const board::View& view = m_board.view();
+  const float reach = std::max(PIN_RADIUS * 2.0f * view.zoom, 7.0f);
 
   for (auto it = m_pins.rbegin(); it != m_pins.rend(); ++it)
-    if (ImLengthSqr(toScreen(it->second) - screen) <= reach * reach)
+    if (ImLengthSqr(view.toScreen(it->second) - screen) <= reach * reach)
       return it->first;
 
   return std::nullopt;
@@ -333,19 +308,10 @@ MaterialGraphCanvas::pinAt(ImVec2 screen) const
 
 ImVec2 MaterialGraphCanvas::placement() const
 {
+  const board::View& view = m_board.view();
   const ImVec2 mouse = ImGui::GetIO().MousePos;
-  const ImRect view(m_origin, m_origin + m_size);
-  return toCanvas(view.Contains(mouse) ? mouse : view.GetCenter());
-}
-
-ImVec2 MaterialGraphCanvas::toCanvas(ImVec2 screen) const
-{
-  return (screen - m_origin - m_pan) * (1.0f / m_zoom);
-}
-
-ImVec2 MaterialGraphCanvas::toScreen(ImVec2 canvas) const
-{
-  return m_origin + m_pan + canvas * m_zoom;
+  const ImRect rect(view.origin, view.origin + view.size);
+  return view.toCanvas(rect.Contains(mouse) ? mouse : rect.GetCenter());
 }
 
 // --- drawing
@@ -355,56 +321,32 @@ void MaterialGraphCanvas::draw(Graph& graph,
                                const mg::CompiledGraph& compiled,
                                const sfs::AssetDatabase* assets)
 {
-  m_origin = ImGui::GetCursorScreenPos();
-  const ImVec2 size = ImGui::GetContentRegionAvail();
-  const bool settled = size.x == m_size.x && size.y == m_size.y;
-  m_size = size;
-
-  if (size.x < 2.0f || size.y < 2.0f)
+  // The nodes' fields, drawn after, take the mouse where they are.
+  if (!m_board.begin("canvas"))
     return;
 
   // Laid out for the mouse's hit tests, then again for drawing what it did
   // (so moved nodes don't lag a frame behind).
   layoutNodes(graph, compiled, assets);
-
-  // Framed once the canvas has its size: a tab just docked (or splitting its
-  // space) takes a frame or two to settle.
-  if (m_frameRequested && settled && size.x > 64.0f && size.y > 64.0f)
-  {
-    m_frameRequested = false;
-    fit(size);
-  }
-
-  // The nodes' fields, drawn after, take the mouse where they are.
-  ImGui::SetNextItemAllowOverlap();
-  ImGui::InvisibleButton("canvas",
-                         size,
-                         ImGuiButtonFlags_MouseButtonLeft |
-                             ImGuiButtonFlags_MouseButtonRight |
-                             ImGuiButtonFlags_MouseButtonMiddle);
+  m_board.applyFrame(m_boxes);
   acceptTextureDrop(graph, assets);
   handleMouse(graph);
   layoutNodes(graph, compiled, assets);
 
-  ImDrawList* draw = ImGui::GetWindowDrawList();
-  draw->PushClipRect(m_origin, m_origin + size, true);
-  draw->AddRectFilled(m_origin, m_origin + size, IM_COL32(34, 36, 35, 255));
-  drawGrid(draw, size);
+  ImDrawList* draw = m_board.beginDraw();
   drawLinks(draw, graph, compiled);
 
-  for (const auto& [id, nodeLayout] : m_layouts)
-    if (mg::Node* node = graph.find(id))
+  for (std::size_t i = 0; i < m_boxes.size(); ++i)
+    if (mg::Node* node = graph.find(static_cast<NodeId>(m_boxes[i].id)))
     {
-      drawNode(draw, *node, graph, compiled, assets);
+      drawNode(draw, *node, i, graph, compiled, assets);
 
       // Right after its node, so a node on top covers the one below's.
       if (fieldsShown())
-        drawFields(*node, graph, compiled);
+        drawFields(*node, i, graph, compiled);
     }
 
-  const ImVec2 mouse = ImGui::GetIO().MousePos;
-
-  if (m_gesture == Gesture::Link)
+  if (m_board.gesture() == board::Gesture::Custom)
   {
     // The link being dragged, from its pin to the mouse.
     const auto it =
@@ -414,28 +356,18 @@ void MaterialGraphCanvas::draw(Graph& graph,
 
     if (it != m_pins.end())
     {
-      ImVec2 a = toScreen(it->second), b = mouse;
+      ImVec2 a = m_board.view().toScreen(it->second);
+      ImVec2 b = ImGui::GetIO().MousePos;
 
       if (!m_linkFrom.output)
         std::swap(a, b);
 
-      const float dx = std::max(std::abs(b.x - a.x) * 0.5f, 40.0f * m_zoom);
-      draw->AddBezierCubic(a,
-                           a + ImVec2(dx, 0),
-                           b - ImVec2(dx, 0),
-                           b,
-                           theme::kAccent,
-                           std::max(2.0f * m_zoom, 1.5f));
+      m_board.drawScreenLink(
+          draw, a, b, {.color = theme::kAccent, .minWidth = 1.5f});
     }
   }
 
-  if (m_gesture == Gesture::BoxSelect)
-  {
-    draw->AddRectFilled(m_pressedAt, mouse, theme::kAccentSoft);
-    draw->AddRect(m_pressedAt, mouse, theme::kAccent);
-  }
-
-  draw->PopClipRect();
+  m_board.endDraw(draw);
 
   drawAddMenu(graph);
   drawNodeMenu(graph);
@@ -479,39 +411,40 @@ void MaterialGraphCanvas::drawColorPicker(Graph& graph)
 }
 
 void MaterialGraphCanvas::drawFields(mg::Node& node,
+                                     std::size_t index,
                                      const Graph& graph,
                                      const mg::CompiledGraph& compiled)
 {
   const mg::NodeType* type = mg::findNodeType(node.type);
-  const auto it =
-      std::find_if(m_layouts.begin(),
-                   m_layouts.end(),
-                   [&](const auto& l) { return l.first == node.id; });
 
-  if (!type || it == m_layouts.end())
+  if (!type)
     return;
 
-  const Layout& nodeLayout = it->second;
+  const board::View& view = m_board.view();
+  const board::BoxStyle& style = m_board.style();
+  const float zoom = view.zoom;
+  const float pad = style.padding;
+  const board::Box& box = m_boxes[index];
+  const std::size_t firstPin = m_firstPins[index];
   const mg::ValueType dynamic = dynamicOf(compiled, node.id);
 
   // Widgets at the canvas's zoom: the font and spacing scaled with it, frames
   // a row high.
-  const ImGuiStyle& style = ImGui::GetStyle();
-  ImGui::PushFont(nullptr, style.FontSizeBase * m_zoom);
-  ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(3.0f, 1.0f) * m_zoom);
+  ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * zoom);
+  ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(3.0f, 1.0f) * zoom);
   ImGui::PushStyleVar(
-      ImGuiStyleVar_ItemInnerSpacing, ImVec2(2.0f, 2.0f) * m_zoom);
-  ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 3.0f * m_zoom);
-  ImGui::PushStyleVar(ImGuiStyleVar_GrabMinSize, 6.0f * m_zoom);
+      ImGuiStyleVar_ItemInnerSpacing, ImVec2(2.0f, 2.0f) * zoom);
+  ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 3.0f * zoom);
+  ImGui::PushStyleVar(ImGuiStyleVar_GrabMinSize, 6.0f * zoom);
   ImGui::PushID(static_cast<int>(node.id));
   const float frameHeight = ImGui::GetFrameHeight();
-  const ImVec2 min = toScreen(nodeLayout.min), max = toScreen(nodeLayout.max);
+  const ImVec2 min = view.toScreen(box.min), max = view.toScreen(box.max);
 
   // Editing a node's value selects it.
   const auto selectIfEdited = [&]
   {
     if (ImGui::IsItemActivated())
-      m_selection = {node.id};
+      m_board.select(node.id);
   };
   const auto colorField =
       [&](const char* id, glm::vec4& value, int input, ImVec2 fieldSize)
@@ -525,36 +458,32 @@ void MaterialGraphCanvas::drawFields(mg::Node& node,
       m_pickerNode = node.id;
       m_pickerInput = input;
       m_openPicker = true;
-      m_selection = {node.id};
+      m_board.select(node.id);
     }
   };
 
   // The property row: a Colour's colour, a Number's number, a Global
   // Parameter's name.
-  const float propertyTop = min.y + HEADER * m_zoom;
-  const float rowWidth = max.x - min.x - 2.0f * PAD * m_zoom;
+  const float propertyTop = min.y + style.headerHeight * zoom;
+  const float rowWidth = max.x - min.x - 2.0f * pad * zoom;
+  const float propertyY =
+      propertyTop + (style.lineHeight * zoom - frameHeight) * 0.5f;
 
   if (type->property == mg::Property::Color)
   {
-    ImGui::SetCursorScreenPos(
-        ImVec2(min.x + PAD * m_zoom,
-               propertyTop + (ROW * m_zoom - frameHeight) * 0.5f));
+    ImGui::SetCursorScreenPos(ImVec2(min.x + pad * zoom, propertyY));
     colorField("##value", node.value, -1, ImVec2(rowWidth, frameHeight));
   }
   else if (type->property == mg::Property::Number)
   {
-    ImGui::SetCursorScreenPos(
-        ImVec2(min.x + PAD * m_zoom,
-               propertyTop + (ROW * m_zoom - frameHeight) * 0.5f));
+    ImGui::SetCursorScreenPos(ImVec2(min.x + pad * zoom, propertyY));
     ImGui::SetNextItemWidth(rowWidth);
     ImGui::DragFloat("##value", &node.value.x, 0.01f, 0.0f, 0.0f, "%.3g");
     selectIfEdited();
   }
   else if (type->property == mg::Property::Global)
   {
-    ImGui::SetCursorScreenPos(
-        ImVec2(min.x + PAD * m_zoom,
-               propertyTop + (ROW * m_zoom - frameHeight) * 0.5f));
+    ImGui::SetCursorScreenPos(ImVec2(min.x + pad * zoom, propertyY));
     ImGui::SetNextItemWidth(rowWidth);
     widgets::inputTextOnCommit("##global", node.global);
     selectIfEdited();
@@ -572,9 +501,9 @@ void MaterialGraphCanvas::drawFields(mg::Node& node,
 
     ImGui::PushID(static_cast<int>(i));
     const float nameWidth = ImGui::CalcTextSize(pin.name.c_str()).x;
-    const ImVec2 centre = toScreen(nodeLayout.inputs[i]);
+    const ImVec2 centre = view.toScreen(m_pins[firstPin + i].second);
     ImGui::SetCursorScreenPos(
-        ImVec2(min.x + (PAD + PIN_RADIUS + 8.0f) * m_zoom + nameWidth,
+        ImVec2(min.x + (pad + PIN_RADIUS + 8.0f) * zoom + nameWidth,
                centre.y - frameHeight * 0.5f));
     glm::vec4& value = node.inputs[i];
     const mg::ValueType inputType = type->inputType(i, dynamic);
@@ -583,10 +512,10 @@ void MaterialGraphCanvas::drawFields(mg::Node& node,
       colorField("##value",
                  value,
                  static_cast<int>(i),
-                 ImVec2(SWATCH_WIDTH * m_zoom, frameHeight));
+                 ImVec2(SWATCH_WIDTH * zoom, frameHeight));
     else
     {
-      ImGui::SetNextItemWidth(fieldWidth(inputType) * m_zoom);
+      ImGui::SetNextItemWidth(fieldWidth(inputType) * zoom);
 
       switch (inputType)
       {
@@ -619,26 +548,6 @@ void MaterialGraphCanvas::drawFields(mg::Node& node,
   ImGui::PopFont();
 }
 
-void MaterialGraphCanvas::drawGrid(ImDrawList* draw, ImVec2 size) const
-{
-  const float step = GRID * m_zoom;
-
-  if (step < 6.0f)
-    return;
-
-  const ImVec2 offset(std::fmod(m_pan.x, step), std::fmod(m_pan.y, step));
-
-  for (float x = offset.x; x < size.x; x += step)
-    draw->AddLine(m_origin + ImVec2(x, 0),
-                  m_origin + ImVec2(x, size.y),
-                  IM_COL32(255, 255, 255, 10));
-
-  for (float y = offset.y; y < size.y; y += step)
-    draw->AddLine(m_origin + ImVec2(0, y),
-                  m_origin + ImVec2(size.x, y),
-                  IM_COL32(255, 255, 255, 10));
-}
-
 void MaterialGraphCanvas::drawLinks(ImDrawList* draw,
                                     const Graph& graph,
                                     const mg::CompiledGraph& compiled) const
@@ -647,7 +556,7 @@ void MaterialGraphCanvas::drawLinks(ImDrawList* draw,
   {
     for (const auto& [p, position] : m_pins)
       if (p == pin)
-        return toScreen(position);
+        return position;
 
     return std::nullopt;
   };
@@ -667,85 +576,65 @@ void MaterialGraphCanvas::drawLinks(ImDrawList* draw,
         type ? typeColor(type->outputType(
                    link.fromOutput, dynamicOf(compiled, link.fromNode)))
              : IM_COL32_WHITE;
-    const float dx = std::max(std::abs(to->x - from->x) * 0.5f, 40.0f * m_zoom);
-    draw->AddBezierCubic(*from,
-                         *from + ImVec2(dx, 0),
-                         *to - ImVec2(dx, 0),
-                         *to,
-                         color,
-                         std::max(2.0f * m_zoom, 1.2f));
+    m_board.drawLink(draw, *from, *to, {.color = color});
   }
 }
 
 void MaterialGraphCanvas::drawNode(ImDrawList* draw,
                                    const mg::Node& node,
+                                   std::size_t index,
                                    const Graph& graph,
                                    const mg::CompiledGraph& compiled,
                                    const sfs::AssetDatabase* assets) const
 {
-  const auto it =
-      std::find_if(m_layouts.begin(),
-                   m_layouts.end(),
-                   [&](const auto& l) { return l.first == node.id; });
+  const mg::NodeType* type = mg::findNodeType(node.type);
+  const mg::CompileError* error = errorOf(compiled, node.id);
+  const board::Box& box = m_boxes[index];
+  const std::string unknown = type ? std::string() : node.type + " (unknown)";
 
-  if (it == m_layouts.end())
+  // Body, header and outline.
+  board::BoxLook look;
+  look.title = type ? std::string_view(type->label) : unknown;
+  look.header =
+      type ? categoryColor(type->category) : IM_COL32(110, 60, 60, 255);
+  look.emphasis = error ? ERROR_COLOR : 0;
+  look.selected = m_board.isSelected(node.id);
+
+  if (!m_board.drawBox(draw, box, look))
     return;
 
-  const Layout& nodeLayout = it->second;
-  const mg::NodeType* type = mg::findNodeType(node.type);
-  const ImVec2 min = toScreen(nodeLayout.min), max = toScreen(nodeLayout.max);
-  const float rounding = 5.0f * m_zoom;
-  const float fontSize = ImGui::GetFontSize() * m_zoom;
-  const bool showText = fontSize >= 5.0f;
+  const board::View& view = m_board.view();
+  const board::BoxStyle& style = m_board.style();
+  const float zoom = view.zoom;
+  const float pad = style.padding;
+  const float row = style.lineHeight;
+  const ImVec2 min = view.toScreen(box.min), max = view.toScreen(box.max);
+  const float fontSize = m_board.fontSize();
+  const bool showText = m_board.textShown();
   ImFont* font = ImGui::GetFont();
   const auto text = [&](ImVec2 at, ImU32 color, const std::string& value)
   {
     if (showText)
       draw->AddText(font, fontSize, at, color, value.c_str());
   };
-  const float textOffset = (ROW * m_zoom - fontSize) * 0.5f;
-
-  // Body, header and outline.
-  draw->AddRectFilled(min, max, theme::kTile, rounding);
-  const ImVec2 headerMax(max.x, min.y + HEADER * m_zoom);
-  draw->AddRectFilled(
-      min,
-      headerMax,
-      type ? categoryColor(type->category) : IM_COL32(110, 60, 60, 255),
-      rounding,
-      ImDrawFlags_RoundCornersTop);
-  text(min + ImVec2(PAD * m_zoom, (HEADER * m_zoom - fontSize) * 0.5f),
-       IM_COL32(236, 238, 232, 255),
-       type ? type->label : node.type + " (unknown)");
-
-  const mg::CompileError* error = errorOf(compiled, node.id);
-  const bool selected = m_selection.contains(node.id);
-  const ImU32 outline = error      ? ERROR_COLOR
-                        : selected ? theme::kAccent
-                                   : IM_COL32(20, 22, 21, 255);
-  draw->AddRect(min,
-                max,
-                outline,
-                rounding,
-                0,
-                (error || selected) ? std::max(2.0f * m_zoom, 1.5f) : 1.0f);
+  const float textOffset = (row * zoom - fontSize) * 0.5f;
 
   if (error && ImGui::IsItemHovered() &&
-      ImRect(min, max).Contains(ImGui::GetIO().MousePos) &&
-      m_gesture == Gesture::None)
+      ImRect(min, max).Contains(ImGui::GetIO().MousePos) && !m_board.busy())
     ImGui::SetTooltip("%s", error->message.c_str());
 
   if (!type)
     return;
 
   // The property row: the node's colour, number or image.
+  const std::size_t firstPin = m_firstPins[index];
   const mg::ValueType dynamic = dynamicOf(compiled, node.id);
-  float y = min.y + HEADER * m_zoom;
+  float y = min.y + style.headerHeight * zoom;
 
   if (type->property != mg::Property::None)
   {
-    const ImVec2 rowMin(min.x + PAD * m_zoom, y + 3.0f * m_zoom);
-    const ImVec2 rowMax(max.x - PAD * m_zoom, y + (ROW - 3.0f) * m_zoom);
+    const ImVec2 rowMin(min.x + pad * zoom, y + 3.0f * zoom);
+    const ImVec2 rowMax(max.x - pad * zoom, y + (row - 3.0f) * zoom);
 
     // A Colour's colour and a Number's number are fields while those show.
     if (type->property == mg::Property::Color && !fieldsShown())
@@ -754,8 +643,8 @@ void MaterialGraphCanvas::drawNode(ImDrawList* draw,
                           rowMax,
                           ImGui::ColorConvertFloat4ToU32(ImVec4(
                               node.value.r, node.value.g, node.value.b, 1.0f)),
-                          3.0f * m_zoom);
-      draw->AddRect(rowMin, rowMax, IM_COL32(0, 0, 0, 120), 3.0f * m_zoom);
+                          3.0f * zoom);
+      draw->AddRect(rowMin, rowMax, IM_COL32(0, 0, 0, 120), 3.0f * zoom);
     }
     else if (type->property == mg::Property::Number && !fieldsShown())
       text(ImVec2(rowMin.x, y + textOffset),
@@ -770,7 +659,7 @@ void MaterialGraphCanvas::drawNode(ImDrawList* draw,
            IM_COL32(220, 222, 216, 255),
            textureLabel(node, assets) + (node.dataTexture ? " (data)" : ""));
 
-    y += ROW * m_zoom;
+    y += row * zoom;
   }
 
   // Inputs on the left, each with its own value while unlinked; outputs on
@@ -778,18 +667,18 @@ void MaterialGraphCanvas::drawNode(ImDrawList* draw,
   for (uint32_t i = 0; i < type->inputs.size(); ++i)
   {
     const mg::InputPin& pin = type->inputs[i];
-    const ImVec2 centre = toScreen(nodeLayout.inputs[i]);
+    const ImVec2 centre = view.toScreen(m_pins[firstPin + i].second);
     const bool linked = graph.linkInto(node.id, i) != nullptr;
     const ImU32 color = typeColor(type->inputType(i, dynamic));
 
     if (linked)
-      draw->AddCircleFilled(centre, PIN_RADIUS * m_zoom, color);
+      draw->AddCircleFilled(centre, PIN_RADIUS * zoom, color);
     else
       draw->AddCircle(
-          centre, PIN_RADIUS * m_zoom, color, 0, std::max(1.5f * m_zoom, 1.0f));
+          centre, PIN_RADIUS * zoom, color, 0, std::max(1.5f * zoom, 1.0f));
 
     const ImVec2 at(
-        min.x + (PAD + PIN_RADIUS) * m_zoom, centre.y - fontSize * 0.5f);
+        min.x + (pad + PIN_RADIUS) * zoom, centre.y - fontSize * 0.5f);
     text(at, IM_COL32(214, 216, 210, 255), pin.name);
 
     if (linked)
@@ -799,7 +688,7 @@ void MaterialGraphCanvas::drawNode(ImDrawList* draw,
         showText
             ? font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, pin.name.c_str()).x
             : 0.0f;
-    const ImVec2 valueAt = at + ImVec2(nameWidth + 8.0f * m_zoom, 0.0f);
+    const ImVec2 valueAt = at + ImVec2(nameWidth + 8.0f * zoom, 0.0f);
 
     if (pin.fallback != mg::Fallback::Value)
       text(valueAt,
@@ -809,7 +698,7 @@ void MaterialGraphCanvas::drawNode(ImDrawList* draw,
       continue; // its field shows the value
     else if (i < node.inputs.size() && pin.color)
     {
-      const ImVec2 swatch(12.0f * m_zoom, 12.0f * m_zoom);
+      const ImVec2 swatch(12.0f * zoom, 12.0f * zoom);
       const ImVec2 swatchMin =
           valueAt + ImVec2(0.0f, (fontSize - swatch.y) * 0.5f);
       const glm::vec4& v = node.inputs[i];
@@ -817,7 +706,7 @@ void MaterialGraphCanvas::drawNode(ImDrawList* draw,
           swatchMin,
           swatchMin + swatch,
           ImGui::ColorConvertFloat4ToU32(ImVec4(v.r, v.g, v.b, 1.0f)),
-          2.0f * m_zoom);
+          2.0f * zoom);
     }
     else if (i < node.inputs.size())
       text(valueAt,
@@ -825,9 +714,11 @@ void MaterialGraphCanvas::drawNode(ImDrawList* draw,
            valueText(node.inputs[i], type->inputType(i, dynamic)));
   }
 
+  const std::size_t firstOutput = firstPin + type->inputs.size();
+
   for (uint32_t i = 0; i < type->outputs.size(); ++i)
   {
-    const ImVec2 centre = toScreen(nodeLayout.outputs[i]);
+    const ImVec2 centre = view.toScreen(m_pins[firstOutput + i].second);
     const ImU32 color = typeColor(type->outputType(i, dynamic));
     const bool linked = std::any_of(
         graph.links.begin(),
@@ -836,10 +727,10 @@ void MaterialGraphCanvas::drawNode(ImDrawList* draw,
         { return link.fromNode == node.id && link.fromOutput == i; });
 
     if (linked)
-      draw->AddCircleFilled(centre, PIN_RADIUS * m_zoom, color);
+      draw->AddCircleFilled(centre, PIN_RADIUS * zoom, color);
     else
       draw->AddCircle(
-          centre, PIN_RADIUS * m_zoom, color, 0, std::max(1.5f * m_zoom, 1.0f));
+          centre, PIN_RADIUS * zoom, color, 0, std::max(1.5f * zoom, 1.0f));
 
     if (showText)
     {
@@ -847,7 +738,7 @@ void MaterialGraphCanvas::drawNode(ImDrawList* draw,
           font->CalcTextSizeA(
                   fontSize, FLT_MAX, 0.0f, type->outputs[i].name.c_str())
               .x;
-      text(ImVec2(max.x - (PAD + PIN_RADIUS) * m_zoom - width,
+      text(ImVec2(max.x - (pad + PIN_RADIUS) * zoom - width,
                   centre.y - fontSize * 0.5f),
            IM_COL32(214, 216, 210, 255),
            type->outputs[i].name);
@@ -855,7 +746,10 @@ void MaterialGraphCanvas::drawNode(ImDrawList* draw,
   }
 }
 
-bool MaterialGraphCanvas::fieldsShown() const { return m_zoom >= FIELDS_ZOOM; }
+bool MaterialGraphCanvas::fieldsShown() const
+{
+  return m_board.zoom() >= FIELDS_ZOOM;
+}
 
 // --- mouse -------------------------------------------------------------------
 
@@ -871,10 +765,10 @@ void MaterialGraphCanvas::acceptTextureDrop(Graph& graph,
   if (dragged && dragged->kind == sfs::AssetKind::Texture &&
       ImGui::AcceptDragDropPayload(assetDrop::kAssetPayload))
   {
-    const ImVec2 at = toCanvas(ImGui::GetIO().MousePos);
+    const ImVec2 at = m_board.view().toCanvas(ImGui::GetIO().MousePos);
     const NodeId node = graph.add("texture", {at.x, at.y});
     graph.find(node)->texture = "asset:" + dragged->id.toString();
-    m_selection = {node};
+    m_board.select(node);
   }
 
   ImGui::EndDragDropTarget();
@@ -933,162 +827,66 @@ void MaterialGraphCanvas::finishLink(Graph& graph, ImVec2 mouse)
 
 void MaterialGraphCanvas::handleMouse(Graph& graph)
 {
-  const ImGuiIO& io = ImGui::GetIO();
-  const ImVec2 mouse = io.MousePos;
-  const bool hovered = ImGui::IsItemHovered();
+  const board::Input input = m_board.handleMouse(
+      m_boxes, [&](ImVec2 mouse) { return pressPin(graph, mouse); });
 
-  // Zoom about the mouse.
-  if (hovered && io.MouseWheel != 0.0f && m_gesture != Gesture::MoveNodes)
+  for (const board::BoxMove& move : input.moved)
+    if (mg::Node* node = graph.find(static_cast<NodeId>(move.id)))
+      node->position = {move.min.x, move.min.y};
+
+  if (input.gestureEnded)
+    finishLink(graph, ImGui::GetIO().MousePos);
+
+  // A right-click: the node's menu, or Add Node.
+  if (!input.rightClicked)
+    return;
+
+  if (input.rightClickedBox)
   {
-    const ImVec2 under = toCanvas(mouse);
-    m_zoom =
-        std::clamp(m_zoom * std::pow(1.15f, io.MouseWheel), MIN_ZOOM, MAX_ZOOM);
-    m_pan = mouse - m_origin - under * m_zoom;
+    m_menuNode = static_cast<NodeId>(input.rightClickedBox);
+    ImGui::OpenPopup("##nodeMenu");
+    return;
   }
 
-  // Left button: links, moving, selecting.
-  if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
-      m_gesture == Gesture::None)
+  m_addLink.reset();
+  m_openAddMenu = true;
+}
+
+board::Press MaterialGraphCanvas::pressPin(Graph& graph, ImVec2 mouse)
+{
+  const std::optional<Pin> pin = pinAt(mouse);
+
+  if (!pin)
+    return board::Press::Unhandled;
+
+  if (ImGui::GetIO().KeyAlt)
   {
-    m_pressedAt = mouse;
-    const bool adding = io.KeyCtrl || io.KeyShift;
-
-    if (const std::optional<Pin> pin = pinAt(mouse))
-    {
-      if (io.KeyAlt)
-      {
-        // Cut the pin's links.
-        if (pin->output)
-          std::erase_if(graph.links,
-                        [&](const mg::Link& link) {
-                          return link.fromNode == pin->node &&
-                                 link.fromOutput == pin->index;
-                        });
-        else
-          graph.disconnect(pin->node, pin->index);
-      }
-      else if (const mg::Link* link =
-                   pin->output ? nullptr
-                               : graph.linkInto(pin->node, pin->index))
-      {
-        // Pick the link up from this input, to put it somewhere else.
-        m_linkFrom = {link->fromNode, link->fromOutput, true};
-        m_linkPickedUp = true;
-        graph.disconnect(pin->node, pin->index);
-        m_gesture = Gesture::Link;
-      }
-      else
-      {
-        m_linkFrom = *pin;
-        m_linkPickedUp = false;
-        m_gesture = Gesture::Link;
-      }
-    }
-    else if (const NodeId node = nodeAt(mouse))
-    {
-      if (adding)
-      {
-        if (!m_selection.erase(node))
-          m_selection.insert(node);
-      }
-      else if (!m_selection.contains(node))
-        m_selection = {node};
-
-      if (m_selection.contains(node))
-      {
-        m_moveStart.clear();
-
-        for (const NodeId id : m_selection)
-          if (const mg::Node* selected = graph.find(id))
-            m_moveStart.emplace_back(
-                id, ImVec2(selected->position.x, selected->position.y));
-
-        m_gesture = Gesture::MoveNodes;
-      }
-    }
+    // Cut the pin's links.
+    if (pin->output)
+      std::erase_if(graph.links,
+                    [&](const mg::Link& link) {
+                      return link.fromNode == pin->node &&
+                             link.fromOutput == pin->index;
+                    });
     else
-    {
-      if (!adding)
-        m_selection.clear();
+      graph.disconnect(pin->node, pin->index);
 
-      m_gesture = Gesture::BoxSelect;
-    }
+    return board::Press::Handled;
   }
 
-  // Panning: the middle button, or dragging the right one.
-  if (hovered && m_gesture == Gesture::None &&
-      (ImGui::IsMouseClicked(ImGuiMouseButton_Middle) ||
-       ImGui::IsMouseDragging(ImGuiMouseButton_Right, 4.0f)))
-    m_gesture = Gesture::Pan;
-
-  switch (m_gesture)
+  if (const mg::Link* link =
+          pin->output ? nullptr : graph.linkInto(pin->node, pin->index))
   {
-  case Gesture::Pan:
-    m_pan = m_pan + io.MouseDelta;
-
-    if (!ImGui::IsMouseDown(ImGuiMouseButton_Middle) &&
-        !ImGui::IsMouseDown(ImGuiMouseButton_Right))
-      m_gesture = Gesture::None;
-
-    return; // a right-drag isn't a right-click
-  case Gesture::MoveNodes:
-  {
-    const ImVec2 delta = (mouse - m_pressedAt) * (1.0f / m_zoom);
-
-    for (const auto& [id, start] : m_moveStart)
-      if (mg::Node* node = graph.find(id))
-        node->position = {start.x + delta.x, start.y + delta.y};
-
-    if (!ImGui::IsMouseDown(ImGuiMouseButton_Left))
-      m_gesture = Gesture::None;
-
-    break;
-  }
-  case Gesture::BoxSelect:
-    if (!ImGui::IsMouseDown(ImGuiMouseButton_Left))
-    {
-      ImRect box(toCanvas(m_pressedAt), toCanvas(mouse));
-      box = ImRect(ImMin(box.Min, box.Max), ImMax(box.Min, box.Max));
-
-      for (const auto& [id, nodeLayout] : m_layouts)
-        if (box.Overlaps(ImRect(nodeLayout.min, nodeLayout.max)))
-          m_selection.insert(id);
-
-      m_gesture = Gesture::None;
-    }
-
-    break;
-  case Gesture::Link:
-    if (!ImGui::IsMouseDown(ImGuiMouseButton_Left))
-    {
-      m_gesture = Gesture::None;
-      finishLink(graph, mouse);
-    }
-
-    break;
-  case Gesture::None:
-    break;
+    // Pick the link up from this input, to put it somewhere else.
+    m_linkFrom = {link->fromNode, link->fromOutput, true};
+    m_linkPickedUp = true;
+    graph.disconnect(pin->node, pin->index);
+    return board::Press::Gesture;
   }
 
-  // A right-click (not a drag): the node's menu, or Add Node.
-  if (hovered && ImGui::IsMouseReleased(ImGuiMouseButton_Right) &&
-      m_gesture == Gesture::None &&
-      !ImGui::IsMouseDragPastThreshold(ImGuiMouseButton_Right, 4.0f))
-  {
-    if (const NodeId node = nodeAt(mouse))
-    {
-      if (!m_selection.contains(node))
-        m_selection = {node};
-
-      m_menuNode = node;
-      ImGui::OpenPopup("##nodeMenu");
-    }
-    else
-    {
-      m_addLink.reset();
-      m_openAddMenu = true;
-    }
-  }
+  m_linkFrom = *pin;
+  m_linkPickedUp = false;
+  return board::Press::Gesture;
 }
 
 // --- menus -------------------------------------------------------------------
@@ -1100,7 +898,7 @@ void MaterialGraphCanvas::addNode(Graph& graph, const mg::NodeType& type)
   if (!node)
     return;
 
-  m_selection = {node};
+  m_board.select(node);
 
   if (!m_addLink)
     return;
@@ -1287,12 +1085,17 @@ void MaterialGraphCanvas::drawNodeMenu(Graph& graph)
 
 void MaterialGraphCanvas::deleteSelection(Graph& graph)
 {
-  for (const NodeId id : m_selection)
+  for (const board::BoxId box : m_board.selection())
+  {
+    const auto id = static_cast<NodeId>(box);
+
     if (const mg::Node* node = graph.find(id);
         node && node->type != mg::kOutputType)
       graph.remove(id);
+  }
 
-  std::erase_if(m_selection, [&](NodeId id) { return !graph.find(id); });
+  m_board.deselectIf([&](board::BoxId id)
+                     { return !graph.find(static_cast<NodeId>(id)); });
 }
 
 namespace
@@ -1301,13 +1104,13 @@ namespace
 // `withOutput`, the Material Output too if it's selected (copying a whole
 // graph, to paste into another).
 std::string selectionJson(const mg::Graph& graph,
-                          const std::set<mg::NodeId>& selection,
+                          const board::Canvas& board,
                           bool withOutput)
 {
   mg::Graph copy;
 
   for (const mg::Node& node : graph.nodes)
-    if (selection.contains(node.id) &&
+    if (board.isSelected(node.id) &&
         (withOutput || node.type != mg::kOutputType))
       copy.nodes.push_back(node);
 
@@ -1324,7 +1127,7 @@ std::string selectionJson(const mg::Graph& graph,
 
 void MaterialGraphCanvas::copySelection(const Graph& graph) const
 {
-  const std::string json = selectionJson(graph, m_selection, true);
+  const std::string json = selectionJson(graph, m_board, true);
 
   if (!json.empty())
     ImGui::SetClipboardText(json.c_str());
@@ -1334,12 +1137,12 @@ void MaterialGraphCanvas::duplicateSelection(Graph& graph)
 {
   ImVec2 topLeft(FLT_MAX, FLT_MAX);
 
-  for (const NodeId id : m_selection)
-    if (const mg::Node* node = graph.find(id);
+  for (const board::BoxId id : m_board.selection())
+    if (const mg::Node* node = graph.find(static_cast<NodeId>(id));
         node && node->type != mg::kOutputType)
       topLeft = ImMin(topLeft, ImVec2(node->position.x, node->position.y));
 
-  const std::string json = selectionJson(graph, m_selection, false);
+  const std::string json = selectionJson(graph, m_board, false);
 
   if (!json.empty())
     pasteJson(graph, json, topLeft + ImVec2(40.0f, 40.0f));
@@ -1395,9 +1198,9 @@ void MaterialGraphCanvas::pasteJson(Graph& graph,
 
     ImRect ownBounds(ImVec2(FLT_MAX, FLT_MAX), ImVec2(-FLT_MAX, -FLT_MAX));
 
-    for (const auto& [id, nodeLayout] : m_layouts)
-      if (id != output->id)
-        ownBounds.Add(ImRect(nodeLayout.min, nodeLayout.max));
+    for (const board::Box& box : m_boxes)
+      if (box.id != output->id)
+        ownBounds.Add(ImRect(box.min, box.max));
 
     if (pastedBounds.Min.x <= pastedBounds.Max.x &&
         ownBounds.Min.x <= ownBounds.Max.x && pastedBounds.Overlaps(ownBounds))
@@ -1414,7 +1217,7 @@ void MaterialGraphCanvas::pasteJson(Graph& graph,
   }
 
   std::unordered_map<NodeId, NodeId> ids;
-  m_selection.clear();
+  m_board.clearSelection();
 
   for (mg::Node node : pasted->nodes)
   {
@@ -1432,7 +1235,7 @@ void MaterialGraphCanvas::pasteJson(Graph& graph,
     ids[node.id] = graph.nextId;
     node.id = graph.nextId++;
     node.position += glm::vec2(offset.x, offset.y);
-    m_selection.insert(node.id);
+    m_board.selectAlso(node.id);
     graph.nodes.push_back(std::move(node));
   }
 
@@ -1444,8 +1247,8 @@ void MaterialGraphCanvas::pasteJson(Graph& graph,
 
 void MaterialGraphCanvas::selectAll(const Graph& graph)
 {
-  m_selection.clear();
+  m_board.clearSelection();
 
   for (const mg::Node& node : graph.nodes)
-    m_selection.insert(node.id);
+    m_board.selectAlso(node.id);
 }

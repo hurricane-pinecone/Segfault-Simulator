@@ -107,6 +107,7 @@ public:
     TranslationUnit,
     SwitchStatement,
     DestructorName,
+    PreprocInclude,
   };
 
   Linter();

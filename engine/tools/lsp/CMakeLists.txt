@@ -23,6 +23,7 @@ add_library(sfs-lsp-lib STATIC
     src/formatBlankLines.cpp
     src/formatLines.cpp
     src/formatOrder.cpp
+    src/graph.cpp
     src/hover.cpp
     src/houseLints.cpp
     src/lintConfig.cpp

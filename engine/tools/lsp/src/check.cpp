@@ -26,14 +26,6 @@ namespace sfs::lsp
 namespace
 {
 
-// What --check and --fix are run on.
-struct Run
-{
-  std::filesystem::path root;
-  codegen::RuleSet disabled;
-  std::vector<std::filesystem::path> files; // sorted, each once
-};
-
 // One file --fix reads and may change: its text on disk and as fixed so far.
 struct FixedFile
 {
@@ -84,13 +76,27 @@ void usage()
       << "usage: sfs-lsp --check [--root DIR] [--disable RULE]... PATH...\n"
          "       sfs-lsp --fix RULE[,RULE...] [--root DIR] PATH...\n"
          "       sfs-lsp --format [--check] [--clang-format PATH] [--root DIR] "
-         "PATH...\n";
+         "PATH...\n"
+         "       sfs-lsp --graph [--progress] [--root DIR] PATH...\n";
 }
 
-// Reads the shared arguments ([--root DIR] [--disable RULE]... PATH...) and
-// lists the files they name. False when they're wrong (with the usage
-// printed) or name no C++ files (with a message).
-bool readRun(const std::vector<std::string>& args, bool allowDisable, Run& run)
+// The byte offset of a source point in `text`.
+uint32_t offsetOf(const std::vector<uint32_t>& lines,
+                  const std::string& text,
+                  unsigned row,
+                  unsigned column)
+{
+  if (row >= lines.size())
+    return static_cast<uint32_t>(text.size());
+
+  return std::min(lines[row] + column, static_cast<uint32_t>(text.size()));
+}
+
+} // namespace
+
+bool readCommandRun(const std::vector<std::string>& args,
+                    bool allowDisable,
+                    CommandRun& run)
 {
   std::vector<std::filesystem::path> paths;
   std::vector<std::string> given;
@@ -178,25 +184,11 @@ bool readRun(const std::vector<std::string>& args, bool allowDisable, Run& run)
   return true;
 }
 
-// The byte offset of a source point in `text`.
-uint32_t offsetOf(const std::vector<uint32_t>& lines,
-                  const std::string& text,
-                  unsigned row,
-                  unsigned column)
-{
-  if (row >= lines.size())
-    return static_cast<uint32_t>(text.size());
-
-  return std::min(lines[row] + column, static_cast<uint32_t>(text.size()));
-}
-
-} // namespace
-
 int runCheck(const std::vector<std::string>& args)
 {
-  Run run;
+  CommandRun run;
 
-  if (!readRun(args, true, run))
+  if (!readCommandRun(args, true, run))
     return 2;
 
   const ParserPtr parser = makeCppParser();
@@ -268,9 +260,9 @@ int runFix(const std::vector<std::string>& args)
     return 2;
   }
 
-  Run run;
+  CommandRun run;
 
-  if (!readRun(
+  if (!readCommandRun(
           std::vector<std::string>(args.begin() + 1, args.end()), false, run))
     return 2;
 
@@ -444,9 +436,9 @@ int runFormat(const std::vector<std::string>& args)
       rest.push_back(args[i]);
   }
 
-  Run run;
+  CommandRun run;
 
-  if (!readRun(rest, false, run))
+  if (!readCommandRun(rest, false, run))
     return 2;
 
   const std::string clangFormat = findClangFormat(configured);

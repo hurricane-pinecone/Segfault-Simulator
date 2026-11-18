@@ -1,0 +1,461 @@
+local utils = require('grug-far.utils')
+local engine = require('grug-far.engine')
+local ResultHighlightType = engine.ResultHighlightType
+local ResultMarkType = engine.ResultMarkType
+local ResultSigns = engine.ResultSigns
+local ResultHighlightByType = engine.ResultHighlightByType
+
+local M = {}
+
+---@class grug.far.RipgrepJsonSubmatch
+---@field match {text: string}
+---@field replacement {text: string}
+---@field start integer
+---@field end integer
+
+---@class grug.far.RipgrepJsonMatchData
+---@field lines { text: string}
+---@field line_number integer
+---@field absolute_offset integer
+---@field submatches grug.far.RipgrepJsonSubmatch[]
+
+---@class grug.far.RipgrepJsonMatch
+---@field type "match"
+---@field data grug.far.RipgrepJsonMatchData
+
+---@class grug.far.RipgrepJsonMatchContext
+---@field type "context"
+---@field data grug.far.RipgrepJsonMatchData
+
+---@class grug.far.RipgrepJsonMatchBegin
+---@field type "begin"
+---@field data { path: { text: string } }
+
+---@class grug.far.RipgrepJsonMatchEnd
+---@field type "end"
+---@field data { path: { text: string } }
+-- note: this one has more stats things, but we don't care about them, atm.
+
+---@class grug.far.RipgrepJsonMatchSummary
+---@field type "summary"
+-- note: this one has more stats things, but we don't care about them, atm.
+
+---@alias RipgrepJson grug.far.RipgrepJsonMatchSummary | grug.far.RipgrepJsonMatchBegin | grug.far.RipgrepJsonMatchEnd | grug.far.RipgrepJsonMatch | grug.far.RipgrepJsonMatchContext
+
+---@class grug.far.ripgprep.addResultLinesParams
+---@field file_name? string,
+---@field resultLines string[],
+---@field ranges { start: { column: integer?, line: integer}, end: {column: integer?, line: integer}}[],
+---@field lines string[],
+---@field highlights grug.far.ResultHighlight[],
+---@field marks grug.far.ResultMark[],
+---@field sign? grug.far.ResultHighlightSign,
+---@field matchHighlightType? ResultHighlightType,
+---@field bufrange? grug.far.VisualSelectionInfo,
+---@field mark_opts? any
+---@field add_location_submatches? boolean
+
+local function calcLineRangeCol(matchCol, text, eol)
+  local offset = utils.strFindLast(text, eol)
+  if offset then
+    offset = offset + (#eol - 1)
+  else
+    offset = 0
+  end
+
+  return matchCol - offset + 1
+end
+
+--- adds result lines
+---@param p grug.far.ripgprep.addResultLinesParams
+local function addResultLines(p)
+  local numlines = #p.lines
+  local first_range = p.ranges[1]
+  local match_first_line = first_range.start.line
+  local match_end_line = first_range['end'].line
+  local start_lnum = p.bufrange and match_first_line + p.bufrange.start_row - 1 or match_first_line
+  local end_lnum = p.bufrange and match_end_line + p.bufrange.start_row - 1 or match_end_line
+
+  for j, resultLine in ipairs(p.resultLines) do
+    local current_line = numlines + j - 1
+    local current_line_number = first_range.start.line + j - 1
+    local lnum = p.bufrange and current_line_number + p.bufrange.start_row - 1
+      or current_line_number
+    local column_number = first_range.start.column
+    if p.bufrange and p.bufrange.start_col and column_number then
+      column_number = column_number + p.bufrange.start_col
+      p.bufrange.start_col = nil -- we only want to add col to first line
+    end
+    resultLine = utils.getLineWithoutCarriageReturn(resultLine)
+
+    local match_end_col
+    if column_number then
+      match_end_col = first_range['end'].column
+    end
+
+    local mark = {
+      type = ResultMarkType.SourceLocation,
+      start_line = current_line,
+      start_col = 0,
+      end_line = current_line,
+      end_col = #resultLine,
+      location = {
+        filename = p.file_name,
+        lnum = lnum,
+        col = column_number,
+        end_col = match_end_col,
+        start_lnum = start_lnum,
+        end_lnum = end_lnum,
+        text = resultLine,
+      },
+      sign = p.sign,
+    }
+    if p.mark_opts then
+      for key, value in pairs(p.mark_opts) do
+        mark[key] = value
+      end
+    end
+    table.insert(p.marks, mark)
+
+    if p.add_location_submatches then
+      mark.location.submatches = {}
+    end
+    if p.matchHighlightType then
+      for _, range in ipairs(p.ranges) do
+        if range.start.line <= current_line_number and range['end'].line >= current_line_number then
+          table.insert(p.highlights, {
+            hl_group = ResultHighlightByType[p.matchHighlightType],
+            start_line = current_line,
+            start_col = range.start.line == current_line_number and range.start.column - 1 or 0,
+            end_line = current_line,
+            end_col = range['end'].line == current_line_number and range['end'].column - 1
+              or #resultLine,
+          })
+          local col = range.start.line == current_line_number and range.start.column or 1
+          local end_col = range['end'].line == current_line_number and range['end'].column
+            or (#resultLine + 1)
+          if mark.location.submatches then
+            table.insert(mark.location.submatches, { col = col, end_col = end_col })
+          end
+        end
+      end
+    end
+
+    if p.add_location_submatches and #mark.location.submatches == 0 then
+      mark.location.submatches = { { col = column_number, end_col = match_end_col } }
+    end
+
+    table.insert(p.lines, resultLine)
+  end
+end
+
+--- parse results data and get info
+---@param matches RipgrepJson[]
+---@param isSearchWithReplace boolean
+---@param showDiff boolean
+---@param bufrange? grug.far.VisualSelectionInfo
+---@param isFirst? boolean
+---@return grug.far.ParsedResultsData
+function M.parseResults(matches, isSearchWithReplace, showDiff, bufrange, isFirst)
+  ---@type grug.far.ParsedResultsStats
+  local stats = { files = 0, matches = 0 }
+  ---@type string[]
+  local lines = {}
+  ---@type grug.far.ResultHighlight[]
+  local highlights = {}
+  ---@type grug.far.ResultMark[]
+  local marks = {}
+
+  local is_first_one = isFirst
+  local last_line_number = nil
+  local file_name = nil
+  local last_context_line_number = nil
+  for _, match in ipairs(matches) do
+    local data = match.data
+
+    -- add separator
+    if
+      last_line_number
+      and isSearchWithReplace
+      and showDiff
+      and (match.type == 'match' or match.type == 'context')
+      and last_line_number < data.line_number - 1
+    then
+      table.insert(marks, {
+        type = ResultMarkType.DiffSeparator,
+        start_line = #lines,
+        start_col = 0,
+        end_line = #lines,
+        end_col = 0,
+        sign = isSearchWithReplace and ResultSigns.DiffSeparator or nil,
+        location = {
+          filename = file_name,
+        },
+      })
+      table.insert(lines, engine.DiffSeparatorChars)
+      last_line_number = nil
+    end
+
+    if match.type == 'begin' then
+      if not is_first_one then
+        table.insert(lines, '')
+      end
+      is_first_one = false
+
+      stats.files = stats.files + 1
+      last_context_line_number = nil
+      file_name = bufrange and bufrange.file_name or vim.fs.normalize(data.path.text)
+      table.insert(highlights, {
+        hl_group = ResultHighlightByType[ResultHighlightType.FilePath],
+        start_line = #lines,
+        start_col = 0,
+        end_line = #lines,
+        end_col = #file_name,
+      })
+      table.insert(marks, {
+        type = ResultMarkType.SourceLocation,
+        start_line = #lines,
+        start_col = 0,
+        end_line = #lines,
+        end_col = #file_name,
+        location = {
+          filename = file_name,
+        },
+      })
+      table.insert(lines, file_name)
+    elseif match.type == 'end' then
+      last_line_number = nil
+    elseif match.type == 'match' then
+      last_context_line_number = nil
+      stats.matches = stats.matches + #data.submatches
+      local match_lines_text = utils.strip_trailing_newline(data.lines.text or '')
+      local eol = utils.detect_eol(match_lines_text)
+      local match_lines = vim.split(match_lines_text, eol)
+      last_line_number = data.line_number + #match_lines - 1
+
+      -- add match lines
+      if not isSearchWithReplace or (isSearchWithReplace and showDiff) then
+        local sign = (isSearchWithReplace and showDiff) and ResultSigns.Removed or nil
+        local matchHighlightType = (isSearchWithReplace and showDiff)
+            and ResultHighlightType.MatchRemoved
+          or ResultHighlightType.Match
+        local ranges = vim
+          .iter(data.submatches)
+          :map(function(submatch)
+            local text_to_submatch = match_lines_text:sub(1, submatch.start)
+            local start_line = data.line_number + vim.fn.count(text_to_submatch, '\n')
+            return {
+              start = {
+                line = start_line,
+                column = calcLineRangeCol(submatch.start, text_to_submatch, eol),
+              },
+              ['end'] = {
+                line = start_line + vim.fn.count(submatch.match.text, '\n'),
+                column = calcLineRangeCol(
+                  submatch['end'],
+                  text_to_submatch .. submatch.match.text,
+                  eol
+                ),
+              },
+            }
+          end)
+          :totable()
+
+        if #ranges == 0 then
+          ranges = {
+            {
+              start = {
+                line = data.line_number,
+                column = 1,
+              },
+              ['end'] = {
+                line = last_line_number,
+                column = #match_lines[#match_lines] + 1,
+              },
+            },
+          }
+        end
+
+        local next_mark_index = #marks + 1
+        addResultLines({
+          file_name = file_name,
+          resultLines = match_lines,
+          ranges = ranges,
+          lines = lines,
+          highlights = highlights,
+          marks = marks,
+          sign = sign,
+          matchHighlightType = matchHighlightType,
+          bufrange = bufrange,
+          add_location_submatches = true,
+        })
+        marks[next_mark_index].location.is_counted = true
+      end
+
+      -- add replacement lines
+      if isSearchWithReplace then
+        -- build lines text with replacements spliced in for matches and figure out match ranges
+        local last_index = 0
+        local replaced_lines_text = ''
+        local ranges = {}
+        for _, submatch in ipairs(data.submatches) do
+          replaced_lines_text = replaced_lines_text
+            .. match_lines_text:sub(last_index + 1, submatch.start)
+
+          local start_line = data.line_number + vim.fn.count(replaced_lines_text, '\n')
+          table.insert(ranges, {
+            start = {
+              line = start_line,
+              column = calcLineRangeCol(#replaced_lines_text, replaced_lines_text, '\n'),
+            },
+            ['end'] = {
+              line = start_line + vim.fn.count(submatch.replacement.text, '\n'),
+              column = calcLineRangeCol(
+                #replaced_lines_text + #submatch.replacement.text,
+                replaced_lines_text .. submatch.replacement.text,
+                '\n'
+              ),
+            },
+          })
+
+          replaced_lines_text = replaced_lines_text .. submatch.replacement.text
+          last_index = submatch['end']
+        end
+        if last_index < #match_lines_text then
+          replaced_lines_text = replaced_lines_text .. match_lines_text:sub(last_index + 1)
+        end
+
+        local replaced_lines = vim.split(replaced_lines_text, '\n')
+        local sign = showDiff and ResultSigns.Added or ResultSigns.Changed
+        local matchHighlightType = showDiff and ResultHighlightType.MatchAdded
+          or ResultHighlightType.Match
+        addResultLines({
+          file_name = file_name,
+          resultLines = replaced_lines,
+          ranges = ranges,
+          lines = lines,
+          highlights = highlights,
+          marks = marks,
+          sign = sign,
+          matchHighlightType = matchHighlightType,
+          bufrange = bufrange,
+        })
+      end
+    elseif match.type == 'context' then
+      if
+        not isSearchWithReplace
+        and last_context_line_number
+        and last_context_line_number + 1 < match.data.line_number
+      then
+        table.insert(marks, {
+          type = ResultMarkType.DiffSeparator,
+          start_line = #lines,
+          start_col = 0,
+          end_line = #lines,
+          end_col = 0,
+          location = {
+            filename = file_name,
+          },
+        })
+        table.insert(lines, engine.DiffSeparatorChars)
+      end
+      last_context_line_number = match.data.line_number
+      local context_lines_text = utils.strip_trailing_newline(data.lines.text or '')
+      local eol = utils.detect_eol(context_lines_text)
+      local context_lines = vim.split(context_lines_text, eol)
+      last_line_number = data.line_number + #context_lines - 1
+
+      local ranges = {
+        {
+          start = {
+            line = data.line_number,
+            column = nil,
+          },
+          ['end'] = {
+            line = last_line_number,
+            column = nil,
+          },
+        },
+      }
+      addResultLines({
+        file_name = file_name,
+        resultLines = context_lines,
+        ranges = ranges,
+        lines = lines,
+        highlights = highlights,
+        marks = marks,
+        sign = isSearchWithReplace and ResultSigns.Changed or nil,
+        bufrange = bufrange,
+        mark_opts = { is_context = true },
+      })
+    end
+  end
+
+  return {
+    lines = lines,
+    highlights = highlights,
+    marks = marks,
+    stats = stats,
+  }
+end
+
+--- constructs new file content, given old file content and matches with replacements
+---@param contents string
+---@param matches RipgrepJson[]
+---@return string new_contents
+function M.getReplacedContents(contents, matches)
+  local new_contents = ''
+  local last_index = 0
+  for _, match in ipairs(matches) do
+    if match.type == 'match' then
+      new_contents = new_contents .. contents:sub(last_index + 1, match.data.absolute_offset)
+
+      local last_sub_index = 0
+      local replaced_lines_text = ''
+      local match_lines_text = match.data.lines.text
+      for _, submatch in ipairs(match.data.submatches) do
+        replaced_lines_text = replaced_lines_text
+          .. match_lines_text:sub(last_sub_index + 1, submatch.start)
+          .. submatch.replacement.text
+        last_sub_index = submatch['end']
+      end
+      if last_sub_index < #match_lines_text then
+        replaced_lines_text = replaced_lines_text .. match_lines_text:sub(last_sub_index + 1)
+      end
+      new_contents = new_contents .. replaced_lines_text
+
+      last_index = match.data.absolute_offset + #match_lines_text
+    end
+  end
+  if last_index < #contents then
+    new_contents = new_contents .. contents:sub(last_index + 1)
+  end
+
+  return new_contents
+end
+
+--- splits off matches corresponding to the last file
+---@param matches RipgrepJson[]
+---@return RipgrepJson[] before, RipgrepJson[] after
+function M.split_last_file_matches(matches)
+  local end_index = 0
+  for i = #matches, 1, -1 do
+    if matches[i].type == 'end' then
+      end_index = i
+      break
+    end
+  end
+
+  local before = {}
+  for i = 1, end_index do
+    table.insert(before, matches[i])
+  end
+  local after = {}
+  for i = end_index + 1, #matches do
+    table.insert(after, matches[i])
+  end
+
+  return before, after
+end
+
+return M

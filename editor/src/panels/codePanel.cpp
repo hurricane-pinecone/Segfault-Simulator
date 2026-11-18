@@ -2,7 +2,8 @@
 
 #include "build/buildEnvironment.h"
 #include "editorContext.h"
-#include "engine/core/logger/logger.h"
+#include "widgets/codeFont.h"
+#include "widgets/theme.h"
 
 #include <imgui.h>
 #include <imgui_internal.h> // PlatformImeData (text input without an InputText), settings handler
@@ -12,8 +13,9 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
-#include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <string>
 
 namespace
 {
@@ -80,11 +82,19 @@ constexpr NamedKey CHORD_KEYS[] = {
 // the editor's per-user UI state.
 CodePanel::Settings* g_settings = nullptr;
 
-// Where the engine's Neovim config ships: next to the editor executable.
-std::filesystem::path engineConfigFolder()
+// The folder beside the editor executable that holds what it ships: its
+// Neovim config ("nvim") and fonts ("fonts").
+std::filesystem::path shippedFolder(const char* name)
 {
   const char* base = SDL_GetBasePath();
-  return std::filesystem::path(base ? base : "") / "nvim";
+  return std::filesystem::path(base ? base : "") / name;
+}
+
+// The factor ImGui scales pushed font sizes by.
+float fontScale()
+{
+  const ImGuiStyle& style = ImGui::GetStyle();
+  return style.FontScaleMain * style.FontScaleDpi;
 }
 
 ImU32 toImColor(uint32_t rgb)
@@ -170,95 +180,13 @@ void registerSettings(CodePanel::Settings* settings)
   };
   ImGui::AddSettingsHandler(&handler);
 }
-
-// The first installed Nerd Font Mono (icons in statuslines and file trees) in
-// `folder`, if any.
-std::optional<std::filesystem::path>
-findNerdFont(const std::filesystem::path& folder)
-{
-  std::error_code error;
-
-  for (const auto& entry :
-       std::filesystem::recursive_directory_iterator(folder, error))
-  {
-    const std::string name = entry.path().filename().string();
-
-    if (name.find("NerdFontMono-Regular.") != std::string::npos)
-      return entry.path();
-  }
-
-  return std::nullopt;
-}
-
-// A monospace font for the code grid: $SFS_EDITOR_CODE_FONT, else a Nerd Font,
-// else the platform's standard coding font. Empty if none is found (the UI
-// font, also monospaced, is used then).
-std::filesystem::path codeFontPath()
-{
-  if (const char* custom = std::getenv("SFS_EDITOR_CODE_FONT");
-      custom && *custom)
-    return custom;
-
-  std::vector<std::filesystem::path> nerdFolders, fallbacks;
-#if defined(_WIN32)
-  const char* local = std::getenv("LOCALAPPDATA");
-  if (local)
-    nerdFolders.push_back(std::filesystem::path(local) / "Microsoft" /
-                          "Windows" / "Fonts");
-  nerdFolders.push_back("C:\\Windows\\Fonts");
-  fallbacks = {"C:\\Windows\\Fonts\\CascadiaMono.ttf",
-               "C:\\Windows\\Fonts\\consola.ttf"};
-#else
-  if (const char* home = std::getenv("HOME"))
-    nerdFolders.push_back(std::filesystem::path(home) / ".local" / "share" /
-                          "fonts");
-  nerdFolders.push_back("/usr/share/fonts");
-  fallbacks = {"/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
-               "/usr/share/fonts/TTF/DejaVuSansMono.ttf"};
-#endif
-  for (const auto& folder : nerdFolders)
-    if (const auto font = findNerdFont(folder))
-      return *font;
-
-  for (const auto& font : fallbacks)
-    if (std::filesystem::exists(font))
-      return font;
-
-  return {};
-}
-
-ImFont* loadCodeFont()
-{
-  const std::filesystem::path path = codeFontPath();
-
-  if (path.empty())
-    return nullptr;
-
-  // The first font is the UI's: keep ImGui's default there (it is otherwise
-  // only added when the atlas is still empty at the first frame).
-  ImFontAtlas* atlas = ImGui::GetIO().Fonts;
-
-  if (atlas->Fonts.empty())
-    atlas->AddFontDefault();
-
-  ImFontConfig config;
-  config.OversampleH = 1; // crisp at the pixel sizes code is read at
-  // Sizes are chosen when pushed (ImGui 1.92 bakes glyphs on demand).
-  ImFont* font =
-      atlas->AddFontFromFileTTF(path.string().c_str(), 0.0f, &config);
-
-  if (font)
-    LOG_INFO("Code panel font: " + path.string());
-
-  return font;
-}
 } // namespace
 
 CodePanel::CodePanel(const BuildEnvironment& environment)
     : Panel("Code"), m_environment(environment), m_nvim(environment)
 {
   registerSettings(&m_settings);
-  m_font = loadCodeFont();
+  m_codeFont = loadCodeFont(shippedFolder("fonts"), theme::uiFontFile());
 }
 
 CodePanel::~CodePanel() { g_settings = nullptr; }
@@ -283,24 +211,20 @@ void CodePanel::update(EditorContext& context)
 
   if (m_pendingFile)
   {
-    m_nvim.open(*m_pendingFile);
+    m_nvim.open(*m_pendingFile, m_pendingLine);
     m_pendingFile.reset();
+  }
+
+  if (m_nvim.focusedScriptRevision() != context.codeScriptRevision)
+  {
+    context.codeScript = m_nvim.focusedScript();
+    context.codeScriptRevision = m_nvim.focusedScriptRevision();
   }
 }
 
 void CodePanel::beforeBegin()
 {
-  // A new Code window joins the viewport's dock node as a tab.
-  if (!m_dockChecked)
-  {
-    m_dockChecked = true;
-    const ImGuiWindow* viewport = ImGui::FindWindowByName("Viewport");
-    const ImGuiWindowSettings* settings =
-        ImGui::FindWindowSettingsByID(ImHashStr(title()));
-
-    if (viewport && viewport->DockId && !settings)
-      ImGui::SetNextWindowDockID(viewport->DockId);
-  }
+  dockNewBesideViewport();
 
   if (m_focusRequested)
   {
@@ -330,7 +254,8 @@ void CodePanel::drawContents(EditorContext& context)
   }
 
   const NvimScreen& screen = m_nvim.screen();
-  ImGui::PushFont(m_font, m_settings.fontSize);
+  ImGui::PushFont(m_codeFont.font,
+                  codeFontSize(m_codeFont, m_settings.fontSize, fontScale()));
   const float cellWidth = ImGui::CalcTextSize("M").x;
   const float cellHeight = std::round(ImGui::GetTextLineHeight());
   const ImVec2 available = ImGui::GetContentRegionAvail();
@@ -522,7 +447,8 @@ bool CodePanel::ensureStarted(const EditorContext& context)
 
   NvimClient::LaunchOptions options;
   options.mode = m_settings.mode;
-  options.engineConfig = engineConfigFolder();
+  options.engineConfig = shippedFolder("nvim");
+  options.icons = m_codeFont.icons;
   options.workingDirectory = context.project ? context.project->root()
                                              : std::filesystem::current_path();
   m_projectRoot =
@@ -610,10 +536,15 @@ void CodePanel::handleMouse(const ImVec2& origin,
   {
     if (io.MouseWheel != 0.0f && io.KeyCtrl) // zoom
     {
-      m_settings.fontSize = std::clamp(
-          m_settings.fontSize + (io.MouseWheel > 0.0f ? 1.0f : -1.0f),
-          MIN_FONT_SIZE,
-          MAX_FONT_SIZE);
+      // A pixel font steps through the sizes it's crisp at.
+      const float scale = fontScale();
+      const float step =
+          m_codeFont.pixelSize > 0.0f ? m_codeFont.pixelSize / scale : 1.0f;
+      const float size = codeFontSize(m_codeFont, m_settings.fontSize, scale);
+      m_settings.fontSize =
+          std::clamp(size + (io.MouseWheel > 0.0f ? step : -step),
+                     MIN_FONT_SIZE,
+                     MAX_FONT_SIZE);
       ImGui::MarkIniSettingsDirty();
     }
     else if (io.MouseWheel != 0.0f)
@@ -649,7 +580,7 @@ void CodePanel::handleMouse(const ImVec2& origin,
   }
 }
 
-void CodePanel::openFile(const std::filesystem::path& file)
+void CodePanel::openFile(const std::filesystem::path& file, int line)
 {
   open() = true;
   m_focusRequested = true;
@@ -659,4 +590,5 @@ void CodePanel::openFile(const std::filesystem::path& file)
     m_started = false; // ...and restarts a Neovim that was quit
 
   m_pendingFile = file;
+  m_pendingLine = line;
 }

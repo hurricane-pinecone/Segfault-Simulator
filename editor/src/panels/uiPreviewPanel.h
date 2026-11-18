@@ -3,6 +3,7 @@
 #include "engine/runtime/rendering/backend/iRenderBackend.h"
 #include "engine/runtime/rendering/backend/renderTarget.h"
 #include "engine/runtime/rendering/iRenderer.h"
+#include "engine/runtime/rendering/uiDraw.h"
 #include "engine/runtime/scripting/moduleHost.h"
 #include "panels/panel.h"
 
@@ -108,6 +109,7 @@ private:
   const CodePanel& m_code;
   std::unique_ptr<sfs::IRenderer> m_renderer;
   std::unique_ptr<sfs::IRenderTarget> m_target;
+  sfs::UiDrawList m_drawList; // the picture drawn, kept to reuse its memory
   bool m_initialized = false;
   bool m_failed = false;
 

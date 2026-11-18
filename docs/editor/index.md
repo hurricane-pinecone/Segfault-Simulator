@@ -75,17 +75,20 @@ of one.
 | --- | --- |
 | Viewport | The scene, with a gizmo on the selection (see below). |
 | Hierarchy | The scene's entities, as a tree of parents and children (see below). Click to select; **Ctrl**+click adds or removes a row, **Shift**+click selects every row from the selected one to it (see [Editing several at once](#editing-several-at-once)); double-click, the row's crosshair button or right-click → Focus frames it in the viewport (as F does there), and a double-click also opens or closes a row with children. To rename, click the selected row's name again, press **F2**, or right-click → **Rename**: a box opens over the row (Enter or clicking away keeps it, Esc cancels). New objects open it straight away, so you can type their name. Use the **+** button or right-click empty space to create entities. The filter box narrows the tree to a flat list of matching names, and picking in the viewport opens the selection's parents and scrolls to it. |
-| Inspector | The selected entity's name, its tags (as chips, with **+ Add Tag**) and its components, with **Add Component** (with several selected: what they share, edited on all of them). Each field's label is on the left and its value on the right. Settings that don't apply are hidden, such as a Mesh Renderer's emission light settings when none of its materials can glow. |
+| Inspector | The selected entity's name, its tags (as chips, with **+ Add Tag**) and its components, with **Add Component** (with several selected: what they share, edited on all of them). Each field's label is on the left and its value on the right. Settings that don't apply are hidden, such as a Mesh Renderer's emission light settings when none of its materials can glow. It shows what was selected last: an asset selected in the Assets panel shows its settings, and a box selected on the [Architecture board](architecture/index.md#details) shows what its code does, until an entity or asset is selected again. |
 | Scene Settings | The scene's systems (yours, and the engine's optional ones such as physics) and services, its **Scene Data** ([scene data](../core/ecs/index.md#scene-data): each the scene holds, its fields edited as the Inspector edits a component's, with **x** to remove it, and **Add Scene Data** for the types it hasn't got), its **Style** (3D, Flat 2D or Isometric 2D), its **Look** (a [visual style](#visual-styles), or its own tone mapping and colour grading), its **Sky & Shadows** (a flat or [physical sky](../runtime/rendering/visual-styles/index.md#physical-sky-and-image-based-lighting), whose atmosphere settings show only when it's physical; and the sun's shadow cascades, whose reach and split show only with more than one), its **Rain** (how rain looks; how hard it rains is the scene's Rain scene data), the game camera, shadows, the viewport's projection and render stats. The scene's light, sky, rain and wind are under Scene Data, each optional: its **Directional Lighting** (the sun by day, the moon by night), **Ambient Lighting** (and the sky colour), a physical sky's **Celestial Bodies** (its sun and moon), **Clouds**, **Rain**, **Wind** and **Shader Globals** (see [Light, sky, wind and global shader parameters](../runtime/rendering/light-and-sky/index.md)); a new scene has a Directional Lighting and an Ambient Lighting, and in 3D a Wind. Celestial Bodies, Clouds and Rain are a 3D scene's: a 2D scene shows them but draws none. |
 | Assets | The project's `scenes/`, `scripts/`, `prefabs/` and `assets/` folders: a folder tree, and the open folder's contents (see below). Double-click a scene to open it, a script or other text file to edit it in the Code panel, or anything else to open it in its default app; right-click `scripts` for **New Script**. |
 | Code | Neovim, embedded, for editing scripts (see below). |
-| Console | The engine log; errors are highlighted. |
+| Architecture | Your systems, components, events and the rest as boxes, and what each one's code does with the others as arrows, to find your way round a game's code and see what to untangle (see [Architecture board](./architecture/index.md)). It opens from the **Window** menu only, and reads your scripts while it's open. |
+| Console | The engine log, a row per line (a message of several lines, such as a build's output, gets a row for each); errors are red and warnings amber. Click a line to select it: **Shift**+click selects every line from the selected one to it, **Ctrl**+click adds or removes one, dragging selects the lines it passes over and **Ctrl+A** selects them all; **Esc** or a click on empty space clears the selection. **Ctrl+C** copies the selected lines as they were logged, one per line. While lines are selected, their full text shows wrapped in a box under the list (drag the bar above it to resize it; a large selection shows its first 64 KB), where any part of it can be selected with the mouse and copied with **Ctrl+C**. Right-click for **Copy**, **Copy All**, **Select All** and **Clear**. It keeps the last 20,000 lines. **Auto-scroll** follows new lines while the list is scrolled to the bottom and nothing is selected. |
 | UI Preview | The game UI in the file open in the Code panel, as you write it (see [the UI docs](../runtime/ui/index.md#views-of-your-own-and-the-ui-preview)). Opening a UI file brings its tab to the front (without taking the keyboard from Code); closing the last one goes back to the tab it covered, unless you picked another meanwhile. |
 
 The **Window** menu shows or hides each panel; **Window → Reset Layout** puts
 them all back where a new editor has them: the Hierarchy on the left, the
 Inspector and UI Preview on the right, the Viewport, Scene Settings and Code
-in the middle, and the Console and Assets under them.
+in the middle, and the Console and Assets under them. The Architecture board
+is left as it is, since it's only opened when wanted; it opens as a tab beside
+the Viewport.
 
 The layout, which panels are open, the panels' own settings and the editor
 window's size, place and maximised state are kept between sessions, per user,
@@ -483,8 +486,14 @@ restores the selection.
 | Edit → Delete | Del |
 | Edit → Align With View | Ctrl+Shift+F |
 
-While the Assets panel was the last panel used, the Edit menu and these keys
-work on its file operations instead (see [Assets](#assets)). History is cleared
+The Edit menu and these keys belong to the panel used last. They edit the
+scene only from a panel that edits it: the Viewport, Hierarchy, Inspector or
+Scene Settings. While the Assets panel was the last panel used, they work on
+its file operations instead (see [Assets](#assets)), and in a material's tab on
+its graph. From a panel that only shows things (the Console, the Code panel,
+the UI Preview, the [Architecture board](architecture/index.md)) they do
+nothing, and the Edit menu's commands are greyed out; the Console's own
+Ctrl+A and Ctrl+C select and copy its lines. History is cleared
 when another scene is opened. Edits made while playing aren't
 recorded, because Stop discards them anyway. The history keeps up to 200
 steps, and fewer for a big scene: the oldest steps go once their snapshots
@@ -522,14 +531,42 @@ The toolbar picks the configuration (applied on **Restart**):
 | Your config | Your own config |
 
 The engine's config is `editor/nvim/init.lua`, shipped next to the editor
-executable. It is deliberately small: no plugin manager or
-plugins, a built-in colour scheme, 2-space indents, and C++ support through
-Neovim's built-in LSP client when `clangd` is installed. That gives go to
-definition (`gd`), hover (`K`), completion, diagnostics, rename (`grn`) and code
-actions (`gra`); `Space h` switches between header and source. Beside clangd it
-runs [sfs-lsp](sfs-lsp/index.md), the engine's own checks: completion and docs
-for `[[sfs::...]]` attributes, sfs-codegen's warnings as you type, and lints of
-the SFS API with their fixes.
+executable. It is small: no plugin manager, 2-space indents, and
+C++ support through Neovim's built-in LSP client when `clangd` is installed.
+That gives go to definition (`gd`), hover (`K`), completion, diagnostics
+(`Space d` shows the one under the cursor), rename (`grn`, or `Space c r`: the
+symbol everywhere clangd knows it) and code actions (`gra`, or `Space c a`);
+`Space h` switches between header and source. Beside clangd it runs
+[sfs-lsp](sfs-lsp/index.md), the engine's own checks: completion and docs for
+`[[sfs::...]]` attributes, sfs-codegen's warnings as you type, and lints of the
+SFS API with their fixes.
+
+It brings a few modules of [mini.nvim](https://github.com/nvim-mini/mini.nvim)
+(v0.18.0, MIT), shipped beside it rather than downloaded:
+
+| Module | What it does | Keys |
+| --- | --- | --- |
+| mini.pick | Finds files and searches text in the project's `scripts/` folder (live search with ripgrep, when installed) | `Space Space` / `Space f f` find files, `Space /` / `Space s g` search, `Space ,` / `Space f b` open buffers, `Space s h` help, `Space s R` the last picker again |
+| mini.files | A file explorer: columns of folders, with a preview; edit the listing to create, rename or delete, then `=` to apply | `Space e`, at the current file; `Enter` or `l` opens, `h` goes out, `q` closes |
+| mini.clue | After a short pause on a prefix (`Space`, `g`, `z`, `[`, `]`, marks, registers, `Ctrl+W`), shows the keys that can follow | |
+| mini.icons | File-type icons in the pickers and the explorer, when the panel's font draws them | |
+| mini.hues | Makes the colour scheme | |
+
+And [grug-far.nvim](https://github.com/MagicDuck/grug-far.nvim) (1.6.80, MIT),
+also shipped beside it, for find and replace across files: a buffer with the
+search, the replacement, a files filter and flags, every match previewed with
+its change, applied all at once or one by one. It searches with ripgrep, which
+must be installed. `Space s r` opens it on the project's `scripts/` folder (in
+visual mode, searching for the selection), `Space s b` on the current file.
+For a C++ symbol, prefer `Space c r`: it renames only that symbol, not the
+same text elsewhere.
+
+The colour scheme, `sfs` (`editor/nvim/colors/sfs.lua`), is made from the
+editor's own colours, so the panel reads as part of the editor: its charcoal
+panel and popup greys behind the text and the floating windows, the title-bar
+grey for the status line, and sage for the cursor line number, keywords,
+selections and the current match in a picker. Syntax colours are soft pastels
+around them. `Ctrl+S` saves.
 
 The editor sets `SFS_LSP` to the `sfs-lsp` that matches its engine for every
 config, so your own config can start it too: see
@@ -557,11 +594,29 @@ the engine headers with any config, in any editor. It also turns off clang's
 unknown-attribute warnings, which `[[sfs::...]]` would set off; sfs-lsp checks
 attributes instead.
 
-The panel draws with a monospace font: a Nerd Font Mono if one is installed
-(for the icons many configs use), otherwise Cascadia Mono or Consolas on
-Windows and DejaVu Sans Mono on Linux. Set `SFS_EDITOR_CODE_FONT` to a `.ttf`
-file to choose another. Ctrl+wheel changes the size; the size and the config
-choice are saved with the editor layout.
+The panel draws with [Departure Mono](https://departuremono.com) (1.500, SIL
+Open Font License), a pixel font shipped with the editor in `fonts/` beside the
+executable. A pixel font is only crisp at whole multiples of its design size,
+11 px, so the panel's size snaps to them (at the editor's scale): Ctrl+wheel
+steps from one to the next. Glyphs Departure Mono lacks come from an installed
+coding font (Cascadia Mono or Consolas on Windows, DejaVu Sans Mono on Linux, or
+an installed Nerd Font Mono).
+
+File-type icons come from Symbols Nerd Font Mono (Nerd Fonts 3.5.1, MIT; its
+`README.md` lists the icon sets' own licences), also shipped in `fonts/`. It is
+merged into the panel's font, whichever that is, scaled to one character cell,
+so icons never change the grid's line height or column width. The editor tells
+Neovim (`g:sfs_icons = 1`), and the engine's config then shows icons; your own
+config can check it too. The editor's text drawing reaches only the first
+65,536 code points, so the shipped mini.icons has its Material Design icons,
+which lie beyond, taken out (`scripts/stripMiniIcons.py`), and the engine's
+config names Nerd Font icons for the common file types.
+
+Set `SFS_EDITOR_CODE_FONT` to a `.ttf` or `.otf` file to use another font
+(drawn at any size, with the icons still merged in). Without Departure Mono,
+the panel falls back to an installed Nerd Font Mono, then Cascadia Mono or
+Consolas on Windows and DejaVu Sans Mono on Linux, then the UI font. The size
+and the config choice are saved with the editor layout.
 
 ## Scripts and Play
 

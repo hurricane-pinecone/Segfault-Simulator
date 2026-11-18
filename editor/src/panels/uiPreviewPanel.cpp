@@ -6,12 +6,10 @@
 #include "engine/core/logger/logger.h"
 #include "engine/core/reflection/reflection.h"
 #include "engine/runtime/rendering/backend/iRenderBackend.h"
-#include "engine/runtime/rendering/commands.h"
 #include "engine/runtime/rendering/frame.h"
 #include "engine/runtime/rendering/modules/uiModule.h"
 #include "engine/runtime/rendering/renderContext.h"
 #include "engine/runtime/rendering/renderSystem.h"
-#include "engine/runtime/rendering/uiDraw.h"
 #include "engine/runtime/sceneManager/scene.h"
 #include "engine/runtime/scripting/scriptRegistry.h"
 #include "engine/runtime/serialization/sceneSerializer.h"
@@ -21,6 +19,7 @@
 #include "engine/runtime/ui/ui.h"
 #include "panels/codePanel.h"
 #include "panels/panel.h"
+#include "panels/uiPreviewDraw.h"
 #include "scene/editorScene.h"
 #include "widgets/theme.h"
 #include "widgets/widgets.h"
@@ -452,27 +451,8 @@ void UiPreviewPanel::drawUi(EditorContext& context,
   if (!m_error.empty())
     ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.4f, 1.0f), "%s", m_error.c_str());
 
-  // Round it, the room; behind it, a plain backdrop (UI is drawn over a
-  // game, not the panel's dark); then the UI.
-  sfs::UiDrawList list;
-  sfs::UiQuad back;
-  back.rect = {0.0f, 0.0f, float(targetPixels.x), float(targetPixels.y)};
-  back.color = {0.11f, 0.11f, 0.12f, 1.0f};
-  list.quads.push_back(back);
-  back.rect = {room, room, screen.x, screen.y};
-  back.color = {0.36f, 0.42f, 0.36f, 1.0f};
-  list.quads.push_back(back);
-
-  for (const sfs::UiDrawCommand& command : m_ui->commands())
-    if (command.list)
-      for (sfs::UiQuad quad : command.list->quads)
-      {
-        quad.rect.x += room;
-        quad.rect.y += room;
-        quad.clip += glm::vec4(room);
-        list.quads.push_back(quad);
-      }
-
+  previewDrawList(
+      m_ui->commands(), glm::vec2(targetPixels), screen, room, m_drawList);
   m_target->resize(targetPixels);
 
   if (!m_target->valid())
@@ -485,7 +465,7 @@ void UiPreviewPanel::drawUi(EditorContext& context,
                      [&]
                      {
                        m_renderer->beginFrame(frame);
-                       m_renderer->drawUi(list);
+                       m_renderer->drawUi(m_drawList);
                        m_renderer->endFrame();
                      });
 
@@ -764,6 +744,9 @@ sfs::UiModule& UiPreviewPanel::uiModule(EditorContext& context)
           PREVIEW_SCENE_ID, m_backends, "UI Preview");
 
     m_ui = std::make_unique<sfs::UiModule>(*m_scene);
+    // Previews fill text fields with placeholder text ("Icon 1"), which a
+    // view may use as an image's name: not the game's mistake.
+    m_ui->setReportMissingImages(false);
   }
 
   // The scene's look (a game sets its font there).

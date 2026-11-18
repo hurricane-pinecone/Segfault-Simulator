@@ -26,12 +26,14 @@
 #include "engine/runtime/serialization/prefabComponents.h"
 #include "engine/runtime/serialization/sceneSerializer.h"
 #include "engine/webgpu/webGpuRenderBackend.h"
+#include "panels/architecturePanel.h"
 #include "panels/assetBrowserPanel.h"
 #include "panels/codePanel.h"
 #include "panels/consolePanel.h"
 #include "panels/hierarchyPanel.h"
 #include "panels/inspectorPanel.h"
 #include "panels/materialEditorPanel.h"
+#include "panels/panel.h"
 #include "panels/sceneSettingsPanel.h"
 #include "panels/uiPreviewPanel.h"
 #include "panels/viewportPanel.h"
@@ -156,6 +158,10 @@ void EditorApp::onUpdate(double)
         stamp.scripts != m_scriptsStamp)
       m_scriptsChanged = true;
 
+    if (!m_scriptsStamp.empty() &&
+        (stamp.scripts != m_scriptsStamp || stamp.ui != m_uiStamp))
+      ++m_context.scriptsRevision;
+
     if (m_scriptsCheckIsBaseline)
       m_buildScriptsStamp = stamp.scripts;
 
@@ -212,7 +218,8 @@ void EditorApp::onUpdate(double)
     openPrefab(std::exchange(m_context.openPrefab, {}));
 
   if (!m_context.openText.empty() && m_codePanel)
-    m_codePanel->openFile(std::exchange(m_context.openText, {}));
+    m_codePanel->openFile(std::exchange(m_context.openText, {}),
+                          std::exchange(m_context.openTextLine, 0));
 
   if (m_context.openMaterial.valid())
     openMaterial(std::exchange(m_context.openMaterial, {}));
@@ -461,6 +468,7 @@ void EditorApp::onSetup()
   auto codePanel = std::make_unique<CodePanel>(m_environment);
   m_codePanel = codePanel.get();
   m_panels.push_back(std::move(codePanel));
+  m_panels.push_back(std::make_unique<ArchitecturePanel>(m_environment));
   auto uiPreview = std::make_unique<UiPreviewPanel>(
       backend, *backend.sceneBackends(), *m_codePanel);
   m_uiPreview = uiPreview.get();
@@ -707,8 +715,11 @@ void EditorApp::drawEditMenu()
   if (!ImGui::BeginMenu("Edit"))
     return;
 
-  // The Assets panel's file operations, or a material's graph, while it was
-  // the last panel used; otherwise the scene's.
+  // The Edit menu is the last focused panel's: a material's graph, the Assets
+  // panel's file operations, or the scene's. A panel that only shows things
+  // (the Console, the Architecture board) has none.
+  const bool sceneEdits = sceneHasEditFocus();
+
   if (MaterialEditorPanel* material = materialPanelWithEdit())
   {
     if (ImGui::MenuItem("Undo", "Ctrl+Z", false, material->canUndo()))
@@ -725,7 +736,7 @@ void EditorApp::drawEditMenu()
     if (ImGui::MenuItem("Delete", "Del"))
       material->deleteSelection();
   }
-  else if (m_assetPanel && m_assetPanel->ownsEdit())
+  else if (m_assetPanel && m_assetPanel->editFocused())
   {
     const std::string undo = "Undo " + m_assetPanel->undoLabel(),
                       redo = "Redo " + m_assetPanel->redoLabel();
@@ -752,24 +763,32 @@ void EditorApp::drawEditMenu()
   }
   else
   {
-    if (ImGui::MenuItem("Undo", "Ctrl+Z", false, m_context.history->canUndo()))
+    const bool selected = sceneEdits && m_context.hasSelection();
+
+    if (ImGui::MenuItem("Undo",
+                        "Ctrl+Z",
+                        false,
+                        sceneEdits && m_context.history->canUndo()))
       m_context.history->undo();
 
-    if (ImGui::MenuItem("Redo", "Ctrl+Y", false, m_context.history->canRedo()))
+    if (ImGui::MenuItem("Redo",
+                        "Ctrl+Y",
+                        false,
+                        sceneEdits && m_context.history->canRedo()))
       m_context.history->redo();
 
     ImGui::Separator();
 
-    if (ImGui::MenuItem("Duplicate", "Ctrl+D", false, m_context.hasSelection()))
+    if (ImGui::MenuItem("Duplicate", "Ctrl+D", false, selected))
       duplicateSelection();
 
-    if (ImGui::MenuItem("Delete", "Del", false, m_context.hasSelection()))
+    if (ImGui::MenuItem("Delete", "Del", false, selected))
       deleteSelection();
   }
 
   ImGui::Separator();
   const bool canAlign =
-      m_mode == Mode::Edit && m_context.hasSelection() &&
+      sceneEdits && m_mode == Mode::Edit && m_context.hasSelection() &&
       m_context.selection.hasComponent<sfs::TransformComponent>();
 
   if (ImGui::MenuItem("Align With View", "Ctrl+Shift+F", false, canAlign))
@@ -1642,7 +1661,11 @@ void EditorApp::handleShortcuts()
 
   // Edit shortcuts belong to text fields while one is being typed in, and to
   // the game while it's playing with the keyboard (its own Ctrl+Z, Delete...).
-  if (ImGui::GetIO().WantTextInput || sceneReceivesInput())
+  // They're the scene's only while a panel that edits it has the focus: a
+  // panel with edits of its own handles its keys, and one that only shows
+  // things (the Console, the Architecture board) takes none.
+  if (ImGui::GetIO().WantTextInput || sceneReceivesInput() ||
+      !sceneHasEditFocus())
     return;
 
   if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Z, GLOBAL))
@@ -1892,6 +1915,12 @@ bool EditorApp::saveSceneFile(const std::filesystem::path& as)
   discardAutosave(m_document->path());
   updateWindowTitle();
   return true;
+}
+
+bool EditorApp::sceneHasEditFocus() const
+{
+  const Panel* focused = editFocusPanel(m_panels);
+  return focused && focused->edits() == Panel::Edits::Scene;
 }
 
 void EditorApp::showConsoleForPlay()
@@ -2283,7 +2312,7 @@ EditorScene* EditorApp::makeScene(bool forPrefab)
 MaterialEditorPanel* EditorApp::materialPanelWithEdit() const
 {
   for (MaterialEditorPanel* panel : m_materialPanels)
-    if (panel->open() && panel->ownsEdit())
+    if (panel->editFocused())
       return panel;
 
   return nullptr;

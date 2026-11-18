@@ -26,7 +26,7 @@ public:
    */
   void load(SDL_Window* window, std::vector<Panel*> panels);
 
-  /** Open every panel (Window > Reset Layout). */
+  /** Open every panel the default layout opens (Window > Reset Layout). */
   void openAllPanels();
 
   /** Each frame: note the window's size and place (saved when they change). */

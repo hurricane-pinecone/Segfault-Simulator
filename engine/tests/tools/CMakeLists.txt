@@ -40,6 +40,7 @@ target_compile_definitions(lspLintTests PRIVATE
     SFS_ENGINE_INCLUDE_DIR="${PROJECT_SOURCE_DIR}/engine/include")
 add_lsp_test(lspHouseLintTests)
 add_lsp_test(lspFormatTests)
+add_lsp_test(lspGraphTests)
 # Its docs test reads the house rule table from the docs page.
 target_compile_definitions(lspHouseLintTests PRIVATE
     SFS_DOCS_DIR="${PROJECT_SOURCE_DIR}/docs")

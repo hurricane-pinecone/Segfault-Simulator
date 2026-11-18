@@ -102,6 +102,17 @@ void trackFocus(bool& owns);
 bool itemReleasedWithoutDrag(ImGuiMouseButton button = ImGuiMouseButton_Left);
 
 /**
+ * A bar dragged to resize the areas either side of it, with the resize cursor
+ * while it's hovered or dragged. It drags across its thin side: a bar taller
+ * than it's wide moves sideways, a wider one up and down.
+ *
+ * @param id the bar's ImGui id
+ * @param size the bar's size
+ * @return how far it was dragged this frame, right or down positive
+ */
+float splitter(const char* id, ImVec2 size);
+
+/**
  * Run an editing widget on a copy of `value`, recording the edit for undo.
  * The scene is snapshotted when the interaction starts and before the copy is
  * written back, so even a widget that changes the value on its first frame

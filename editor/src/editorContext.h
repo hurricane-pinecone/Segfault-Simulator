@@ -21,6 +21,7 @@ class RenderSystem;
 
 class EditorHistory;
 class EditorScene;
+class Inspectable;
 class SceneDocument;
 
 // The editor state every panel reads and edits: the open project, the scene
@@ -115,6 +116,12 @@ struct EditorContext
   // A text file (a script) to open in the code panel; the app does it next
   // frame.
   std::filesystem::path openText;
+  // The line to open it at (from 1); 0 for none. Cleared with openText.
+  int openTextLine = 0;
+
+  // Goes up each time the project's scripts are found changed (saved in the
+  // Code panel, or edited elsewhere while the editor was away).
+  uint64_t scriptsRevision = 0;
 
   // An entity for the viewport to frame (any panel may ask; the viewport does
   // it next frame and clears this).
@@ -136,4 +143,16 @@ struct EditorContext
   // The asset selected in the Assets panel (invalid when none). The Inspector
   // shows it while no entity is selected; selecting an entity clears it.
   sfs::AssetId selectedAsset;
+
+  // Something else selected for the Inspector to show, drawn by the panel it
+  // belongs to (the Architecture board's box); null for none. The Inspector
+  // shows it until an entity or asset is selected after it; its panel clears
+  // it once it has nothing to show.
+  Inspectable* inspected = nullptr;
+
+  // The project script the Code panel shows (the one last entered in
+  // Neovim), and a count that goes up each time one is entered, the same one
+  // again included; empty and 0 until one is.
+  std::filesystem::path codeScript;
+  uint64_t codeScriptRevision = 0;
 };

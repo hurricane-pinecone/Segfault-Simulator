@@ -297,6 +297,11 @@ private:
   void openMaterial(const sfs::AssetId& material);
   /** The material tab whose the Edit menu is (last focused), if any. */
   MaterialEditorPanel* materialPanelWithEdit() const;
+  /**
+   * Whether the Edit menu and the edit shortcuts are the scene's: the panel
+   * last focused edits the scene (the Viewport, Hierarchy, Inspector...).
+   */
+  bool sceneHasEditFocus() const;
   std::vector<MaterialEditorPanel*> m_materialPanels; // in m_panels
 
   std::vector<std::unique_ptr<Workspace>> m_workspaces; // the scene's first

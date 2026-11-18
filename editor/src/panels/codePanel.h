@@ -2,6 +2,7 @@
 
 #include "nvim/nvimClient.h"
 #include "panels/panel.h"
+#include "widgets/codeFont.h"
 
 #include <imgui.h>
 
@@ -35,8 +36,13 @@ public:
     return m_nvim.focusedScript();
   }
 
-  /** Open a file in Neovim, showing and focusing the panel. */
-  void openFile(const std::filesystem::path& file);
+  /**
+   * Open a file in Neovim, showing and focusing the panel.
+   *
+   * @param file the file
+   * @param line the line to put the cursor on (from 1); 0 for none
+   */
+  void openFile(const std::filesystem::path& file, int line = 0);
 
   /** The project scripts open in the panel (its buffers). */
   const std::vector<std::filesystem::path>& openScripts() const
@@ -68,14 +74,13 @@ private:
   bool m_started = false; // launched at least once (so an exit is shown)
   bool m_failed = false;  // couldn't launch: don't retry every frame
   bool m_focusRequested = false;
-  bool m_dockChecked = false;
   int m_columns = 80;
   int m_rows = 24;
   std::filesystem::path m_projectRoot; // Neovim's working directory
   std::optional<std::filesystem::path> m_pendingFile; // opened once Neovim runs
+  int m_pendingLine = 0;                              // its line; 0: none
   int m_mouseButtonDown = -1; // ImGuiMouseButton being dragged
   int m_mouseRow = 0;
   int m_mouseColumn = 0;
-  ImFont* m_font =
-      nullptr; // a monospace font with wide coverage, or the UI font
+  CodeFont m_codeFont; // its font is nullptr: the UI font
 };

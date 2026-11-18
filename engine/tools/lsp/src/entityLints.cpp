@@ -2368,6 +2368,8 @@ struct Rules
   std::vector<Bound> m_registeredBound;
   std::vector<std::string_view> m_excludedScratch;
   std::vector<Bound> m_withScratch;
+  // boundTerms()'s scratch: the components a term names.
+  std::vector<lint::TermMember> m_members;
   // filter-in-loop's scratch: a loop body's statements, a condition's
   // operands, the lookups a body opens with and their names, and the
   // lookups the loop needs to go on.
@@ -2387,55 +2389,35 @@ struct Rules
                   std::string_view term,
                   std::vector<Bound>& out,
                   std::vector<std::string_view>& excluded,
-                  std::vector<Bound>* with,
-                  int depth = 0)
+                  std::vector<Bound>* with)
   {
-    if (depth > 8 || term.ends_with("..."))
-      return false;
+    m_members.clear();
+    const bool read = f.termMembers(at, owner, term, m_members);
 
-    std::string_view inner;
-
-    switch (f.wrapperOfText(at, term, inner))
-    {
-    case Wrapper::None:
-      if (const QueryAlias* named = f.alias(owner, trimmed(term)))
+    for (const lint::TermMember& member : m_members)
+      switch (member.group)
       {
-        for (const std::string& nested : named->terms)
-          if (!boundTerms(at, owner, nested, out, excluded, with, depth + 1))
-            return false;
+      case Wrapper::Any:
+        out.push_back({member.spelling, true, member.groupSpelling});
+        break;
+      case Wrapper::With:
+        if (with)
+          with->push_back(
+              {member.spelling, false, member.groupSpelling, true, true});
+        else
+          out.push_back({member.spelling, false, {}});
 
-        return true;
+        break;
+      case Wrapper::Excluding:
+        excluded.push_back(member.spelling);
+        break;
+      case Wrapper::None:
+      case Wrapper::Query:
+        out.push_back({member.spelling, false, {}});
+        break;
       }
 
-      out.push_back({trimmed(term), false, {}});
-      return true;
-    case Wrapper::Query:
-      for (const std::string_view nested : splitTerms(inner))
-        if (!boundTerms(at, owner, nested, out, excluded, with, depth + 1))
-          return false;
-
-      return true;
-    case Wrapper::Any:
-      for (const std::string_view member : splitTerms(inner))
-        out.push_back({member, true, trimmed(term)});
-
-      return true;
-    case Wrapper::With:
-      for (const std::string_view member : splitTerms(inner))
-        if (with)
-          with->push_back({member, false, trimmed(term), true, true});
-        else
-          out.push_back({member, false, {}});
-
-      return true;
-    case Wrapper::Excluding:
-      for (const std::string_view member : splitTerms(inner))
-        excluded.push_back(member);
-
-      return true;
-    }
-
-    return true;
+    return read;
   }
 
   // The template arguments of a query<...>() or getEntities<...>() call as
